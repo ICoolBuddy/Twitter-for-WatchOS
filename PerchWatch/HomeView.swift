@@ -1,125 +1,149 @@
 import SwiftUI
 import XKit
 
-/// Home timeline: "Following" (latest) / "For You", infinite scroll, pull to refresh,
+/// Home timeline, Parrot style: pure black, no platters, big 19 pt text,
+/// full-width media, hamburger button top-left. Infinite scroll, pull to refresh,
 /// opens instantly from the on-disk cache.
 struct HomeView: View {
     @EnvironmentObject private var app: AppModel
-    @AppStorage("homeKind") private var kindRaw = HomeKind.following.rawValue
+    @AppStorage(PerchSettings.autoRefreshOnOpen) private var autoRefreshOnOpen = true
+    @AppStorage(PerchSettings.homeKind) private var kindRaw = HomeKind.following.rawValue
+
     @StateObject private var list = PagedList<TimelineItem>(maxItems: 200, fetch: { _ in ([], nil, nil) })
     @State private var configuredFor: String?
+    @State private var startedFor: String?
+    /// The item at the top of the viewport (double-tap likes this one).
+    @State private var topID: String?
+    @State private var showMenu = false
+    @State private var profileTarget: ProfileTarget?
+    @State private var mediaTarget: MediaTarget?
+    @State private var replyTarget: XTweet?
 
     private var kind: HomeKind { HomeKind(rawValue: kindRaw) ?? .following }
 
+    private var taskKey: String {
+        "\(kindRaw)-\(app.isLoggedIn)-\(app.activeAccountId ?? "none")"
+    }
+
     var body: some View {
-        List {
-            if list.isRefreshing && !list.isEmpty {
-                PullToRefreshSpinnerRow()
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                if list.isRefreshing && !list.isEmpty {
+                    PullToRefreshSpinnerRow()
+                        .padding(.vertical, 6)
+                }
+                content
             }
-            kindPicker
-            if let e = list.error, list.isEmpty {
-                ErrorStateView(error: e) { await list.refresh() }
-                    .listRowBackground(Color.clear)
-            } else if list.isEmpty && list.isLoading {
-                ProgressView().frame(maxWidth: .infinity).listRowBackground(Color.clear)
-            }
-            ForEach(list.items) { item in
-                TimelineItemRows(item: item)
-                    .onAppear { list.loadMoreIfNeeded(current: item) }
-            }
-            if let e = list.error, !list.isEmpty {
-                Text(e.localizedDescription).font(.caption2).foregroundStyle(.orange)
-                Button("Retry") { list.error = nil; list.loadMore() }
-            }
-            if !list.isEmpty {
-                LoadMoreRow(isLoading: list.isLoading, reachedEnd: list.reachedEnd) { list.loadMore() }
-                    .listRowBackground(Color.clear)
-            }
+            .scrollTargetLayout()
+            .padding(.horizontal, Metrics.horizontalPadding)
         }
-        .navigationTitle(kind == .forYou ? "For You" : "Following")
+        .scrollPosition(id: $topID, anchor: .top)
+        .background(Color.black)
         .pullToRefresh(isRefreshing: list.isRefreshing) { await list.refresh() }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                NavigationLink(value: Route.settings) {
-                    Image(systemName: "gearshape")
+                Button {
+                    showMenu = true
+                } label: {
+                    Image(systemName: "line.3.horizontal")
                 }
-                .accessibilityLabel("Settings")
+                .accessibilityLabel("Menu")
             }
         }
-        .task(id: "\(kindRaw)-\(app.isLoggedIn)") {
+        .task(id: taskKey) {
             configure()
-            await list.loadIfNeeded()
+            await start()
         }
+        .sheet(isPresented: $showMenu) {
+            MenuView()
+        }
+        .postPresentation(profile: $profileTarget, media: $mediaTarget, reply: $replyTarget)
         .onDisappear { list.cancel() }
     }
 
-    private var kindPicker: some View {
-        HStack(spacing: 6) {
-            ForEach([HomeKind.following, .forYou], id: \.self) { k in
-                Button {
-                    guard k != kind else { return }
-                    kindRaw = k.rawValue
-                    Haptics.click()
-                } label: {
-                    Text(k == .forYou ? "For You" : "Following")
-                        .font(.caption.weight(k == kind ? .bold : .regular))
-                        .frame(maxWidth: .infinity)
+    @ViewBuilder
+    private var content: some View {
+        if let e = list.error, list.isEmpty {
+            ErrorStateView(error: e) { await list.refresh() }
+                .padding(.vertical, 16)
+        } else if list.isEmpty && list.isLoading {
+            ProgressView()
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 40)
+        } else if list.isEmpty {
+            emptyState
+        } else {
+            ForEach(list.items) { item in
+                VStack(alignment: .leading, spacing: 0) {
+                    TimelineItemRows(item: item,
+                                     isTop: item.id == topID,
+                                     onOpenProfile: { profileTarget = ProfileTarget(user: $0) },
+                                     onMedia: { mediaTarget = $0 },
+                                     onReply: { replyTarget = $0 })
+                        .onAppear { list.loadMoreIfNeeded(current: item) }
+                    if item.id != list.items.last?.id { PostSeparator() }
                 }
-                .buttonStyle(.bordered)
-                .tint(k == kind ? .accentColor : .gray)
+                .id(item.id)
+            }
+            if list.isLoading && !list.isEmpty {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+            }
+            if let e = list.error {
+                Text(e.localizedDescription)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .padding(.vertical, 4)
             }
         }
-        .listRowBackground(Color.clear)
-        .listRowInsets(EdgeInsets())
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "bird")
+                .font(.title2)
+                .foregroundStyle(.secondary)
+            Text("No posts yet")
+                .font(.system(size: 15, weight: .semibold))
+            Text("Pull down to refresh.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
     }
 
     private func configure() {
-        let key = "\(kind.rawValue)-\(app.isLoggedIn)"
+        let key = taskKey
         guard configuredFor != key else { return }
         configuredFor = key
+        list.reset()
+        topID = nil
+
         let client = app.client
         let k = kind
-        let cacheName = "home-\(k.rawValue)"
+        let cacheName = app.timelineCacheName(k)
         list.fetch = { cursor in
             let p = try await client.homeTimeline(k, cursor: cursor)
             return (p.items, p.bottomCursor, p.topCursor)
         }
-        list.onFirstPage = { items, _ in TimelineDiskCache.save(items, name: cacheName) }
-        list.update { $0.removeAll() }
+        list.onFirstPage = { items, _ in
+            TimelineDiskCache.save(items, name: cacheName)
+        }
         list.seed(TimelineDiskCache.load(name: cacheName))
     }
-}
 
-/// One timeline item: a single post, or a short conversation (thread) shown as consecutive posts.
-struct TimelineItemRows: View {
-    let item: TimelineItem
-
-    var body: some View {
-        switch item {
-        case .tweet(let t):
-            row(t)
-        case .conversation(let ts):
-            ForEach(Array(ts.enumerated()), id: \.element.id) { idx, t in
-                row(t, threaded: idx < ts.count - 1)
-            }
-        case .user(let u):
-            UserRow(user: u)
-        }
-    }
-
-    @ViewBuilder
-    private func row(_ t: XTweet, threaded: Bool = false) -> some View {
-        if t.isTombstone {
-            TweetRow(tweet: t, showCounts: false)
-        } else {
-            NavigationLink(value: Route.post(t)) {
-                TweetRow(tweet: t, lineLimit: 12)
-                    .overlay(alignment: .bottomLeading) {
-                        if threaded {
-                            Rectangle().fill(Color.secondary.opacity(0.5)).frame(width: 2, height: 8).offset(x: 10, y: 10)
-                        }
-                    }
-            }
+    /// Show the cached feed immediately; only go to the network when
+    /// "Refresh when opening the app" is on, or when there is no cache at all.
+    /// Runs once per account/kind so closing a sheet does not re-fetch.
+    private func start() async {
+        guard startedFor != taskKey else { return }
+        startedFor = taskKey
+        if list.isEmpty {
+            await list.refresh()
+        } else if autoRefreshOnOpen {
+            await list.refresh()
         }
     }
 }

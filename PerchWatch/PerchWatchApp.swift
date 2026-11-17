@@ -7,6 +7,10 @@ struct PerchWatchApp: App {
     @StateObject private var sync = WatchSync.shared
     @Environment(\.scenePhase) private var scenePhase
 
+    init() {
+        PerchSettings.registerDefaults()
+    }
+
     var body: some Scene {
         WindowGroup {
             WatchRootView()
@@ -40,16 +44,38 @@ struct WatchRootView: View {
     }
 }
 
-/// Resolves `Route` values to screens. Screens for later milestones fall back to a placeholder.
+/// Resolves `Route` values to screens. Screens for later milestones fall back to
+/// a placeholder.
 struct RouteView: View {
     let route: Route
+    @EnvironmentObject private var app: AppModel
 
     var body: some View {
         switch route {
-        case .post(let t): PostDetailView(tweet: t)
-        case .settings: WatchSettingsView()
-        case .debugLog: DebugLogView()
-        default: ComingSoonView()
+        case .post(let t):
+            PostDetailView(tweet: t)
+        case .user(let screenName):
+            ProfileScreen(target: ProfileTarget(screenName: screenName))
+        case .userId(let id):
+            ProfileScreen(target: ProfileTarget(userId: id))
+        case .profileMe:
+            if let id = app.activeAccount?.user?.id ?? app.viewer?.id {
+                ProfileScreen(target: ProfileTarget(userId: id))
+            } else {
+                ComingSoonView()
+            }
+        case .notifications:
+            NotificationsView()
+        case .likes:
+            TimelineListView(kind: .likes, title: "Likes")
+        case .bookmarks:
+            TimelineListView(kind: .bookmarks, title: "Bookmarks")
+        case .settings:
+            WatchSettingsView()
+        case .debugLog:
+            DebugLogView()
+        default:
+            ComingSoonView()
         }
     }
 }
