@@ -1,0 +1,90 @@
+{
+ "inbox_initial_state": {
+  "conversations": {
+   "1001-2000": {
+    "conversation_id": "1001-2000",
+    "last_read_event_id": "499",
+    "max_entry_id": "500",
+    "participants": [
+     {
+      "user_id": "1001"
+     },
+     {
+      "user_id": "2000"
+     }
+    ],
+    "sort_timestamp": "1763314000000",
+    "trusted": true,
+    "type": "ONE_TO_ONE"
+   },
+   "1003-2000": {
+    "conversation_id": "1003-2000",
+    "is_encrypted": true,
+    "last_read_event_id": "1",
+    "max_entry_id": "1",
+    "participants": [
+     {
+      "user_id": "1003"
+     },
+     {
+      "user_id": "2000"
+     }
+    ],
+    "sort_timestamp": "1763200000000",
+    "type": "ONE_TO_ONE"
+   }
+  },
+  "cursor": "c",
+  "entries": [
+   {
+    "message": {
+     "conversation_id": "1001-2000",
+     "id": "500",
+     "message_data": {
+      "id": "500",
+      "recipient_id": "2000",
+      "sender_id": "1001",
+      "text": "Hi there &amp; welcome",
+      "time": "1763314000000"
+     },
+     "time": "1763314000000"
+    }
+   },
+   {
+    "message": {
+     "conversation_id": "1001-2000",
+     "id": "499",
+     "message_data": {
+      "id": "499",
+      "recipient_id": "1001",
+      "sender_id": "2000",
+      "text": "Hello!",
+      "time": "1763313000000"
+     },
+     "time": "1763313000000"
+    }
+   }
+  ],
+  "last_seen_event_id": "1",
+  "users": {
+   "1001": {
+    "id_str": "1001",
+    "name": "Ada Example",
+    "profile_image_url_https": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png",
+    "screen_name": "ada_example"
+   },
+   "1003": {
+    "id_str": "1003",
+    "name": "Cleo",
+    "profile_image_url_https": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png",
+    "screen_name": "cleo_co"
+   },
+   "2000": {
+    "id_str": "2000",
+    "name": "Perch Tester",
+    "profile_image_url_https": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png",
+    "screen_name": "perch_tester"
+   }
+  }
+ }
+}

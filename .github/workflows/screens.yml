@@ -1,0 +1,213 @@
+name: Watch screens
+
+# Builds the watch app for the watchOS Simulator and captures one screenshot per
+# fixture screen. The fixture harness lives in PerchWatch/Debug and is compiled
+# into DEBUG builds only (see docs/REDESIGN-2.md R20/R21).
+on:
+  push:
+    branches: [redesign]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: screens-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screens:
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      XCODE_APP: /Applications/Xcode_26.6.app
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode
+        run: |
+          if [ ! -d "$XCODE_APP" ]; then
+            echo "::warning::$XCODE_APP not found, using newest installed Xcode"
+            XCODE_APP=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          fi
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          xcodebuild -version
+          xcodebuild -showsdks | grep -Ei 'iphoneos|watchos'
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Print simulator runtimes and devices
+        run: |
+          xcrun simctl list runtimes
+          echo "--- watch devices ---"
+          xcrun simctl list devices available | grep -Ei 'watch' || echo "(no watch devices yet)"
+
+      - name: Pick watch simulator
+        id: sim
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess, sys
+
+          def simctl(*args):
+              return subprocess.run(["xcrun", "simctl", *args], check=True,
+                                    capture_output=True, text=True).stdout
+
+          def version_tuple(text):
+              return tuple(int(n) for n in re.findall(r"\d+", text or "0"))[:4]
+
+          runtimes = json.loads(simctl("list", "runtimes", "-j"))["runtimes"]
+          watch_runtimes = [r for r in runtimes
+                            if r.get("isAvailable")
+                            and "watch" in (r.get("platform", "") + r.get("identifier", "")).lower()]
+          if not watch_runtimes:
+              print("::error::No watchOS simulator runtime is installed")
+              sys.exit(1)
+          watch_runtimes.sort(key=lambda r: version_tuple(r.get("version") or r.get("name")))
+          runtime = watch_runtimes[-1]
+          runtime_id = runtime["identifier"]
+          print(f"Chosen runtime: {runtime.get('name')} ({runtime_id})")
+
+          devices = json.loads(simctl("list", "devices", "available", "-j"))["devices"]
+          existing = devices.get(runtime_id, [])
+
+          def device_rank(dev):
+              ident = dev.get("deviceTypeIdentifier", "")
+              if re.search(r"Apple-Watch-Series-11-46mm", ident): return 0
+              if re.search(r"Apple-Watch-Series-10-46mm", ident): return 1
+              if "46mm" in ident: return 2
+              if "Ultra" in ident: return 3
+              return 4
+
+          udid = None
+          picked = None
+          if existing:
+              existing.sort(key=device_rank)
+              picked = existing[0]
+              udid = picked["udid"]
+
+          if udid is None:
+              devicetypes = json.loads(simctl("list", "devicetypes", "-j"))["devicetypes"]
+              watch_types = [d for d in devicetypes
+                             if "watch" in (d.get("identifier", "") + d.get("name", "")).lower()]
+              if not watch_types:
+                  print("::error::No watchOS simulator device types are installed")
+                  sys.exit(1)
+              def type_rank(d):
+                  ident = d.get("identifier", "")
+                  if re.search(r"Apple-Watch-Series-11-46mm", ident): return 0
+                  if re.search(r"Apple-Watch-Series-10-46mm", ident): return 1
+                  if "46mm" in ident: return 2
+                  if "Ultra" in ident: return 3
+                  return 4
+              watch_types.sort(key=type_rank)
+              devicetype = watch_types[0]
+              print(f"Creating simulator from {devicetype.get('name')} / {runtime.get('name')}")
+              udid = simctl("create", "Perch Screens", devicetype["identifier"], runtime_id).strip()
+              picked = {"name": "Perch Screens", "udid": udid}
+
+          print(f"Chosen device: {picked.get('name')} ({udid})")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"udid={udid}\n")
+              out.write(f"runtime={runtime.get('name')}\n")
+              out.write(f"device={picked.get('name')}\n")
+          PY
+
+      - name: Boot simulator
+        run: |
+          UDID="${{ steps.sim.outputs.udid }}"
+          # Already-booted is fine; bootstatus waits until the device is usable.
+          xcrun simctl boot "$UDID" 2>/dev/null || true
+          xcrun simctl bootstatus "$UDID" -b
+
+      - name: Build watch app for the simulator
+        run: |
+          set -o pipefail
+          mkdir -p build shots
+          xcodebuild build \
+            -project Perch.xcodeproj \
+            -scheme PerchWatch \
+            -configuration Debug \
+            -destination "platform=watchOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath build/DerivedData \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            ARCHS=arm64 \
+            > build/screens-build.log 2>&1 || {
+              STATUS=$?
+              echo "::error::xcodebuild build failed ($STATUS)"
+              grep -E ': error:|error: ' build/screens-build.log | sort -u | head -80 || true
+              tail -80 build/screens-build.log
+              exit $STATUS
+            }
+          grep -E ': error:|warning: ' build/screens-build.log | sort -u | head -40 || true
+          echo "--- built products ---"
+          find build/DerivedData/Build/Products -maxdepth 2 -name '*.app' -print
+
+      - name: Install on simulator
+        id: install
+        run: |
+          set -e
+          UDID="${{ steps.sim.outputs.udid }}"
+          APP=$(find build/DerivedData/Build/Products -maxdepth 2 -name 'PerchWatch.app' -type d -print -quit)
+          if [ -z "$APP" ]; then
+            echo "::error::PerchWatch.app was not produced"
+            find build/DerivedData/Build/Products -maxdepth 3 -print || true
+            exit 1
+          fi
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")
+          # R20: the fixture JSON must be in the DEBUG bundle (it is excluded from
+          # Release in project.yml). Failing here beats uploading blank screenshots.
+          FIXTURES=$(find "$APP" -maxdepth 2 -name 'home_timeline.json' -print -quit)
+          if [ -z "$FIXTURES" ] || [ -z "$(find "$APP" -maxdepth 2 -name 'v2_user.json' -print -quit)" ]; then
+            echo "::error::fixture JSON missing from $APP — check project.yml resources"
+            ls -la "$APP" | head -40 || true
+            exit 1
+          fi
+          echo "App: $APP"
+          echo "Bundle id: $BUNDLE_ID"
+          xcrun simctl install "$UDID" "$APP"
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+          echo "bundle_id=$BUNDLE_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Screenshots
+        run: |
+          UDID="${{ steps.sim.outputs.udid }}"
+          BUNDLE_ID="${{ steps.install.outputs.bundle_id }}"
+          mkdir -p shots
+          for screen in feed menu post profile media notifications longpost; do
+            echo "== $screen =="
+            xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+            sleep 1
+            if ! xcrun simctl launch "$UDID" "$BUNDLE_ID" -PerchFixtures YES -PerchScreen "$screen"; then
+              echo "::warning::could not launch $BUNDLE_ID for $screen"
+            fi
+            # Give the app time to install the fixture session and render.
+            sleep 6
+            if ! xcrun simctl io "$UDID" screenshot "shots/$screen.png"; then
+              echo "::warning::screenshot failed for $screen"
+            fi
+            xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+          done
+          ls -la shots || true
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: watch-screens
+          path: shots/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: screens-build-log
+          path: build/screens-build.log
+          if-no-files-found: ignore
+          retention-days: 7

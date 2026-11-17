@@ -1,0 +1,398 @@
+{
+ "data": {
+  "viewer_v2": {
+   "user_results": {
+    "result": {
+     "__typename": "User",
+     "notification_timeline": {
+      "id": "x",
+      "timeline": {
+       "instructions": [
+        {
+         "type": "TimelineClearCache"
+        },
+        {
+         "entries": [
+          {
+           "content": {
+            "__typename": "TimelineTimelineCursor",
+            "cursorType": "Top",
+            "entryType": "TimelineTimelineCursor",
+            "value": "NOTIFTOP"
+           },
+           "entryId": "cursor-top-1999999",
+           "sortIndex": "1999999"
+          },
+          {
+           "content": {
+            "__typename": "TimelineTimelineItem",
+            "entryType": "TimelineTimelineItem",
+            "itemContent": {
+             "__typename": "TimelineNotification",
+             "id": "n1",
+             "itemType": "TimelineNotification",
+             "notification_icon": "heart_icon",
+             "notification_url": {
+              "url": "https://x.com/i/timeline",
+              "urlType": "DeepLink"
+             },
+             "rich_message": {
+              "entities": [],
+              "rtl": false,
+              "text": "Ada Example and Ben Sample liked your post"
+             },
+             "template": {
+              "__typename": "TimelineNotificationAggregateTemplate",
+              "from_users": [
+               {
+                "__typename": "TimelineNotificationUserRef",
+                "user_results": {
+                 "result": {
+                  "__typename": "User",
+                  "avatar": {
+                   "image_url": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png"
+                  },
+                  "core": {
+                   "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                   "name": "Ada Example",
+                   "screen_name": "ada_example"
+                  },
+                  "id": "VXNlcjo1001",
+                  "is_blue_verified": true,
+                  "legacy": {
+                   "description": "Writes about engines. https://t.co/Bio1",
+                   "entities": {
+                    "description": {
+                     "urls": [
+                      {
+                       "expanded_url": "https://example.com",
+                       "url": "https://t.co/Bio1"
+                      }
+                     ]
+                    }
+                   },
+                   "followers_count": 5400,
+                   "friends_count": 80,
+                   "location": "Somewhere",
+                   "statuses_count": 999
+                  },
+                  "privacy": {
+                   "protected": false
+                  },
+                  "relationship_perspectives": {
+                   "following": false
+                  },
+                  "rest_id": "1001"
+                 }
+                }
+               },
+               {
+                "__typename": "TimelineNotificationUserRef",
+                "user_results": {
+                 "result": {
+                  "__typename": "User",
+                  "id": "VXNlcjo1002",
+                  "is_blue_verified": false,
+                  "legacy": {
+                   "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                   "description": "",
+                   "entities": {
+                    "description": {
+                     "urls": []
+                    }
+                   },
+                   "followers_count": 120,
+                   "following": true,
+                   "friends_count": 80,
+                   "location": "Somewhere",
+                   "name": "Ben Sample",
+                   "profile_image_url_https": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png",
+                   "screen_name": "bensample",
+                   "statuses_count": 999
+                  },
+                  "rest_id": "1002"
+                 }
+                }
+               }
+              ],
+              "target_objects": [
+               {
+                "__typename": "TimelineNotificationTweetRef",
+                "tweet_results": {
+                 "result": {
+                  "__typename": "Tweet",
+                  "core": {
+                   "user_results": {
+                    "result": {
+                     "__typename": "User",
+                     "avatar": {
+                      "image_url": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png"
+                     },
+                     "core": {
+                      "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                      "name": "Perch Tester",
+                      "screen_name": "perch_tester"
+                     },
+                     "id": "VXNlcjo2000",
+                     "is_blue_verified": false,
+                     "legacy": {
+                      "description": "",
+                      "entities": {
+                       "description": {
+                        "urls": []
+                       }
+                      },
+                      "followers_count": 42,
+                      "friends_count": 80,
+                      "location": "Somewhere",
+                      "statuses_count": 999
+                     },
+                     "privacy": {
+                      "protected": false
+                     },
+                     "relationship_perspectives": {
+                      "following": false
+                     },
+                     "rest_id": "2000"
+                    }
+                   }
+                  },
+                  "edit_control": {
+                   "edit_tweet_ids": [
+                    "1860000000000000020"
+                   ],
+                   "is_edit_eligible": false
+                  },
+                  "legacy": {
+                   "bookmark_count": 0,
+                   "bookmarked": false,
+                   "conversation_id_str": "1860000000000000020",
+                   "created_at": "Mon Nov 16 18:30:00 +0000 2026",
+                   "display_text_range": [
+                    0,
+                    20
+                   ],
+                   "entities": {
+                    "hashtags": [],
+                    "symbols": [],
+                    "urls": [],
+                    "user_mentions": []
+                   },
+                   "favorite_count": 2,
+                   "favorited": false,
+                   "full_text": "My post people liked",
+                   "id_str": "1860000000000000020",
+                   "lang": "en",
+                   "quote_count": 0,
+                   "reply_count": 0,
+                   "retweet_count": 1,
+                   "retweeted": false,
+                   "user_id_str": "2000"
+                  },
+                  "rest_id": "1860000000000000020",
+                  "views": {
+                   "count": "80",
+                   "state": "EnabledWithCount"
+                  }
+                 }
+                }
+               }
+              ]
+             },
+             "timestamp_ms": "1763314200000"
+            }
+           },
+           "entryId": "notification-n1",
+           "sortIndex": "1763314200001"
+          },
+          {
+           "content": {
+            "__typename": "TimelineTimelineItem",
+            "entryType": "TimelineTimelineItem",
+            "itemContent": {
+             "__typename": "TimelineTweet",
+             "itemType": "TimelineTweet",
+             "tweetDisplayType": "Tweet",
+             "tweet_results": {
+              "result": {
+               "__typename": "Tweet",
+               "core": {
+                "user_results": {
+                 "result": {
+                  "__typename": "User",
+                  "avatar": {
+                   "image_url": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png"
+                  },
+                  "core": {
+                   "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                   "name": "Ada Example",
+                   "screen_name": "ada_example"
+                  },
+                  "id": "VXNlcjo1001",
+                  "is_blue_verified": true,
+                  "legacy": {
+                   "description": "Writes about engines. https://t.co/Bio1",
+                   "entities": {
+                    "description": {
+                     "urls": [
+                      {
+                       "expanded_url": "https://example.com",
+                       "url": "https://t.co/Bio1"
+                      }
+                     ]
+                    }
+                   },
+                   "followers_count": 5400,
+                   "friends_count": 80,
+                   "location": "Somewhere",
+                   "statuses_count": 999
+                  },
+                  "privacy": {
+                   "protected": false
+                  },
+                  "relationship_perspectives": {
+                   "following": false
+                  },
+                  "rest_id": "1001"
+                 }
+                }
+               },
+               "edit_control": {
+                "edit_tweet_ids": [
+                 "1860000000000000021"
+                ],
+                "is_edit_eligible": false
+               },
+               "legacy": {
+                "bookmark_count": 0,
+                "bookmarked": false,
+                "conversation_id_str": "1860000000000000021",
+                "created_at": "Mon Nov 16 18:30:00 +0000 2026",
+                "display_text_range": [
+                 0,
+                 33
+                ],
+                "entities": {
+                 "hashtags": [],
+                 "symbols": [],
+                 "urls": [],
+                 "user_mentions": []
+                },
+                "favorite_count": 3,
+                "favorited": false,
+                "full_text": "@perch_tester hey, check this out",
+                "id_str": "1860000000000000021",
+                "in_reply_to_screen_name": "perch_tester",
+                "in_reply_to_status_id_str": "1860000000000000020",
+                "lang": "en",
+                "quote_count": 0,
+                "reply_count": 0,
+                "retweet_count": 1,
+                "retweeted": false,
+                "user_id_str": "1001"
+               },
+               "rest_id": "1860000000000000021",
+               "views": {
+                "count": "120",
+                "state": "EnabledWithCount"
+               }
+              }
+             }
+            }
+           },
+           "entryId": "tweet-1860000000000000021",
+           "sortIndex": "1763314100000"
+          },
+          {
+           "content": {
+            "__typename": "TimelineTimelineItem",
+            "entryType": "TimelineTimelineItem",
+            "itemContent": {
+             "__typename": "TimelineNotification",
+             "id": "n2",
+             "itemType": "TimelineNotification",
+             "notification_icon": "person_icon",
+             "notification_url": {
+              "url": "https://x.com/i/timeline",
+              "urlType": "DeepLink"
+             },
+             "rich_message": {
+              "entities": [],
+              "rtl": false,
+              "text": "Cleo &amp; Co followed you"
+             },
+             "template": {
+              "__typename": "TimelineNotificationAggregateTemplate",
+              "from_users": [
+               {
+                "__typename": "TimelineNotificationUserRef",
+                "user_results": {
+                 "result": {
+                  "__typename": "User",
+                  "avatar": {
+                   "image_url": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png"
+                  },
+                  "core": {
+                   "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                   "name": "Cleo &amp; Co",
+                   "screen_name": "cleo_co"
+                  },
+                  "id": "VXNlcjo1003",
+                  "is_blue_verified": false,
+                  "legacy": {
+                   "description": "",
+                   "entities": {
+                    "description": {
+                     "urls": []
+                    }
+                   },
+                   "followers_count": 120,
+                   "friends_count": 80,
+                   "location": "Somewhere",
+                   "statuses_count": 999
+                  },
+                  "privacy": {
+                   "protected": false
+                  },
+                  "relationship_perspectives": {
+                   "following": false
+                  },
+                  "rest_id": "1003"
+                 }
+                }
+               }
+              ],
+              "target_objects": []
+             },
+             "timestamp_ms": "1763300000000"
+            }
+           },
+           "entryId": "notification-n2",
+           "sortIndex": "1763300000000"
+          },
+          {
+           "content": {
+            "__typename": "TimelineTimelineCursor",
+            "cursorType": "Bottom",
+            "entryType": "TimelineTimelineCursor",
+            "value": "NOTIFBOTTOM"
+           },
+           "entryId": "cursor-bottom-1",
+           "sortIndex": "1"
+          }
+         ],
+         "type": "TimelineAddEntries"
+        },
+        {
+         "sort_index": "1763310000000",
+         "type": "TimelineMarkEntriesUnreadGreaterThanSortIndex"
+        }
+       ]
+      }
+     },
+     "rest_id": "2000"
+    }
+   }
+  }
+ }
+}

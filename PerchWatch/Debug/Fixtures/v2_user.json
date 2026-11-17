@@ -1,0 +1,52 @@
+{
+ "data": {
+  "user": {
+   "result": {
+    "__typename": "User",
+    "rest_id": "1005",
+    "id": "VXNlcjoxMDA1",
+    "core": {
+     "created_at": "Wed Aug 12 09:10:11 +0000 2026",
+     "name": "Vera Fixture",
+     "screen_name": "vera_fixture"
+    },
+    "avatar": {
+     "image_url": "https://picsum.photos/seed/vera/200/200"
+    },
+    "banner": {
+     "image_url": "https://picsum.photos/seed/vera-banner/1200/400"
+    },
+    "is_blue_verified": true,
+    "verification": {
+     "verified": true,
+     "verified_type": "blue"
+    },
+    "profile_bio": {
+     "description": "V2 schema fixture user. All profile fields moved out of legacy."
+    },
+    "location": {
+     "location": "Fixtureville"
+    },
+    "privacy": {
+     "protected": false
+    },
+    "relationship_counts": {
+     "followers": 1234,
+     "following": 56
+    },
+    "tweet_counts": {
+     "tweets": 789,
+     "media_tweets": 12
+    },
+    "action_counts": {
+     "favorites_count": 4321
+    },
+    "relationship_perspectives": {
+     "following": false,
+     "followed_by": false
+    },
+    "legacy": null
+   }
+  }
+ }
+}

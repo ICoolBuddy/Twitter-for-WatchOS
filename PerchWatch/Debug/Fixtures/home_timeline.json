@@ -1,0 +1,1526 @@
+{
+ "data": {
+  "home": {
+   "home_timeline_urt": {
+    "instructions": [
+     {
+      "entries": [
+       {
+        "content": {
+         "__typename": "TimelineTimelineItem",
+         "entryType": "TimelineTimelineItem",
+         "itemContent": {
+          "__typename": "TimelineTweet",
+          "itemType": "TimelineTweet",
+          "tweetDisplayType": "Tweet",
+          "tweet_results": {
+           "result": {
+            "__typename": "Tweet",
+            "core": {
+             "user_results": {
+              "result": {
+               "__typename": "User",
+               "avatar": {
+                "image_url": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png"
+               },
+               "core": {
+                "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                "name": "Ada Example",
+                "screen_name": "ada_example"
+               },
+               "id": "VXNlcjo1001",
+               "is_blue_verified": true,
+               "legacy": {
+                "description": "Writes about engines. https://t.co/Bio1",
+                "entities": {
+                 "description": {
+                  "urls": [
+                   {
+                    "expanded_url": "https://example.com",
+                    "url": "https://t.co/Bio1"
+                   }
+                  ]
+                 }
+                },
+                "followers_count": 5400,
+                "friends_count": 80,
+                "location": "Somewhere",
+                "statuses_count": 999
+               },
+               "privacy": {
+                "protected": false
+               },
+               "relationship_perspectives": {
+                "following": false
+               },
+               "rest_id": "1001"
+              }
+             }
+            },
+            "edit_control": {
+             "edit_tweet_ids": [
+              "1860000000000000001"
+             ],
+             "is_edit_eligible": false
+            },
+            "legacy": {
+             "bookmark_count": 0,
+             "bookmarked": false,
+             "conversation_id_str": "1860000000000000001",
+             "created_at": "Mon Nov 16 18:30:00 +0000 2026",
+             "display_text_range": [
+              0,
+              79
+             ],
+             "entities": {
+              "hashtags": [],
+              "media": [
+               {
+                "display_url": "pic.x.com/AbCdEf123",
+                "expanded_url": "https://x.com/i/status/1/photo/1",
+                "ext_alt_text": "A mock photo",
+                "id_str": "700001",
+                "media_key": "3_700001",
+                "media_url_https": "https://pbs.twimg.com/media/Mock700001.jpg",
+                "original_info": {
+                 "height": 800,
+                 "width": 1200
+                },
+                "sizes": {
+                 "large": {
+                  "h": 800,
+                  "resize": "fit",
+                  "w": 1200
+                 }
+                },
+                "type": "photo",
+                "url": "https://t.co/AbCdEf123"
+               }
+              ],
+              "symbols": [],
+              "urls": [
+               {
+                "display_url": "example.com/post",
+                "expanded_url": "https://example.com/post",
+                "url": "https://t.co/Link1"
+               }
+              ],
+              "user_mentions": []
+             },
+             "extended_entities": {
+              "media": [
+               {
+                "display_url": "pic.x.com/AbCdEf123",
+                "expanded_url": "https://x.com/i/status/1/photo/1",
+                "ext_alt_text": "A mock photo",
+                "id_str": "700001",
+                "media_key": "3_700001",
+                "media_url_https": "https://pbs.twimg.com/media/Mock700001.jpg",
+                "original_info": {
+                 "height": 800,
+                 "width": 1200
+                },
+                "sizes": {
+                 "large": {
+                  "h": 800,
+                  "resize": "fit",
+                  "w": 1200
+                 }
+                },
+                "type": "photo",
+                "url": "https://t.co/AbCdEf123"
+               }
+              ]
+             },
+             "favorite_count": 42,
+             "favorited": false,
+             "full_text": "Hello from a mock timeline! Read more https://t.co/Link1 https://t.co/AbCdEf123",
+             "id_str": "1860000000000000001",
+             "lang": "en",
+             "quote_count": 0,
+             "reply_count": 3,
+             "retweet_count": 7,
+             "retweeted": false,
+             "user_id_str": "1001"
+            },
+            "rest_id": "1860000000000000001",
+            "views": {
+             "count": "1680",
+             "state": "EnabledWithCount"
+            }
+           }
+          }
+         }
+        },
+        "entryId": "tweet-1860000000000000001",
+        "sortIndex": "1999"
+       },
+       {
+        "content": {
+         "__typename": "TimelineTimelineItem",
+         "entryType": "TimelineTimelineItem",
+         "itemContent": {
+          "__typename": "TimelineTweet",
+          "itemType": "TimelineTweet",
+          "tweetDisplayType": "Tweet",
+          "tweet_results": {
+           "result": {
+            "__typename": "TweetWithVisibilityResults",
+            "limitedActionResults": {
+             "limited_actions": [
+              {
+               "action": "Reply"
+              }
+             ]
+            },
+            "tweet": {
+             "__typename": "Tweet",
+             "core": {
+              "user_results": {
+               "result": {
+                "__typename": "User",
+                "id": "VXNlcjo1002",
+                "is_blue_verified": false,
+                "legacy": {
+                 "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                 "description": "",
+                 "entities": {
+                  "description": {
+                   "urls": []
+                  }
+                 },
+                 "followers_count": 120,
+                 "following": true,
+                 "friends_count": 80,
+                 "location": "Somewhere",
+                 "name": "Ben Sample",
+                 "profile_image_url_https": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png",
+                 "screen_name": "bensample",
+                 "statuses_count": 999
+                },
+                "rest_id": "1002"
+               }
+              }
+             },
+             "edit_control": {
+              "edit_tweet_ids": [
+               "1860000000000000002"
+              ],
+              "is_edit_eligible": false
+             },
+             "legacy": {
+              "bookmark_count": 0,
+              "bookmarked": false,
+              "conversation_id_str": "1860000000000000002",
+              "created_at": "Mon Nov 16 18:30:00 +0000 2026",
+              "display_text_range": [
+               0,
+               44
+              ],
+              "entities": {
+               "hashtags": [],
+               "symbols": [],
+               "urls": [],
+               "user_mentions": []
+              },
+              "favorite_count": 5,
+              "favorited": true,
+              "full_text": "Visibility-wrapped post &amp; entities &lt;3",
+              "id_str": "1860000000000000002",
+              "lang": "en",
+              "quote_count": 0,
+              "reply_count": 0,
+              "retweet_count": 1,
+              "retweeted": false,
+              "user_id_str": "1002"
+             },
+             "rest_id": "1860000000000000002",
+             "views": {
+              "count": "200",
+              "state": "EnabledWithCount"
+             }
+            }
+           }
+          }
+         }
+        },
+        "entryId": "tweet-1860000000000000002",
+        "sortIndex": "1998"
+       },
+       {
+        "content": {
+         "__typename": "TimelineTimelineItem",
+         "entryType": "TimelineTimelineItem",
+         "itemContent": {
+          "__typename": "TimelineTweet",
+          "itemType": "TimelineTweet",
+          "tweetDisplayType": "Tweet",
+          "tweet_results": {
+           "result": {
+            "__typename": "Tweet",
+            "core": {
+             "user_results": {
+              "result": {
+               "__typename": "User",
+               "avatar": {
+                "image_url": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png"
+               },
+               "core": {
+                "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                "name": "Ada Example",
+                "screen_name": "ada_example"
+               },
+               "id": "VXNlcjo1001",
+               "is_blue_verified": true,
+               "legacy": {
+                "description": "Writes about engines. https://t.co/Bio1",
+                "entities": {
+                 "description": {
+                  "urls": [
+                   {
+                    "expanded_url": "https://example.com",
+                    "url": "https://t.co/Bio1"
+                   }
+                  ]
+                 }
+                },
+                "followers_count": 5400,
+                "friends_count": 80,
+                "location": "Somewhere",
+                "statuses_count": 999
+               },
+               "privacy": {
+                "protected": false
+               },
+               "relationship_perspectives": {
+                "following": false
+               },
+               "rest_id": "1001"
+              }
+             }
+            },
+            "edit_control": {
+             "edit_tweet_ids": [
+              "1860000000000000040"
+             ],
+             "is_edit_eligible": false
+            },
+            "legacy": {
+             "bookmark_count": 0,
+             "bookmarked": false,
+             "conversation_id_str": "1860000000000000040",
+             "created_at": "Mon Nov 16 19:05:00 +0000 2026",
+             "display_text_range": [
+              0,
+              918
+             ],
+             "entities": {
+              "hashtags": [],
+              "media": [],
+              "symbols": [],
+              "urls": [],
+              "user_mentions": []
+             },
+             "extended_entities": {
+              "media": []
+             },
+             "favorite_count": 128,
+             "favorited": false,
+             "full_text": "This is a deliberately long fixture post. It exists so the watch feed's clamping can be checked on a real screen: after a few lines the text should collapse to eight lines with a centred \"Show more\" button underneath, and tapping that button should expand the post in place without pushing the whole timeline into a reload.\n\nThe second paragraph makes the post long enough to be interesting. It keeps going for a while, in the way that a real announcement or a person explaining a bug might. Nothing in here is important, but the layout is: line spacing, margins, the separator under the post, and the fact that the action row stays reachable after expanding.\n\nA third paragraph rounds it out past the 280-character threshold that the redesign uses as the other trigger for clamping. If this text appears in full the feed is not clamping; if it shows eight lines followed by Show more, the rule is working as intended.",
+             "id_str": "1860000000000000040",
+             "lang": "en",
+             "quote_count": 0,
+             "reply_count": 12,
+             "retweet_count": 34,
+             "retweeted": false,
+             "user_id_str": "1001"
+            },
+            "rest_id": "1860000000000000040",
+            "views": {
+             "count": "1234",
+             "state": "EnabledWithCount"
+            }
+           }
+          }
+         }
+        },
+        "entryId": "tweet-1860000000000000040",
+        "sortIndex": "1998"
+       },
+       {
+        "content": {
+         "__typename": "TimelineTimelineItem",
+         "entryType": "TimelineTimelineItem",
+         "itemContent": {
+          "__typename": "TimelineTweet",
+          "itemType": "TimelineTweet",
+          "tweetDisplayType": "Tweet",
+          "tweet_results": {
+           "result": {
+            "__typename": "Tweet",
+            "core": {
+             "user_results": {
+              "result": {
+               "__typename": "User",
+               "avatar": {
+                "image_url": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png"
+               },
+               "core": {
+                "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                "name": "Cleo &amp; Co",
+                "screen_name": "cleo_co"
+               },
+               "id": "VXNlcjo1003",
+               "is_blue_verified": false,
+               "legacy": {
+                "description": "",
+                "entities": {
+                 "description": {
+                  "urls": []
+                 }
+                },
+                "followers_count": 120,
+                "friends_count": 80,
+                "location": "Somewhere",
+                "statuses_count": 999
+               },
+               "privacy": {
+                "protected": false
+               },
+               "relationship_perspectives": {
+                "following": false
+               },
+               "rest_id": "1003"
+              }
+             }
+            },
+            "edit_control": {
+             "edit_tweet_ids": [
+              "1860000000000000041"
+             ],
+             "is_edit_eligible": false
+            },
+            "legacy": {
+             "bookmark_count": 0,
+             "bookmarked": false,
+             "conversation_id_str": "1860000000000000041",
+             "created_at": "Mon Nov 16 19:04:00 +0000 2026",
+             "display_text_range": [
+              0,
+              50
+             ],
+             "entities": {
+              "hashtags": [],
+              "media": [
+               {
+                "display_url": "pic.x.com/700041",
+                "expanded_url": "https://x.com/i/status/1/photo/1",
+                "ext_alt_text": "A very tall mock screenshot",
+                "id_str": "700041",
+                "media_key": "3_700041",
+                "media_url_https": "https://picsum.photos/seed/perch-tall/1290/3000",
+                "original_info": {
+                 "height": 3000,
+                 "width": 1290
+                },
+                "sizes": {
+                 "large": {
+                  "h": 3000,
+                  "resize": "fit",
+                  "w": 1290
+                 }
+                },
+                "type": "photo",
+                "url": "https://t.co/700041"
+               }
+              ],
+              "symbols": [],
+              "urls": [],
+              "user_mentions": []
+             },
+             "extended_entities": {
+              "media": [
+               {
+                "display_url": "pic.x.com/700041",
+                "expanded_url": "https://x.com/i/status/1/photo/1",
+                "ext_alt_text": "A very tall mock screenshot",
+                "id_str": "700041",
+                "media_key": "3_700041",
+                "media_url_https": "https://picsum.photos/seed/perch-tall/1290/3000",
+                "original_info": {
+                 "height": 3000,
+                 "width": 1290
+                },
+                "sizes": {
+                 "large": {
+                  "h": 3000,
+                  "resize": "fit",
+                  "w": 1290
+                 }
+                },
+                "type": "photo",
+                "url": "https://t.co/700041"
+               }
+              ]
+             },
+             "favorite_count": 19,
+             "favorited": false,
+             "full_text": "Phone screenshot (very tall). https://t.co/TallImg",
+             "id_str": "1860000000000000041",
+             "lang": "en",
+             "quote_count": 0,
+             "reply_count": 1,
+             "retweet_count": 2,
+             "retweeted": false,
+             "user_id_str": "1003"
+            },
+            "rest_id": "1860000000000000041",
+            "views": {
+             "count": "1234",
+             "state": "EnabledWithCount"
+            }
+           }
+          }
+         }
+        },
+        "entryId": "tweet-1860000000000000041",
+        "sortIndex": "1997"
+       },
+       {
+        "content": {
+         "__typename": "TimelineTimelineItem",
+         "entryType": "TimelineTimelineItem",
+         "itemContent": {
+          "__typename": "TimelineTweet",
+          "itemType": "TimelineTweet",
+          "tweetDisplayType": "Tweet",
+          "tweet_results": {
+           "result": {
+            "__typename": "Tweet",
+            "core": {
+             "user_results": {
+              "result": {
+               "__typename": "User",
+               "rest_id": "1005",
+               "id": "VXNlcjoxMDA1",
+               "core": {
+                "created_at": "Wed Aug 12 09:10:11 +0000 2026",
+                "name": "Vera Fixture",
+                "screen_name": "vera_fixture"
+               },
+               "avatar": {
+                "image_url": "https://picsum.photos/seed/vera/200/200"
+               },
+               "banner": {
+                "image_url": "https://picsum.photos/seed/vera-banner/1200/400"
+               },
+               "is_blue_verified": true,
+               "verification": {
+                "verified": true,
+                "verified_type": "blue"
+               },
+               "profile_bio": {
+                "description": "V2 schema fixture user. All profile fields moved out of legacy."
+               },
+               "location": {
+                "location": "Fixtureville"
+               },
+               "privacy": {
+                "protected": false
+               },
+               "relationship_counts": {
+                "followers": 1234,
+                "following": 56
+               },
+               "tweet_counts": {
+                "tweets": 789,
+                "media_tweets": 12
+               },
+               "action_counts": {
+                "favorites_count": 4321
+               },
+               "relationship_perspectives": {
+                "following": false,
+                "followed_by": false
+               },
+               "legacy": null
+              }
+             }
+            },
+            "edit_control": {
+             "edit_tweet_ids": [
+              "1860000000000000042"
+             ],
+             "is_edit_eligible": false
+            },
+            "legacy": {
+             "bookmark_count": 0,
+             "bookmarked": false,
+             "conversation_id_str": "1860000000000000042",
+             "created_at": "Mon Nov 16 19:03:00 +0000 2026",
+             "display_text_range": [
+              0,
+              53
+             ],
+             "entities": {
+              "hashtags": [],
+              "media": [
+               {
+                "display_url": "pic.x.com/700042",
+                "expanded_url": "https://x.com/i/status/1/video/1",
+                "ext_alt_text": "A short mock video",
+                "id_str": "700042",
+                "media_key": "13_700042",
+                "media_url_https": "https://picsum.photos/seed/perch-video/1280/720",
+                "original_info": {
+                 "height": 720,
+                 "width": 1280
+                },
+                "sizes": {
+                 "large": {
+                  "h": 720,
+                  "resize": "fit",
+                  "w": 1280
+                 }
+                },
+                "type": "video",
+                "url": "https://t.co/700042",
+                "video_info": {
+                 "aspect_ratio": [
+                  16,
+                  9
+                 ],
+                 "duration_millis": 6000,
+                 "variants": [
+                  {
+                   "bitrate": 128000,
+                   "content_type": "video/mp4",
+                   "url": "https://mdn.github.io/shared-assets/videos/flower.mp4"
+                  },
+                  {
+                   "bitrate": 256000,
+                   "content_type": "video/mp4",
+                   "url": "https://mdn.github.io/shared-assets/videos/flower.mp4?q=256"
+                  },
+                  {
+                   "bitrate": 832000,
+                   "content_type": "video/mp4",
+                   "url": "https://mdn.github.io/shared-assets/videos/flower.mp4?q=832"
+                  }
+                 ]
+                }
+               }
+              ],
+              "symbols": [],
+              "urls": [],
+              "user_mentions": []
+             },
+             "extended_entities": {
+              "media": [
+               {
+                "display_url": "pic.x.com/700042",
+                "expanded_url": "https://x.com/i/status/1/video/1",
+                "ext_alt_text": "A short mock video",
+                "id_str": "700042",
+                "media_key": "13_700042",
+                "media_url_https": "https://picsum.photos/seed/perch-video/1280/720",
+                "original_info": {
+                 "height": 720,
+                 "width": 1280
+                },
+                "sizes": {
+                 "large": {
+                  "h": 720,
+                  "resize": "fit",
+                  "w": 1280
+                 }
+                },
+                "type": "video",
+                "url": "https://t.co/700042",
+                "video_info": {
+                 "aspect_ratio": [
+                  16,
+                  9
+                 ],
+                 "duration_millis": 6000,
+                 "variants": [
+                  {
+                   "bitrate": 128000,
+                   "content_type": "video/mp4",
+                   "url": "https://mdn.github.io/shared-assets/videos/flower.mp4"
+                  },
+                  {
+                   "bitrate": 256000,
+                   "content_type": "video/mp4",
+                   "url": "https://mdn.github.io/shared-assets/videos/flower.mp4?q=256"
+                  },
+                  {
+                   "bitrate": 832000,
+                   "content_type": "video/mp4",
+                   "url": "https://mdn.github.io/shared-assets/videos/flower.mp4?q=832"
+                  }
+                 ]
+                }
+               }
+              ]
+             },
+             "favorite_count": 7,
+             "favorited": false,
+             "full_text": "A v2-schema author with a video. https://t.co/Video42",
+             "id_str": "1860000000000000042",
+             "lang": "en",
+             "quote_count": 0,
+             "reply_count": 0,
+             "retweet_count": 3,
+             "retweeted": false,
+             "user_id_str": "1005"
+            },
+            "rest_id": "1860000000000000042",
+            "views": {
+             "count": "1234",
+             "state": "EnabledWithCount"
+            }
+           }
+          }
+         }
+        },
+        "entryId": "tweet-1860000000000000042",
+        "sortIndex": "1996"
+       },
+       {
+        "content": {
+         "__typename": "TimelineTimelineItem",
+         "entryType": "TimelineTimelineItem",
+         "itemContent": {
+          "__typename": "TimelineTweet",
+          "itemType": "TimelineTweet",
+          "tweetDisplayType": "Tweet",
+          "tweet_results": {
+           "result": {
+            "__typename": "Tweet",
+            "core": {
+             "user_results": {
+              "result": {
+               "__typename": "User",
+               "avatar": {
+                "image_url": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png"
+               },
+               "core": {
+                "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                "name": "Dev Placeholder",
+                "screen_name": "devplace"
+               },
+               "id": "VXNlcjo1004",
+               "is_blue_verified": false,
+               "legacy": {
+                "description": "",
+                "entities": {
+                 "description": {
+                  "urls": []
+                 }
+                },
+                "followers_count": 120,
+                "friends_count": 80,
+                "location": "Somewhere",
+                "statuses_count": 999
+               },
+               "privacy": {
+                "protected": false
+               },
+               "relationship_perspectives": {
+                "following": true
+               },
+               "rest_id": "1004"
+              }
+             }
+            },
+            "edit_control": {
+             "edit_tweet_ids": [
+              "1860000000000000004"
+             ],
+             "is_edit_eligible": false
+            },
+            "legacy": {
+             "bookmark_count": 0,
+             "bookmarked": false,
+             "conversation_id_str": "1860000000000000004",
+             "created_at": "Mon Nov 16 18:30:00 +0000 2026",
+             "display_text_range": [
+              0,
+              46
+             ],
+             "entities": {
+              "hashtags": [],
+              "symbols": [],
+              "urls": [],
+              "user_mentions": []
+             },
+             "favorite_count": 0,
+             "favorited": false,
+             "full_text": "RT @cleo_co: Original post that gets reposted.",
+             "id_str": "1860000000000000004",
+             "lang": "en",
+             "quote_count": 0,
+             "reply_count": 0,
+             "retweet_count": 120,
+             "retweeted": false,
+             "retweeted_status_result": {
+              "result": {
+               "__typename": "Tweet",
+               "core": {
+                "user_results": {
+                 "result": {
+                  "__typename": "User",
+                  "avatar": {
+                   "image_url": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png"
+                  },
+                  "core": {
+                   "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                   "name": "Cleo &amp; Co",
+                   "screen_name": "cleo_co"
+                  },
+                  "id": "VXNlcjo1003",
+                  "is_blue_verified": false,
+                  "legacy": {
+                   "description": "",
+                   "entities": {
+                    "description": {
+                     "urls": []
+                    }
+                   },
+                   "followers_count": 120,
+                   "friends_count": 80,
+                   "location": "Somewhere",
+                   "statuses_count": 999
+                  },
+                  "privacy": {
+                   "protected": false
+                  },
+                  "relationship_perspectives": {
+                   "following": false
+                  },
+                  "rest_id": "1003"
+                 }
+                }
+               },
+               "edit_control": {
+                "edit_tweet_ids": [
+                 "1860000000000000003"
+                ],
+                "is_edit_eligible": false
+               },
+               "legacy": {
+                "bookmark_count": 0,
+                "bookmarked": false,
+                "conversation_id_str": "1860000000000000003",
+                "created_at": "Mon Nov 16 18:30:00 +0000 2026",
+                "display_text_range": [
+                 0,
+                 33
+                ],
+                "entities": {
+                 "hashtags": [],
+                 "media": [
+                  {
+                   "display_url": "pic.x.com/AbCdEf123",
+                   "expanded_url": "https://x.com/i/status/1/photo/1",
+                   "ext_alt_text": "A mock photo",
+                   "id_str": "700003",
+                   "media_key": "3_700003",
+                   "media_url_https": "https://pbs.twimg.com/ext_tw_video_thumb/700003/pu/img/thumb.jpg",
+                   "original_info": {
+                    "height": 720,
+                    "width": 1280
+                   },
+                   "sizes": {
+                    "large": {
+                     "h": 720,
+                     "resize": "fit",
+                     "w": 1280
+                    }
+                   },
+                   "type": "video",
+                   "url": "https://t.co/VidEo999",
+                   "video_info": {
+                    "aspect_ratio": [
+                     16,
+                     9
+                    ],
+                    "duration_millis": 12000,
+                    "variants": [
+                     {
+                      "content_type": "application/x-mpegURL",
+                      "url": "https://video.twimg.com/ext_tw_video/1/pu/pl/x.m3u8"
+                     },
+                     {
+                      "bitrate": 2176000,
+                      "content_type": "video/mp4",
+                      "url": "https://video.twimg.com/ext_tw_video/1/pu/vid/1280x720/hi.mp4"
+                     },
+                     {
+                      "bitrate": 256000,
+                      "content_type": "video/mp4",
+                      "url": "https://video.twimg.com/ext_tw_video/1/pu/vid/480x270/lo.mp4"
+                     }
+                    ]
+                   }
+                  }
+                 ],
+                 "symbols": [],
+                 "urls": [],
+                 "user_mentions": []
+                },
+                "extended_entities": {
+                 "media": [
+                  {
+                   "display_url": "pic.x.com/AbCdEf123",
+                   "expanded_url": "https://x.com/i/status/1/photo/1",
+                   "ext_alt_text": "A mock photo",
+                   "id_str": "700003",
+                   "media_key": "3_700003",
+                   "media_url_https": "https://pbs.twimg.com/ext_tw_video_thumb/700003/pu/img/thumb.jpg",
+                   "original_info": {
+                    "height": 720,
+                    "width": 1280
+                   },
+                   "sizes": {
+                    "large": {
+                     "h": 720,
+                     "resize": "fit",
+                     "w": 1280
+                    }
+                   },
+                   "type": "video",
+                   "url": "https://t.co/VidEo999",
+                   "video_info": {
+                    "aspect_ratio": [
+                     16,
+                     9
+                    ],
+                    "duration_millis": 12000,
+                    "variants": [
+                     {
+                      "content_type": "application/x-mpegURL",
+                      "url": "https://video.twimg.com/ext_tw_video/1/pu/pl/x.m3u8"
+                     },
+                     {
+                      "bitrate": 2176000,
+                      "content_type": "video/mp4",
+                      "url": "https://video.twimg.com/ext_tw_video/1/pu/vid/1280x720/hi.mp4"
+                     },
+                     {
+                      "bitrate": 256000,
+                      "content_type": "video/mp4",
+                      "url": "https://video.twimg.com/ext_tw_video/1/pu/vid/480x270/lo.mp4"
+                     }
+                    ]
+                   }
+                  }
+                 ]
+                },
+                "favorite_count": 900,
+                "favorited": false,
+                "full_text": "Original post that gets reposted.",
+                "id_str": "1860000000000000003",
+                "lang": "en",
+                "quote_count": 0,
+                "reply_count": 0,
+                "retweet_count": 120,
+                "retweeted": false,
+                "user_id_str": "1003"
+               },
+               "rest_id": "1860000000000000003",
+               "views": {
+                "count": "36000",
+                "state": "EnabledWithCount"
+               }
+              }
+             },
+             "user_id_str": "1004"
+            },
+            "rest_id": "1860000000000000004",
+            "views": {
+             "count": "0",
+             "state": "EnabledWithCount"
+            }
+           }
+          }
+         }
+        },
+        "entryId": "tweet-1860000000000000004",
+        "sortIndex": "1997"
+       },
+       {
+        "content": {
+         "__typename": "TimelineTimelineItem",
+         "entryType": "TimelineTimelineItem",
+         "itemContent": {
+          "__typename": "TimelineTweet",
+          "itemType": "TimelineTweet",
+          "promotedMetadata": {
+           "advertiser_results": {}
+          },
+          "tweetDisplayType": "Tweet",
+          "tweet_results": {
+           "result": {
+            "__typename": "Tweet",
+            "core": {
+             "user_results": {
+              "result": {
+               "__typename": "User",
+               "avatar": {
+                "image_url": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png"
+               },
+               "core": {
+                "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                "name": "Dev Placeholder",
+                "screen_name": "devplace"
+               },
+               "id": "VXNlcjo1004",
+               "is_blue_verified": false,
+               "legacy": {
+                "description": "",
+                "entities": {
+                 "description": {
+                  "urls": []
+                 }
+                },
+                "followers_count": 120,
+                "friends_count": 80,
+                "location": "Somewhere",
+                "statuses_count": 999
+               },
+               "privacy": {
+                "protected": false
+               },
+               "relationship_perspectives": {
+                "following": true
+               },
+               "rest_id": "1004"
+              }
+             }
+            },
+            "edit_control": {
+             "edit_tweet_ids": [
+              "1860000000000000099"
+             ],
+             "is_edit_eligible": false
+            },
+            "legacy": {
+             "bookmark_count": 0,
+             "bookmarked": false,
+             "conversation_id_str": "1860000000000000099",
+             "created_at": "Mon Nov 16 18:30:00 +0000 2026",
+             "display_text_range": [
+              0,
+              11
+             ],
+             "entities": {
+              "hashtags": [],
+              "symbols": [],
+              "urls": [],
+              "user_mentions": []
+             },
+             "favorite_count": 3,
+             "favorited": false,
+             "full_text": "Buy things!",
+             "id_str": "1860000000000000099",
+             "lang": "en",
+             "quote_count": 0,
+             "reply_count": 0,
+             "retweet_count": 1,
+             "retweeted": false,
+             "user_id_str": "1004"
+            },
+            "rest_id": "1860000000000000099",
+            "views": {
+             "count": "120",
+             "state": "EnabledWithCount"
+            }
+           }
+          }
+         }
+        },
+        "entryId": "promoted-tweet-1860000000000000099-abc",
+        "sortIndex": "1860000000000000099"
+       },
+       {
+        "content": {
+         "__typename": "TimelineTimelineItem",
+         "entryType": "TimelineTimelineItem",
+         "itemContent": {
+          "__typename": "TimelineTweet",
+          "itemType": "TimelineTweet",
+          "tweetDisplayType": "Tweet",
+          "tweet_results": {
+           "result": {
+            "__typename": "Tweet",
+            "core": {
+             "user_results": {
+              "result": {
+               "__typename": "User",
+               "avatar": {
+                "image_url": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png"
+               },
+               "core": {
+                "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                "name": "Cleo &amp; Co",
+                "screen_name": "cleo_co"
+               },
+               "id": "VXNlcjo1003",
+               "is_blue_verified": false,
+               "legacy": {
+                "description": "",
+                "entities": {
+                 "description": {
+                  "urls": []
+                 }
+                },
+                "followers_count": 120,
+                "friends_count": 80,
+                "location": "Somewhere",
+                "statuses_count": 999
+               },
+               "privacy": {
+                "protected": false
+               },
+               "relationship_perspectives": {
+                "following": false
+               },
+               "rest_id": "1003"
+              }
+             }
+            },
+            "edit_control": {
+             "edit_tweet_ids": [
+              "1860000000000000006"
+             ],
+             "is_edit_eligible": false
+            },
+            "legacy": {
+             "bookmark_count": 0,
+             "bookmarked": false,
+             "conversation_id_str": "1860000000000000006",
+             "created_at": "Mon Nov 16 18:30:00 +0000 2026",
+             "display_text_range": [
+              0,
+              17
+             ],
+             "entities": {
+              "hashtags": [],
+              "symbols": [],
+              "urls": [],
+              "user_mentions": []
+             },
+             "favorite_count": 2,
+             "favorited": false,
+             "full_text": "Quoting this one:",
+             "id_str": "1860000000000000006",
+             "is_quote_status": true,
+             "lang": "en",
+             "quote_count": 0,
+             "reply_count": 0,
+             "retweet_count": 1,
+             "retweeted": false,
+             "user_id_str": "1003"
+            },
+            "quoted_status_result": {
+             "result": {
+              "__typename": "Tweet",
+              "core": {
+               "user_results": {
+                "result": {
+                 "__typename": "User",
+                 "avatar": {
+                  "image_url": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png"
+                 },
+                 "core": {
+                  "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                  "name": "Ada Example",
+                  "screen_name": "ada_example"
+                 },
+                 "id": "VXNlcjo1001",
+                 "is_blue_verified": true,
+                 "legacy": {
+                  "description": "Writes about engines. https://t.co/Bio1",
+                  "entities": {
+                   "description": {
+                    "urls": [
+                     {
+                      "expanded_url": "https://example.com",
+                      "url": "https://t.co/Bio1"
+                     }
+                    ]
+                   }
+                  },
+                  "followers_count": 5400,
+                  "friends_count": 80,
+                  "location": "Somewhere",
+                  "statuses_count": 999
+                 },
+                 "privacy": {
+                  "protected": false
+                 },
+                 "relationship_perspectives": {
+                  "following": false
+                 },
+                 "rest_id": "1001"
+                }
+               }
+              },
+              "edit_control": {
+               "edit_tweet_ids": [
+                "1860000000000000005"
+               ],
+               "is_edit_eligible": false
+              },
+              "legacy": {
+               "bookmark_count": 0,
+               "bookmarked": false,
+               "conversation_id_str": "1860000000000000005",
+               "created_at": "Mon Nov 16 18:30:00 +0000 2026",
+               "display_text_range": [
+                0,
+                21
+               ],
+               "entities": {
+                "hashtags": [],
+                "symbols": [],
+                "urls": [],
+                "user_mentions": []
+               },
+               "favorite_count": 10,
+               "favorited": false,
+               "full_text": "I am the quoted post.",
+               "id_str": "1860000000000000005",
+               "lang": "en",
+               "quote_count": 0,
+               "reply_count": 0,
+               "retweet_count": 1,
+               "retweeted": false,
+               "user_id_str": "1001"
+              },
+              "rest_id": "1860000000000000005",
+              "views": {
+               "count": "400",
+               "state": "EnabledWithCount"
+              }
+             }
+            },
+            "rest_id": "1860000000000000006",
+            "views": {
+             "count": "80",
+             "state": "EnabledWithCount"
+            }
+           }
+          }
+         }
+        },
+        "entryId": "tweet-1860000000000000006",
+        "sortIndex": "1995"
+       },
+       {
+        "content": {
+         "__typename": "TimelineTimelineModule",
+         "displayType": "VerticalConversation",
+         "entryType": "TimelineTimelineModule",
+         "items": [
+          {
+           "entryId": "home-conversation-1860000000000000008-tweet-1860000000000000007",
+           "item": {
+            "itemContent": {
+             "__typename": "TimelineTweet",
+             "itemType": "TimelineTweet",
+             "tweet_results": {
+              "result": {
+               "__typename": "Tweet",
+               "core": {
+                "user_results": {
+                 "result": {
+                  "__typename": "User",
+                  "id": "VXNlcjo1002",
+                  "is_blue_verified": false,
+                  "legacy": {
+                   "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                   "description": "",
+                   "entities": {
+                    "description": {
+                     "urls": []
+                    }
+                   },
+                   "followers_count": 120,
+                   "following": true,
+                   "friends_count": 80,
+                   "location": "Somewhere",
+                   "name": "Ben Sample",
+                   "profile_image_url_https": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png",
+                   "screen_name": "bensample",
+                   "statuses_count": 999
+                  },
+                  "rest_id": "1002"
+                 }
+                }
+               },
+               "edit_control": {
+                "edit_tweet_ids": [
+                 "1860000000000000007"
+                ],
+                "is_edit_eligible": false
+               },
+               "legacy": {
+                "bookmark_count": 0,
+                "bookmarked": false,
+                "conversation_id_str": "1860000000000000007",
+                "created_at": "Mon Nov 16 18:30:00 +0000 2026",
+                "display_text_range": [
+                 0,
+                 16
+                ],
+                "entities": {
+                 "hashtags": [],
+                 "symbols": [],
+                 "urls": [],
+                 "user_mentions": []
+                },
+                "favorite_count": 3,
+                "favorited": false,
+                "full_text": "Thread start 1/2",
+                "id_str": "1860000000000000007",
+                "lang": "en",
+                "quote_count": 0,
+                "reply_count": 0,
+                "retweet_count": 1,
+                "retweeted": false,
+                "user_id_str": "1002"
+               },
+               "rest_id": "1860000000000000007",
+               "views": {
+                "count": "120",
+                "state": "EnabledWithCount"
+               }
+              }
+             }
+            }
+           }
+          },
+          {
+           "entryId": "home-conversation-1860000000000000008-tweet-1860000000000000008",
+           "item": {
+            "itemContent": {
+             "__typename": "TimelineTweet",
+             "itemType": "TimelineTweet",
+             "tweet_results": {
+              "result": {
+               "__typename": "Tweet",
+               "core": {
+                "user_results": {
+                 "result": {
+                  "__typename": "User",
+                  "id": "VXNlcjo1002",
+                  "is_blue_verified": false,
+                  "legacy": {
+                   "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                   "description": "",
+                   "entities": {
+                    "description": {
+                     "urls": []
+                    }
+                   },
+                   "followers_count": 120,
+                   "following": true,
+                   "friends_count": 80,
+                   "location": "Somewhere",
+                   "name": "Ben Sample",
+                   "profile_image_url_https": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png",
+                   "screen_name": "bensample",
+                   "statuses_count": 999
+                  },
+                  "rest_id": "1002"
+                 }
+                }
+               },
+               "edit_control": {
+                "edit_tweet_ids": [
+                 "1860000000000000008"
+                ],
+                "is_edit_eligible": false
+               },
+               "legacy": {
+                "bookmark_count": 0,
+                "bookmarked": false,
+                "conversation_id_str": "1860000000000000007",
+                "created_at": "Mon Nov 16 18:30:00 +0000 2026",
+                "display_text_range": [
+                 11,
+                 26
+                ],
+                "entities": {
+                 "hashtags": [],
+                 "symbols": [],
+                 "urls": [],
+                 "user_mentions": []
+                },
+                "favorite_count": 3,
+                "favorited": false,
+                "full_text": "@bensample Thread part 2/2",
+                "id_str": "1860000000000000008",
+                "in_reply_to_screen_name": "bensample",
+                "in_reply_to_status_id_str": "1860000000000000007",
+                "lang": "en",
+                "quote_count": 0,
+                "reply_count": 0,
+                "retweet_count": 1,
+                "retweeted": false,
+                "user_id_str": "1002"
+               },
+               "rest_id": "1860000000000000008",
+               "views": {
+                "count": "120",
+                "state": "EnabledWithCount"
+               }
+              }
+             }
+            }
+           }
+          }
+         ]
+        },
+        "entryId": "home-conversation-1860000000000000008",
+        "sortIndex": "1994"
+       },
+       {
+        "content": {
+         "__typename": "TimelineTimelineModule",
+         "displayType": "Vertical",
+         "entryType": "TimelineTimelineModule",
+         "items": [
+          {
+           "entryId": "who-to-follow-1860-user-1004",
+           "item": {
+            "itemContent": {
+             "__typename": "TimelineUser",
+             "itemType": "TimelineUser",
+             "user_results": {
+              "result": {
+               "__typename": "User",
+               "avatar": {
+                "image_url": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png"
+               },
+               "core": {
+                "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                "name": "Dev Placeholder",
+                "screen_name": "devplace"
+               },
+               "id": "VXNlcjo1004",
+               "is_blue_verified": false,
+               "legacy": {
+                "description": "",
+                "entities": {
+                 "description": {
+                  "urls": []
+                 }
+                },
+                "followers_count": 120,
+                "friends_count": 80,
+                "location": "Somewhere",
+                "statuses_count": 999
+               },
+               "privacy": {
+                "protected": false
+               },
+               "relationship_perspectives": {
+                "following": true
+               },
+               "rest_id": "1004"
+              }
+             }
+            }
+           }
+          }
+         ]
+        },
+        "entryId": "who-to-follow-1860",
+        "sortIndex": "1993"
+       },
+       {
+        "content": {
+         "__typename": "TimelineTimelineItem",
+         "entryType": "TimelineTimelineItem",
+         "itemContent": {
+          "__typename": "TimelineTweet",
+          "itemType": "TimelineTweet",
+          "tweetDisplayType": "Tweet",
+          "tweet_results": {
+           "result": {
+            "__typename": "TweetTombstone",
+            "tombstone": {
+             "__typename": "TextTombstone",
+             "text": {
+              "entities": [],
+              "rtl": false,
+              "text": "This Post is from an account that no longer exists."
+             }
+            }
+           }
+          }
+         }
+        },
+        "entryId": "tweet-tomb",
+        "sortIndex": "1992"
+       },
+       {
+        "content": {
+         "entryType": "TimelineTimelineItem",
+         "itemContent": {
+          "itemType": "TimelineMessagePrompt"
+         }
+        },
+        "entryId": "messageprompt-1",
+        "sortIndex": "1991"
+       },
+       {
+        "content": {
+         "entryType": "TimelineSomethingNew"
+        },
+        "entryId": "future-thing",
+        "sortIndex": "1990"
+       },
+       {
+        "content": {
+         "__typename": "TimelineTimelineCursor",
+         "cursorType": "Top",
+         "entryType": "TimelineTimelineCursor",
+         "value": "DAABCgABTOP"
+        },
+        "entryId": "cursor-top-1999999",
+        "sortIndex": "1999999"
+       },
+       {
+        "content": {
+         "__typename": "TimelineTimelineCursor",
+         "cursorType": "Bottom",
+         "entryType": "TimelineTimelineCursor",
+         "value": "DAABCgABBOTTOM"
+        },
+        "entryId": "cursor-bottom-1",
+        "sortIndex": "1"
+       }
+      ],
+      "type": "TimelineAddEntries"
+     },
+     {
+      "type": "TimelineClearCache"
+     }
+    ],
+    "metadata": {
+     "scribeConfig": {
+      "page": "for_you"
+     }
+    },
+    "responseObjects": {
+     "feedbackActions": []
+    }
+   }
+  }
+ }
+}
