@@ -141,11 +141,13 @@ struct RootPager: View {
             .offset(x: -CGFloat(page) * w + dragX)
             .simultaneousGesture(pagerDrag(width: w))
         }
-        // Full screen like the TabView it replaces: the feeds scroll under the
-        // clock/toolbar and to the bottom edge (each ScrollView still gets the
-        // safe-area insets for its content), instead of black bars there.
-        .ignoresSafeArea()
-        .clipped()
+        // No `.clipped()` and no `.ignoresSafeArea()` here (measured with the
+        // layout probe in the CI screenshots): the pager's frame is the safe
+        // area (y62 h150 on a 46 mm watch) while each page's scroll view extends
+        // to the full 248 pt screen, so clipping cut the feed into black bars
+        // at the top and bottom, and ignoring the safe area removed the
+        // scroll view's insets (first post under the clock). The neighbouring
+        // pages sit outside the display anyway, so nothing needs clipping.
         .layoutProbe("pager", .red)
         .background(Color.black)
         // One glow for the whole pager (not per page), so a refresh that is
