@@ -282,34 +282,34 @@ struct EdgeGlow: View {
     var progress: CGFloat = 0
     var loading: Bool = false
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// One pulse (dim → bright → dim), seconds.
+    private static let period: Double = 1.8
+
+    // The pulse is computed from the clock (TimelineView), not animated:
+    // a repeat-forever implicit animation also animated every layout change
+    // made while it ran, which made the ring shrink and grow on a cold start.
+    // Paused (no redraws at all) whenever nothing is loading.
     var body: some View {
-        ZStack {
-            if loading {
-                LoadingGlow()
-                    .transition(.opacity)
-            } else if progress > 0.03 {
-                GlowShape()
-                    .opacity(0.25 + 0.6 * Double(min(1, max(0, progress))))
-            }
+        TimelineView(.animation(minimumInterval: 1.0 / 20, paused: !loading || reduceMotion)) { context in
+            GlowShape()
+                .opacity(opacity(at: context.date))
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
-        .animation(.easeOut(duration: 0.2), value: loading)
+        .accessibilityHidden(true)
     }
-}
 
-/// A gentle opacity pulse: the cheapest animation there is (no gradients,
-/// hue rotation or scaling, which made the ring stutter on the Watch).
-private struct LoadingGlow: View {
-    @State private var bright = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        GlowShape()
-            .opacity(bright ? 0.8 : 0.25)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
-                       value: bright)
-            .onAppear { bright = true }
+    private func opacity(at date: Date) -> Double {
+        if loading {
+            if reduceMotion { return 0.6 }
+            let phase = date.timeIntervalSinceReferenceDate
+                .truncatingRemainder(dividingBy: Self.period) / Self.period
+            return 0.25 + 0.55 * (0.5 - 0.5 * cos(phase * 2 * .pi))
+        }
+        guard progress > 0.03 else { return 0 }
+        return 0.25 + 0.6 * Double(min(1, max(0, progress)))
     }
 }
 

@@ -119,19 +119,31 @@ struct RootPager: View {
         GeometryReader { geo in
             let w = geo.size.width
             HStack(spacing: 0) {
+                // Off-screen pages are disabled: a disabled view cannot take
+                // focus, so the Digital Crown can only ever land on the page
+                // that is on screen. (All three pages stay alive; an enabled
+                // off-screen list was taking the crown on launch and after the
+                // media viewer closed, which is why it needed a touch first.)
                 MenuView(isActive: page == 0, onPick: { kind in
                     goFeed(kind)
                 })
                 .frame(width: w)
+                .disabled(page != 0)
                 HomeView(kind: .forYou, isActive: page == 1)
                     .frame(width: w)
+                    .disabled(page != 1)
                 HomeView(kind: .following, isActive: page == 2)
                     .frame(width: w)
+                    .disabled(page != 2)
             }
             .frame(width: w, alignment: .leading)
             .offset(x: -CGFloat(page) * w + dragX)
             .simultaneousGesture(pagerDrag(width: w))
         }
+        // Full screen like the TabView it replaces: the feeds scroll under the
+        // clock/toolbar and to the bottom edge (each ScrollView still gets the
+        // safe-area insets for its content), instead of black bars there.
+        .ignoresSafeArea()
         .clipped()
         .background(Color.black)
         // One glow for the whole pager (not per page), so a refresh that is

@@ -26,11 +26,12 @@ struct Skeleton: View {
                             endPoint: .trailing
                         )
                         .frame(width: max(40, geo.size.width * 0.45))
-                        .offset(x: slide * geo.size.width * 1.6)
-                        // Scoped to `slide` only. A `withAnimation(.repeatForever)`
-                        // in `onAppear` leaked into every layout change made in the
-                        // same transaction (rows drifting/bouncing in the feed).
-                        .animation(.linear(duration: 1.2).repeatForever(autoreverses: false), value: slide)
+                        // The repeat-forever animation covers the offset only
+                        // (`animation(_:body:)`); a value-scoped one would also
+                        // animate any size change of the row made meanwhile.
+                        .animation(.linear(duration: 1.2).repeatForever(autoreverses: false)) { content in
+                            content.offset(x: slide * geo.size.width * 1.6)
+                        }
                     }
                     .onAppear { slide = 1.6 }
                 }
