@@ -17,16 +17,31 @@ struct PerchWatchApp: App {
         AppModel.shared.onLogout = { OfflineCache.clear() }
     }
 
+    /// The app's root view. The screenshot harness hook lives in
+    /// `PerchWatch/Debug`, which Release builds do not compile, so it must stay
+    /// behind `#if DEBUG` here.
+    @ViewBuilder
+    private var root: some View {
+        #if DEBUG
+        WatchRootView()
+            .perchDebugScreens()
+            .environmentObject(app)
+            .environmentObject(app.posts)
+            .environmentObject(sync)
+            .onAppear { sync.start() }
+        #else
+        WatchRootView()
+            .environmentObject(app)
+            .environmentObject(app.posts)
+            .environmentObject(sync)
+            .onAppear { sync.start() }
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
             ZStack {
-                // `.perchDebugScreens()` is inert outside DEBUG builds.
-                WatchRootView()
-                    .perchDebugScreens()
-                    .environmentObject(app)
-                    .environmentObject(app.posts)
-                    .environmentObject(sync)
-                    .onAppear { sync.start() }
+                root
 
                 if showIntro {
                     LaunchIntroView(visible: $showIntro)
