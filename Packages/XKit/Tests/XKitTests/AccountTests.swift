@@ -98,7 +98,7 @@ final class AccountTests: XCTestCase {
         XCTAssertNil(c.userId)
         let id = XAccount.id(for: c)
         XCTAssertTrue(id.hasPrefix("local-"), id)
-        XCTAssertEqual(id.count, 14) // "local-" + 8 hex chars
+        XCTAssertEqual(id.count, 22) // "local-" + 16 hex chars (8 bytes)
         let hex = String(id.dropFirst("local-".count))
         XCTAssertTrue(hex.allSatisfy { "0123456789abcdef".contains($0) }, hex)
         XCTAssertEqual(XAccount.id(for: c), id)

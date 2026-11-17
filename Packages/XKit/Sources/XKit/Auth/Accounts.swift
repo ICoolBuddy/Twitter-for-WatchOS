@@ -3,7 +3,7 @@ import Foundation
 /// One logged-in X account.
 ///
 /// `id` is the numeric X user id when it is known (`credentials.userId`), otherwise
-/// a stable `local-<8 hex>` hash of `authToken`. That way the same cookie pair always
+/// a stable `local-<16 hex>` hash of `authToken`. That way the same cookie pair always
 /// maps to the same account even before the viewer profile has been fetched.
 public struct XAccount: Codable, Sendable, Hashable, Identifiable {
     public var id: String
