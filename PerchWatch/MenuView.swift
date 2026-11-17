@@ -7,6 +7,7 @@ import XKit
 /// the menu. Choosing a timeline (or switching account) swipes back to its feed.
 struct MenuView: View {
     @EnvironmentObject private var app: AppModel
+    @ObservedObject private var posts = AppModel.shared.posts
 
     /// Switches the root pager to the feed page for that timeline.
     var onPick: (HomeKind) -> Void = { _ in }
@@ -44,6 +45,14 @@ struct MenuView: View {
 
                 NavigationLink(value: Route.saved) {
                     Label("Saved", systemImage: "arrow.down.circle")
+                }
+            }
+
+            if posts.pendingCount > 0 {
+                Section {
+                    Text("\(posts.pendingCount) action\(posts.pendingCount == 1 ? "" : "s") will send when you are online")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
 

@@ -2,9 +2,13 @@
 
 Do NOT implement until the round-2 changes (docs/REDESIGN-2.md) are installed and tested on the Watch.
 
-**Status 2026-11-17:** 1, 2 and 3 (first version) are implemented, 5 and the speed part of 6 are in.
-Still open: 3's "Likes/Bookmarks reuse the saved copy", 4 beyond what already exists (feed/profile/
-image caches), queued offline actions, and the animation polish of 6.
+**Status 2026-11-17:** 1, 2, 3, 4 (first version), 5 and 6 (speed part) are implemented.
+- 3: saved posts keep text + avatar + photos + lowest-bitrate video in Application Support; the feed
+  shows the saved copy of a photo instead of re-downloading it.
+- 4: opened posts (threads) and profiles are cached and open offline; a failed request no longer
+  shows an error wall when cached content is on screen; like/repost/bookmark taps made offline are
+  queued and replayed on the next refresh or foreground.
+Still open: full offline copies of Likes/Bookmarks timelines, and the animation polish of 6.
 
 1. [x] **Launch intro**: a short splash/intro animation like X's, shown on a cold launch only (not when
    the app resumes from the background).

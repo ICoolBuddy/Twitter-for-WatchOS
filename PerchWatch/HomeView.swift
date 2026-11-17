@@ -161,6 +161,8 @@ struct HomeView: View {
 
     private func refresh(_ proxy: ScrollViewProxy, merge: Bool) async {
         await list.refresh(merge: merge)
+        // Offline taps (like/repost/bookmark) go out as soon as we are online.
+        await app.posts.flush(client: app.client)
         // A refresh the reader asked for (pull / crown) brings them to the top;
         // the silent one on open leaves the scroll position alone.
         guard !merge, !list.items.isEmpty else { return }

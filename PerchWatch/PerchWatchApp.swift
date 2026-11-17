@@ -36,6 +36,7 @@ struct PerchWatchApp: App {
             case .active:
                 BackgroundRefresh.scheduleSoon()
                 Task { await app.refreshBadge() }
+                Task { await app.posts.flush(client: app.client) }
             case .background: ImageLoader.shared.purge()
             default: break
             }
