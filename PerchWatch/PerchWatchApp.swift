@@ -21,10 +21,16 @@ struct PerchWatchApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .active: Task { await app.refreshBadge() }
+            case .active:
+                BackgroundRefresh.scheduleSoon()
+                Task { await app.refreshBadge() }
             case .background: ImageLoader.shared.purge()
             default: break
             }
+        }
+        // ~every 30 min (watchOS decides); feed + badge + complication. See BackgroundRefresh.swift.
+        .backgroundTask(.appRefresh) {
+            await BackgroundRefresh.handle()
         }
     }
 }
