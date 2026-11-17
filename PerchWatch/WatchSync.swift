@@ -59,8 +59,14 @@ final class WatchSync: NSObject, ObservableObject, SyncChannel {
             if p.command == .logout {
                 await AppModel.shared.logout(propagate: false)
             } else {
+                let wasLoggedIn = AppModel.shared.isLoggedIn
                 await p.apply(to: AppModel.shared.store)
                 await AppModel.shared.reloadState()
+                // A real login arriving from the iPhone ends demo mode (it may have been
+                // switched on from onboarding before the session was synced).
+                if !wasLoggedIn, AppModel.shared.isLoggedIn, AppModel.shared.demoMode {
+                    AppModel.shared.demoMode = false
+                }
             }
             Haptics.success()
         }

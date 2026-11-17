@@ -15,10 +15,14 @@ struct HomeView: View {
         List {
             kindPicker
             if app.demoMode {
-                Text("Demo mode — sample data")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-                    .listRowBackground(Color.clear)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Demo mode — sample data").font(.caption2.bold()).foregroundStyle(.orange)
+                    if app.isLoggedIn {
+                        Button("Show my timeline") { app.demoMode = false }
+                            .font(.caption2)
+                    }
+                }
+                .listRowBackground(Color.clear)
             }
             if let e = list.error, list.isEmpty {
                 ErrorStateView(error: e) { await list.refresh() }
@@ -47,6 +51,21 @@ struct HomeView: View {
                     Image(systemName: "gearshape")
                 }
                 .accessibilityLabel("Settings")
+            }
+            // watchOS draws no pull-to-refresh control for `.refreshable`, so offer a button.
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Haptics.click()
+                    Task { await list.refresh() }
+                } label: {
+                    if list.isLoading && !list.isEmpty {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .disabled(list.isLoading)
+                .accessibilityLabel("Refresh")
             }
         }
         .task(id: "\(kindRaw)-\(app.usesLiveClient)") {
