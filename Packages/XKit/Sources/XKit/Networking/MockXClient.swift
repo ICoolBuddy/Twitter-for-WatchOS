@@ -64,7 +64,11 @@ public actor MockXClient: XClient {
         return p
     }
 
-    public func badgeCounts() async throws -> XBadgeCounts { XParser.badgeCounts(MockData.json("badge_counts")) }
+    public func badgeCounts() async throws -> XBadgeCounts {
+        seen ? XBadgeCounts(notifications: 0, dms: 1) : XParser.badgeCounts(MockData.json("badge_counts"))
+    }
+    private var seen = false
+    public func markNotificationsSeen(topCursor: String) async throws { seen = true }
 
     public func viewer() async throws -> XUser {
         XUser(id: "2000", name: "Perch Tester", screenName: "perch_tester",

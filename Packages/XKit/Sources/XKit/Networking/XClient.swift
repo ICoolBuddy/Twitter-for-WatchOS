@@ -27,6 +27,8 @@ public protocol XClient: Sendable {
     func deleteTweet(id: String) async throws
     func notifications(_ kind: NotificationKind, cursor: String?) async throws -> NotificationsPage
     func badgeCounts() async throws -> XBadgeCounts
+    /// Tells X the notifications up to `topCursor` were seen (clears the badge).
+    func markNotificationsSeen(topCursor: String) async throws
     func viewer() async throws -> XUser
     func user(screenName: String) async throws -> XUser
     func user(id: String) async throws -> XUser
@@ -146,6 +148,10 @@ public actor LiveXClient: XClient {
     public func badgeCounts() async throws -> XBadgeCounts {
         let json = try await graphQL(.viewerBadgeCounts, variables: [:])
         return XParser.badgeCounts(json)
+    }
+
+    public func markNotificationsSeen(topCursor: String) async throws {
+        _ = try await rest("POST", "notifications/all/last_seen_cursor.json", form: ["cursor": topCursor], version: "2")
     }
 
     // MARK: Users
@@ -281,9 +287,9 @@ public actor LiveXClient: XClient {
     }
 
     public func rest(_ method: String, _ path: String, query: [String: String] = [:], form: [String: String]? = nil,
-                     json: JSON? = nil) async throws -> JSON {
+                     json: JSON? = nil, version: String = "1.1") async throws -> JSON {
         let config = await store.config
-        guard var url = URL(string: "https://x.com/i/api/1.1/" + path) else { throw XError.network("bad url") }
+        guard var url = URL(string: "https://x.com/i/api/\(version)/" + path) else { throw XError.network("bad url") }
         if !query.isEmpty { url = url.withStrictQuery(query.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }) }
         var body: Data?
         var contentType: String?
