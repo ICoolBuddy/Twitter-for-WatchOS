@@ -2,7 +2,8 @@ import SwiftUI
 import XKit
 
 /// Full post: ancestors, focal post (full text, all media, quote), then replies
-/// that auto-load when scrolling near the bottom.
+/// that auto-load when scrolling near the bottom. The focal post is not a link
+/// to itself.
 struct PostDetailView: View {
     let tweet: XTweet
     @EnvironmentObject private var app: AppModel
@@ -15,7 +16,6 @@ struct PostDetailView: View {
 
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
-    @State private var replyTarget: XTweet?
 
     private var focal: XTweet { thread?.focal ?? tweet.displayed }
     private var ancestors: [XTweet] { thread?.ancestors ?? [] }
@@ -30,11 +30,11 @@ struct PostDetailView: View {
                 }
 
                 FeedPostView(tweet: focal,
-                             showBookmark: true,
                              showDate: true,
+                             linkToPost: false,
+                             clampLongText: false,
                              onOpenProfile: { profileTarget = ProfileTarget(user: $0) },
-                             onMedia: { mediaTarget = $0 },
-                             onReply: { replyTarget = $0 })
+                             onMedia: { mediaTarget = $0 })
 
                 if let error, replies.isEmpty {
                     ErrorStateView(error: error) { await load() }
@@ -61,17 +61,24 @@ struct PostDetailView: View {
                         .padding(.vertical, 20)
                 }
 
-                if replies.isEmpty, cursor != nil, !loading {
-                    Button("Load replies") { Task { await loadMore() } }
-                        .font(.system(size: 13))
-                        .padding(.vertical, 8)
+                if replies.isEmpty, cursor != nil, !loading, focal.replyCount > 0 {
+                    Button {
+                        Task { await loadMore() }
+                    } label: {
+                        Text("Load replies")
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
                 }
 
                 ForEach(replies) { item in
                     TimelineItemRows(item: item,
                                      onOpenProfile: { profileTarget = ProfileTarget(user: $0) },
-                                     onMedia: { mediaTarget = $0 },
-                                     onReply: { replyTarget = $0 })
+                                     onMedia: { mediaTarget = $0 })
                         .onAppear { prefetch(item) }
                     PostSeparator()
                 }
@@ -88,22 +95,28 @@ struct PostDetailView: View {
         .background(Color.black)
         .navigationTitle("Post")
         .task { if thread == nil { await load() } }
-        .postPresentation(profile: $profileTarget, media: $mediaTarget, reply: $replyTarget)
+        .postPresentation(profile: $profileTarget, media: $mediaTarget)
     }
 
     private func load() async {
         guard !loading else { return }
         loading = true
         error = nil
-        defer { loading = false }
         do {
             let t = try await app.client.tweetDetail(id: tweet.displayed.id, cursor: nil)
             thread = t
             replies = t.replies
             cursor = t.bottomCursor
+            ImageLoader.shared.prefetchFeed(replies.displayTweets)
         } catch is CancellationError {
         } catch {
             self.error = XError.from(error)
+        }
+        loading = false
+        // Replies auto-load: if the first page brought none, fetch the next one
+        // (only when X says there are replies and there is a cursor).
+        if replies.isEmpty, cursor != nil, focal.replyCount > 0 {
+            await loadMore()
         }
     }
 
@@ -125,6 +138,7 @@ struct PostDetailView: View {
             let fresh = t.replies.filter { !ids.contains($0.id) }
             replies.append(contentsOf: fresh)
             cursor = (t.bottomCursor == c || fresh.isEmpty) ? nil : t.bottomCursor
+            ImageLoader.shared.prefetchFeed(t.replies.displayTweets)
         } catch is CancellationError {
         } catch {
             self.error = XError.from(error)

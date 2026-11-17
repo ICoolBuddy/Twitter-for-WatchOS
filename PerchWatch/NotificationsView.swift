@@ -9,7 +9,6 @@ struct NotificationsView: View {
     @State private var configuredKey: String?
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
-    @State private var replyTarget: XTweet?
 
     var body: some View {
         ScrollView {
@@ -58,7 +57,7 @@ struct NotificationsView: View {
             configure()
             await list.loadIfNeeded()
         }
-        .postPresentation(profile: $profileTarget, media: $mediaTarget, reply: $replyTarget)
+        .postPresentation(profile: $profileTarget, media: $mediaTarget)
     }
 
     private var taskKey: String {
@@ -120,26 +119,14 @@ struct NotificationRow: View {
                 }
             }
 
-            Text(notification.text)
-                .font(.system(size: 15))
-                .lineLimit(3)
-                .fixedSize(horizontal: false, vertical: true)
-
             if let t = notification.tweet {
+                // Tapping the notification (text or snippet) opens the post page.
                 NavigationLink(value: Route.post(t)) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("\(t.author.name) @\(t.author.screenName)")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                        Text(t.text)
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
+                    VStack(alignment: .leading, spacing: 4) {
+                        textLabel
+                        tweetSnippet(t)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(6)
-                    .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -149,13 +136,41 @@ struct NotificationRow: View {
                         onMedia(MediaTarget(media: t.media, startIndex: 0))
                     } label: {
                         MediaThumb(media: t.media[0], extraCount: t.media.count - 1, maxHeight: 90)
+                            .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
                     .accessibilityLabel("Open media")
                 }
+            } else {
+                textLabel
             }
         }
         .padding(.vertical, 5)
+    }
+
+    private var textLabel: some View {
+        Text(notification.text)
+            .font(.system(size: 15))
+            .lineLimit(3)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func tweetSnippet(_ t: XTweet) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text("\(t.author.name) @\(t.author.screenName)")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(t.text)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(6)
+        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var symbol: String {

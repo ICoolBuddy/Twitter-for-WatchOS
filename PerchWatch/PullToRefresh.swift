@@ -4,7 +4,7 @@ import SwiftUI
 /// draws no control for it, so this tracks the scroll view's overscroll at the
 /// top: an arrow fades in and turns as you pull, and crossing the threshold
 /// starts the refresh. No haptics (refreshing must be silent).
-/// While it runs, put `PullToRefreshSpinnerRow` at the top of the content.
+/// The arrow is cleared when the refresh starts and when it ends.
 struct PullToRefresh: ViewModifier {
     let isRefreshing: Bool
     let action: () async -> Void
@@ -28,6 +28,13 @@ struct PullToRefresh: ViewModifier {
                     Task { await action() }
                 }
             }
+            // Never leave the arrow stuck on screen: clear it when the refresh
+            // starts (the pull no longer matters) and again when it ends. The
+            // next pull re-arms via the `overscroll < 6` check above.
+            .onChange(of: isRefreshing) { _, refreshing in
+                pull = 0
+                if refreshing { armed = false }
+            }
             .overlay(alignment: .top) {
                 if pull > 4 && !isRefreshing {
                     let progress = min(1, pull / Self.threshold)
@@ -42,15 +49,6 @@ struct PullToRefresh: ViewModifier {
                         .accessibilityHidden(true)
                 }
             }
-    }
-}
-
-/// Spinner shown while a pull-triggered refresh runs.
-struct PullToRefreshSpinnerRow: View {
-    var body: some View {
-        ProgressView()
-            .frame(maxWidth: .infinity)
-            .accessibilityLabel("Refreshing")
     }
 }
 

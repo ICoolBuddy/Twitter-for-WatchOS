@@ -40,12 +40,49 @@ struct WatchRootView: View {
     var body: some View {
         if app.canBrowse {
             NavigationStack {
-                HomeView()
+                RootPager()
                     .navigationDestination(for: Route.self) { RouteView(route: $0) }
             }
         } else {
             NavigationStack { OnboardingView() }
         }
+    }
+}
+
+/// Two pages: the menu (0) and the feed (1). Swiping right on the feed reveals
+/// the menu; the hamburger button animates to it. Both share the root
+/// `NavigationStack`, so menu entries push over whichever page is showing.
+/// The toolbar lives here so the feed and the menu never both contribute one.
+struct RootPager: View {
+    @State private var page = 1
+
+    var body: some View {
+        TabView(selection: $page) {
+            MenuView(onShowFeed: { showFeed() })
+                .tag(0)
+            HomeView()
+                .tag(1)
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .background(Color.black)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    if page == 1 { showMenu() } else { showFeed() }
+                } label: {
+                    Image(systemName: page == 1 ? "line.3.horizontal" : "chevron.left")
+                }
+                .accessibilityLabel(page == 1 ? "Menu" : "Back to feed")
+            }
+        }
+    }
+
+    private func showFeed() {
+        withAnimation(.easeInOut(duration: 0.2)) { page = 1 }
+    }
+
+    private func showMenu() {
+        withAnimation(.easeInOut(duration: 0.2)) { page = 0 }
     }
 }
 
@@ -112,6 +149,7 @@ struct OnboardingView: View {
                     sync.syncNow()
                 } label: {
                     Label("Sync from iPhone", systemImage: "iphone.and.arrow.forward")
+                        .frame(maxWidth: .infinity)
                 }
                 Text(sync.statusText).font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
             }
