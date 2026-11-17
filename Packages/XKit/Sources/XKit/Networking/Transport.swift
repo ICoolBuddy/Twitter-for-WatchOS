@@ -28,9 +28,36 @@ public struct URLSessionTransport: HTTPTransport {
     }
 
     public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        #if canImport(Darwin)
+        // Stream the response so the UI can show progress / throughput while it downloads.
+        let id = TransferMonitor.shared.begin()
+        defer { TransferMonitor.shared.end(id) }
+        let (bytes, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else { throw XError.network("Not an HTTP response") }
+        var data = Data()
+        if http.expectedContentLength > 0, http.expectedContentLength < Int64(Int.max) {
+            data.reserveCapacity(Int(http.expectedContentLength))
+        }
+        var chunk = [UInt8]()
+        chunk.reserveCapacity(16 * 1024)
+        for try await byte in bytes {
+            chunk.append(byte)
+            if chunk.count >= 16 * 1024 {
+                TransferMonitor.shared.add(chunk.count, to: id)
+                data.append(contentsOf: chunk)
+                chunk.removeAll(keepingCapacity: true)
+            }
+        }
+        if !chunk.isEmpty {
+            TransferMonitor.shared.add(chunk.count, to: id)
+            data.append(contentsOf: chunk)
+        }
+        return (data, http)
+        #else
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw XError.network("Not an HTTP response") }
         return (data, http)
+        #endif
     }
 }
 

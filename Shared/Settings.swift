@@ -12,7 +12,7 @@ enum PerchSettings {
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [
             autoRefreshOnOpen: true,
-            homeKind: HomeKind.following.rawValue,
+            homeKind: HomeKind.forYou.rawValue,
         ])
     }
 }
