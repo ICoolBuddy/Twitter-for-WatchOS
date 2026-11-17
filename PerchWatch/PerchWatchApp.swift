@@ -12,6 +12,9 @@ struct PerchWatchApp: App {
 
     init() {
         PerchSettings.registerDefaults()
+        OfflineCache.removeLegacyFiles()
+        // Cached threads/profiles belong to the session that fetched them.
+        AppModel.shared.onLogout = { OfflineCache.clear() }
     }
 
     var body: some Scene {
@@ -174,6 +177,8 @@ struct RouteView: View {
             TimelineListView(kind: .bookmarks, title: "Bookmarks")
         case .saved:
             SavedView()
+        case .search:
+            SearchView()
         case .settings:
             WatchSettingsView()
         case .debugLog:

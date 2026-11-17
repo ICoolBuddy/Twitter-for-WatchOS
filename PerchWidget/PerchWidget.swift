@@ -49,7 +49,7 @@ struct PerchComplication: Widget {
             ComplicationView(entry: entry)
         }
         .configurationDisplayName("Perch")
-        .description("Unread posts and the newest post from your timeline.")
+        .description("Unread notifications and the newest post from your timeline.")
         .supportedFamilies([.accessoryCircular, .accessoryRectangular, .accessoryInline, .accessoryCorner])
     }
 }
@@ -119,7 +119,7 @@ struct ComplicationView: View {
         Image(systemName: "bird.fill")
             .font(.title3)
             .widgetLabel {
-                Text(entry.snapshot.unread > 0 ? "\(entry.snapshot.unread) new" : "Perch")
+                Text(entry.snapshot.unread > 0 ? "\(entry.snapshot.unread) unread" : "Perch")
             }
     }
 
@@ -131,11 +131,13 @@ struct ComplicationView: View {
 
     private var bodyText: String {
         if !trimmedText.isEmpty { return trimmedText }
-        return entry.snapshot.unread > 0 ? "\(entry.snapshot.unread) new posts" : "No new posts"
+        // `unread` is the notification badge, not a count of new posts.
+        let n = entry.snapshot.unread
+        return n > 0 ? "\(n) unread notification\(n == 1 ? "" : "s")" : "No new notifications"
     }
 
     private var inlineSuffix: String {
-        if entry.snapshot.unread > 0 { return ": \(entry.snapshot.unread) new" }
+        if entry.snapshot.unread > 0 { return ": \(entry.snapshot.unread) unread" }
         if let author = entry.snapshot.author, !author.isEmpty { return ": " + author }
         return ""
     }

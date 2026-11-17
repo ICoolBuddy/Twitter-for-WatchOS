@@ -188,11 +188,18 @@ public enum XParser {
         let note = r["note_tweet"]["note_tweet_results"]["result"]
         var text: String
         var urls: [JSON]
+        var alreadyDecoded = false
         if let noteText = note["text"].string {
             text = noteText
             urls = note["entity_set"]["urls"].array
         } else {
-            text = v("full_text").string ?? v("text").string ?? ""
+            // Decode HTML entities *before* slicing: X escapes `&`, `<`, `>` in
+            // `full_text`, and slicing the longer escaped string with
+            // `display_text_range` could cut real characters off the end. With the
+            // decoded (shorter) text the worst case is keeping a trailing media
+            // link, which is removed below anyway.
+            text = decodeEntities(v("full_text").string ?? v("text").string ?? "")
+            alreadyDecoded = true
             urls = v("entities")["urls"].array
             // Strip leading @mentions of replies using display_text_range.
             let range = v("display_text_range").array.compactMap(\.int)
@@ -210,19 +217,6 @@ public enum XParser {
             }
         }
 
-        let mediaJSON = v("extended_entities")["media"].array.isEmpty
-            ? v("entities")["media"].array : v("extended_entities")["media"].array
-        let media = mediaJSON.compactMap(XParser.media)
-        // Remove t.co links for attached media, expand other t.co links.
-        for m in mediaJSON { if let u = m["url"].string { text = text.replacingOccurrences(of: u, with: "") } }
-        for u in urls {
-            if let short = u["url"].string {
-                let display = u["expanded_url"].string ?? u["display_url"].string ?? short
-                text = text.replacingOccurrences(of: short, with: display)
-            }
-        }
-        text = decodeEntities(text).trimmingCharacters(in: .whitespacesAndNewlines)
-
         var retweeted: XTweet?
         let rtRaw = v("retweeted_status_result")["result"]
         if !rtRaw.isNull { retweeted = tweet(rtRaw, depth: depth + 1) }
@@ -230,6 +224,27 @@ public enum XParser {
         var quoted: XTweet?
         let qRaw = r["quoted_status_result"]["result"]
         if !qRaw.isNull { quoted = tweet(qRaw, depth: depth + 1) }
+
+        let mediaJSON = v("extended_entities")["media"].array.isEmpty
+            ? v("entities")["media"].array : v("extended_entities")["media"].array
+        let media = mediaJSON.compactMap(XParser.media)
+        // Remove t.co links for attached media, expand other t.co links.
+        for m in mediaJSON { if let u = m["url"].string { text = text.replacingOccurrences(of: u, with: "") } }
+        // The quoted post is shown as a card, so its permalink is noise in the text.
+        let quotePermalink = v("quoted_status_permalink")["url"].string
+        for u in urls {
+            if let short = u["url"].string {
+                let display = u["expanded_url"].string ?? u["display_url"].string ?? short
+                let isQuoteLink = quoted != nil
+                    && (short == quotePermalink || isStatusLink(display, id: quoted?.id))
+                text = text.replacingOccurrences(of: short, with: isQuoteLink ? "" : display)
+            }
+        }
+        if quoted != nil, let quotePermalink {
+            text = text.replacingOccurrences(of: quotePermalink, with: "")
+        }
+        if !alreadyDecoded { text = decodeEntities(text) }
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
         return XTweet(
             id: id,
@@ -253,6 +268,14 @@ public enum XParser {
             quotedTweet: quoted,
             lang: v("lang").string
         )
+    }
+
+    /// `https://x.com/<user>/status/<id>` (or twitter.com, with query/suffix).
+    static func isStatusLink(_ url: String, id: String?) -> Bool {
+        guard let id, !id.isEmpty else { return false }
+        let lower = url.lowercased()
+        guard lower.contains("twitter.com/") || lower.contains("x.com/") else { return false }
+        return lower.contains("/status/" + id)
     }
 
     static func media(_ m: JSON) -> XMedia? {

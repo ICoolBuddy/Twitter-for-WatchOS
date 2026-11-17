@@ -26,6 +26,11 @@ struct ProfileSheet: View {
         NavigationStack {
             ProfileContent(target: target)
                 .navigationTitle("Profile")
+                // Swiping right on the profile itself closes the sheet. This sits
+                // on the stack's root view, not on the whole stack: there it also
+                // fired on a post pushed inside the sheet, so one swipe popped the
+                // post *and* dismissed the sheet.
+                .swipeBack()
                 .navigationDestination(for: Route.self) { RouteView(route: $0) }
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
@@ -33,8 +38,6 @@ struct ProfileSheet: View {
                     }
                 }
         }
-        // Swiping right leaves the profile sheet too.
-        .swipeBack()
     }
 }
 
@@ -234,11 +237,8 @@ struct ProfileContent: View {
                 .onAppear { list.loadMoreIfNeeded(current: item) }
             PostSeparator()
         }
-        if list.isLoading && !list.isEmpty {
-            ProgressView()
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-        }
+        PagingFooter(isLoading: list.isLoading && !list.isEmpty && !list.isRefreshing,
+                     error: list.isEmpty ? nil : list.error, retry: { list.retryMore() })
     }
 
     // MARK: Loading

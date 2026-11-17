@@ -39,6 +39,7 @@ struct HomeView: View {
                 .padding(.horizontal, Metrics.horizontalPadding)
             }
             .background(Color.black)
+            .overlay(alignment: .top) { newPostsPill(proxy) }
             // Loading look: a soft glow around the screen edge (Pigeon-style)
             // instead of a bar with numbers inside the feed.
             .overlay {
@@ -61,14 +62,56 @@ struct HomeView: View {
     /// Which timeline this page is (the menu no longer lists them; the pager's
     /// swipes decide, so the label says where you are).
     private var timelineLabel: some View {
-        Text(kind == .forYou ? "FOR YOU" : "FOLLOWING")
-            .font(.system(size: 10, weight: .semibold))
-            .tracking(0.8)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity)
+        VStack(spacing: 1) {
+            Text(kind == .forYou ? "FOR YOU" : "FOLLOWING")
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.8)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(kind == .forYou ? "For You timeline" : "Following timeline")
+            // Cached posts on screen but the last refresh failed: say so, instead
+            // of an error line at the very bottom of the feed nobody sees.
+            if !list.isEmpty, list.error != nil, !list.isRefreshing {
+                Label(offlineText, systemImage: "wifi.slash")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 2)
+        .padding(.bottom, 6)
+    }
+
+    private var offlineText: String {
+        guard let d = list.lastUpdated else { return "Offline · cached posts" }
+        return "Offline · updated \(RelativeTime.short(d)) ago"
+    }
+
+    /// "↑ 5 new posts" after the silent refresh on open put posts above the
+    /// reader; tapping scrolls up. It goes away by itself after a few seconds.
+    @ViewBuilder
+    private func newPostsPill(_ proxy: ScrollViewProxy) -> some View {
+        if list.lastMergeAdded > 0, let first = list.items.first {
+            Button {
+                withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(first.id, anchor: .top) }
+                list.clearMergeCount()
+            } label: {
+                Label("\(list.lastMergeAdded) new post\(list.lastMergeAdded == 1 ? "" : "s")",
+                      systemImage: "arrow.up")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Color.accentColor, in: Capsule())
+            }
+            .buttonStyle(.plain)
             .padding(.top, 2)
-            .padding(.bottom, 6)
-            .accessibilityLabel(kind == .forYou ? "For You timeline" : "Following timeline")
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .task(id: list.lastMergeAdded) {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                if !Task.isCancelled { withAnimation(.easeOut(duration: 0.2)) { list.clearMergeCount() } }
+            }
+        }
     }
 
     @ViewBuilder
@@ -96,12 +139,8 @@ struct HomeView: View {
                 }
                 .id(item.id)
             }
-            if let e = list.error {
-                Text(e.localizedDescription)
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-                    .padding(.vertical, 4)
-            }
+            PagingFooter(isLoading: list.isLoading && !list.isRefreshing,
+                         error: list.error, retry: { list.retryMore() })
         }
     }
 
@@ -147,16 +186,20 @@ struct HomeView: View {
     /// Show the cached feed immediately; only go to the network when
     /// "Refresh when opening the app" is on, or when there is no cache at all.
     /// Runs once per account/kind so closing a sheet does not re-fetch.
+    ///
+    /// Marked as started only once the load really finished: `.task` is
+    /// cancelled when the page disappears (swiping to the other feed or the
+    /// menu, opening a post), and a cancelled first load used to leave the feed
+    /// empty until a manual pull.
     private func start(_ proxy: ScrollViewProxy) async {
-        guard startedFor != taskKey else { return }
-        startedFor = taskKey
-        if list.isEmpty {
-            await refresh(proxy, merge: true)
-        } else if autoRefreshOnOpen {
+        let key = taskKey
+        guard startedFor != key else { return }
+        if list.isEmpty || autoRefreshOnOpen {
             // Merge, so posts that are already on screen are never reordered or
             // dropped: only new ones appear above them.
             await refresh(proxy, merge: true)
         }
+        if !Task.isCancelled { startedFor = key }
     }
 
     private func refresh(_ proxy: ScrollViewProxy, merge: Bool) async {
@@ -176,38 +219,43 @@ struct HomeView: View {
 /// Loading look: a soft bar glowing around the screen edge (like Pigeon for
 /// Telegram). It brightens as a pull/crown turn fills up, then pulses while the
 /// feed loads; there is no progress text.
+///
+/// Drawn as two plain strokes (no full-screen blur, which is costly on the
+/// Watch GPU). The pulse lives in its own subview with a phase animator, so it
+/// stops for good as soon as loading ends instead of leaking a repeat-forever
+/// animation into the feed's layout.
 struct EdgeGlow: View {
     var progress: CGFloat = 0
     var loading: Bool = false
 
-    @State private var pulse = false
-
-    private var visible: Bool { loading || progress > 0.03 }
-
     var body: some View {
-        RoundedRectangle(cornerRadius: 28, style: .continuous)
-            .strokeBorder(Color.white, lineWidth: 2)
-            .blur(radius: 3)
-            .padding(2)
-            .opacity(opacity)
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
-            .animation(.easeOut(duration: 0.2), value: visible)
-            .onAppear { startPulse() }
-            .onChange(of: loading) { _, _ in startPulse() }
-    }
-
-    private var opacity: Double {
-        guard visible else { return 0 }
-        if loading { return pulse ? 0.8 : 0.28 }
-        return 0.2 + 0.55 * Double(min(1, max(0, progress)))
-    }
-
-    private func startPulse() {
-        pulse = false
-        guard loading else { return }
-        withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-            pulse = true
+        ZStack {
+            if loading {
+                GlowShape()
+                    .phaseAnimator([0.28, 0.8]) { content, phase in
+                        content.opacity(phase)
+                    } animation: { _ in .easeInOut(duration: 1.2) }
+                    .transition(.opacity)
+            } else if progress > 0.03 {
+                GlowShape()
+                    .opacity(0.2 + 0.55 * Double(min(1, max(0, progress))))
+            }
         }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .animation(.easeOut(duration: 0.2), value: loading)
+    }
+}
+
+private struct GlowShape: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.22), lineWidth: 6)
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .strokeBorder(Color.white, lineWidth: 1.5)
+                .padding(2)
+        }
+        .padding(1)
     }
 }

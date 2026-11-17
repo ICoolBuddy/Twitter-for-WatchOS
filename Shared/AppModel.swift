@@ -33,6 +33,8 @@ final class AppModel: ObservableObject {
     @Published var busyMessage: String?
 
     weak var sync: SyncChannel?
+    /// Platform hook run on logout (the Watch clears its offline caches).
+    var onLogout: (() -> Void)?
     private var lastBadgeFetch: Date = .distantPast
     /// Never poll X more often than this in the background.
     static let pollInterval: TimeInterval = 15 * 60
@@ -63,6 +65,8 @@ final class AppModel: ObservableObject {
         #endif
         accounts = await store.accounts
         activeAccountId = await store.activeAccountId
+        // Offline taps are queued per account: only the active one's replay.
+        posts.setAccount(activeAccountId)
         let creds = await store.credentials
         let wasLoggedIn = isLoggedIn
         isLoggedIn = creds != nil
@@ -127,6 +131,7 @@ final class AppModel: ObservableObject {
         let wasActive = activeAccountId == id
         await store.removeAccount(id)
         clearTimelineCaches(accountID: id)
+        posts.dropQueue(accountId: id)
         if wasActive {
             viewer = nil
             badge = XBadgeCounts(notifications: 0, dms: 0)
@@ -143,6 +148,8 @@ final class AppModel: ObservableObject {
         await store.wipe()
         clearAllTimelineCaches()
         posts.reset()
+        posts.clearQueue()
+        onLogout?()
         badge = XBadgeCounts(notifications: 0, dms: 0)
         viewer = nil
         await reloadState()

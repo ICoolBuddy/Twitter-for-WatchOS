@@ -38,9 +38,15 @@ final class VideoPlayback: ObservableObject {
 
     /// Step up quickly: a little measured headroom is enough, and a short
     /// cooldown lets a fast link climb several levels in the first seconds.
-    private static let upgradeCooldown: TimeInterval = 3
-    private static let upgradeHeadroom = 1.25
-    private static let minimumBufferAhead: Double = 2.5
+    ///
+    /// Every switch swaps the player item and rebuffers (a short stall), so it is
+    /// rationed: at most `maxUpgradesPerPlay` per playback, a few seconds apart,
+    /// and only with enough buffered video to hide the swap.
+    private static let upgradeCooldown: TimeInterval = 6
+    private static let upgradeHeadroom = 1.4
+    private static let minimumBufferAhead: Double = 4
+    private static let maxUpgradesPerPlay = 2
+    private var upgradesThisPlay = 0
 
     // MARK: Lifecycle
 
@@ -59,6 +65,7 @@ final class VideoPlayback: ObservableObject {
         duration = 0
         started = false
         lastUpgrade = .distantPast
+        upgradesThisPlay = 0
         levels = media.variants
             .filter { $0.contentType == "video/mp4" }
             .sorted { ($0.bitrate ?? 0) < ($1.bitrate ?? 0) }
@@ -147,6 +154,7 @@ final class VideoPlayback: ObservableObject {
         let time = player.currentTime()
         let wasPlaying = player.timeControlStatus == .playing
         lastUpgrade = Date()
+        upgradesThisPlay += 1
         level = index
         if let mediaId { Self.bestLevel[mediaId] = max(Self.bestLevel[mediaId] ?? 0, index) }
         player.replaceCurrentItem(with: AVPlayerItem(url: levels[index].url))
@@ -196,7 +204,8 @@ final class VideoPlayback: ObservableObject {
         // Measured throughput of the stream (bits/s). Zero until the first
         // access-log event.
         let observed = item.accessLog()?.events.last?.observedBitrate ?? 0
-        guard observed > 0, levels.indices.contains(level + 1) else { return }
+        guard observed > 0, upgradesThisPlay < Self.maxUpgradesPerPlay,
+              levels.indices.contains(level + 1) else { return }
 
         let next = levels[level + 1]
         let needed = Double(next.bitrate ?? 0)

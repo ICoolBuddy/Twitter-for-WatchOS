@@ -44,17 +44,8 @@ struct TimelineListView: View {
                     PostSeparator()
                 }
 
-                if list.isLoading && !list.isEmpty {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                }
-                if let e = list.error, !list.isEmpty {
-                    Text(e.localizedDescription)
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                        .padding(.vertical, 4)
-                }
+                PagingFooter(isLoading: list.isLoading && !list.isEmpty && !list.isRefreshing,
+                             error: list.isEmpty ? nil : list.error, retry: { list.retryMore() })
             }
             .padding(.horizontal, Metrics.horizontalPadding)
         }

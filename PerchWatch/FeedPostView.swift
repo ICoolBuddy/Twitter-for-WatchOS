@@ -60,7 +60,7 @@ struct FeedPostView: View {
     var showDate = false
     /// The focal post of the post page is not a link to itself.
     var linkToPost = true
-    /// Long posts are collapsed to 8 lines with "Show more" in the feed; the
+    /// Long posts are collapsed to 14 lines with "Show more" in the feed; the
     /// post page shows its focal post in full.
     var clampLongText = true
     var onOpenProfile: ((XUser) -> Void)? = nil
@@ -106,16 +106,8 @@ struct FeedPostView: View {
                         .foregroundStyle(.secondary)
                 }
                 if !t.text.isEmpty { textBlock }
-                if !compact, let m = t.media.first {
-                    Button {
-                        onMedia?(MediaTarget(media: t.media, startIndex: 0))
-                    } label: {
-                        MediaThumb(media: m, extraCount: t.media.count - 1,
-                                   localURL: SavedStore.shared.localPhoto(tweetID: t.id, index: 0))
-                    }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: .infinity)
-                    .accessibilityLabel("Open media")
+                if !compact, !t.media.isEmpty {
+                    mediaBlock
                 }
                 if let q = t.quotedTweet?.value {
                     NavigationLink(value: Route.post(q)) {
@@ -175,10 +167,13 @@ struct FeedPostView: View {
                 .accessibilityLabel("Open \(t.author.name)'s profile")
 
                 HStack(spacing: 3) {
-                    Text("@" + t.author.screenName).lineLimit(1)
+                    // The handle gives way first: the time must stay readable on 41 mm.
+                    Text("@" + t.author.screenName).lineLimit(1).truncationMode(.tail)
                     if let d = t.createdAt {
-                        Text("·")
-                        Text(RelativeTime.short(d))
+                        Text("· " + RelativeTime.short(d))
+                            .lineLimit(1)
+                            .fixedSize()
+                            .layoutPriority(1)
                     }
                 }
                 .font(metaFont)
@@ -189,15 +184,71 @@ struct FeedPostView: View {
         }
     }
 
+    // MARK: Media
+
+    /// One attachment full width; 2–4 photos as a grid of square tiles (each
+    /// opens the viewer on itself; a third photo gets a wide tile of its own)
+    /// instead of the first one plus "+N".
+    @ViewBuilder
+    private var mediaBlock: some View {
+        let media = t.media
+        if media.count >= 2, media.allSatisfy({ $0.type == .photo }) {
+            let shown = Array(media.prefix(4))
+            let rows = stride(from: 0, to: shown.count, by: 2).map { Array(shown.indices[$0..<min($0 + 2, shown.count)]) }
+            VStack(spacing: 3) {
+                ForEach(rows, id: \.self) { row in
+                    HStack(spacing: 3) {
+                        ForEach(row, id: \.self) { index in
+                            gridTile(media, index: index, wide: shown.count == 3 && index == 2)
+                        }
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: Metrics.mediaCorner))
+        } else if let m = media.first {
+            Button {
+                onMedia?(MediaTarget(media: media, startIndex: 0))
+            } label: {
+                MediaThumb(media: m, extraCount: media.count - 1,
+                           localURL: SavedStore.shared.localPhoto(tweetID: t.id, index: 0))
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel("Open media")
+        }
+    }
+
+    private func gridTile(_ media: [XMedia], index: Int, wide: Bool) -> some View {
+        let m = media[index]
+        let local = SavedStore.shared.localPhoto(tweetID: t.id, index: index)
+        return Button {
+            onMedia?(MediaTarget(media: media, startIndex: index))
+        } label: {
+            Color.clear
+                .aspectRatio(wide ? 2 : 1, contentMode: .fit)
+                .overlay {
+                    RemoteImage(url: local ?? m.feedURL, placeholderURL: m.previewURL,
+                                maxPixel: local != nil ? 400 : 300)
+                }
+                .clipped()
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .accessibilityLabel(m.altText ?? "Image \(index + 1) of \(media.count)")
+    }
+
     // MARK: Text
 
     /// Longer than 500 characters or about 14 lines (we cannot measure lines in
-    /// SwiftUI, so estimate from the character count per line).
+    /// SwiftUI, so estimate from the character count per line, which shrinks
+    /// with the Text size setting).
     private var isLong: Bool {
         if t.text.count > 500 { return true }
+        let perLine = max(10, Int((20 / textScale).rounded()))
         var lines = 0
         for line in t.text.components(separatedBy: "\n") {
-            lines += max(1, (line.count + 19) / 20)
+            lines += max(1, (line.count + perLine - 1) / perLine)
         }
         return lines > 14
     }

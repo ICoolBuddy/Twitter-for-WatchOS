@@ -64,11 +64,9 @@ enum BackgroundRefresh {
             TimelineDiskCache.save(page.items, name: cacheName)
             let tweets = page.items.flatMap(\.tweets)
             newest = tweets.first { !$0.isTombstone }
-            // Warm the images the feed asks for first (first 8 posts, feed size).
-            let urls = tweets.prefix(8).flatMap { tweet in
-                tweet.media.prefix(1).map(\.feedURL)
-            }
-            ImageLoader.shared.prefetch(urls, maxPixel: 450)
+            // Warm exactly what the feed shows first (same URLs and decode sizes
+            // as the rows, reposts included), within this run's time budget.
+            await ImageLoader.shared.prefetchFeed(Array(page.items.displayTweets.prefix(8))).value
         } else {
             // Offline: keep the complication useful with the last cached post.
             newest = TimelineDiskCache.load(name: cacheName).flatMap(\.tweets).first { !$0.isTombstone }

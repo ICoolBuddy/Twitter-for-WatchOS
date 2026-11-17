@@ -87,10 +87,12 @@ struct TweetHeader: View {
                     }
                 }
                 HStack(spacing: 3) {
-                    Text("@" + tweet.author.screenName).lineLimit(1)
+                    Text("@" + tweet.author.screenName).lineLimit(1).truncationMode(.tail)
                     if let d = tweet.createdAt {
-                        Text("·")
-                        Text(RelativeTime.short(d))
+                        Text("· " + RelativeTime.short(d))
+                            .lineLimit(1)
+                            .fixedSize()
+                            .layoutPriority(1)
                     }
                 }
                 .font(headerMetaFont)
@@ -304,6 +306,11 @@ struct PostActionRow: View {
     @State private var sendingReply = false
     @State private var replyStatus: String?
     @State private var statusToken = 0
+    /// The text of a reply that failed, kept so it can be sent again instead of
+    /// making the reader dictate it twice.
+    @State private var failedReply: String?
+    /// Replies sent from this row (the count from X lags behind).
+    @State private var sentReplies = 0
 
     var body: some View {
         let s = posts.state(for: tweet)
@@ -318,10 +325,22 @@ struct PostActionRow: View {
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity)
 
-            if let replyStatus {
+            if let failedReply, !sendingReply {
+                Button {
+                    send(failedReply)
+                } label: {
+                    Label("Reply failed. Tap to retry", systemImage: "arrow.clockwise")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .transition(.opacity)
+            } else if let replyStatus {
                 Text(replyStatus)
                     .font(.caption2)
-                    .foregroundStyle(replyStatus == "Failed" ? Color.orange : Color.secondary)
+                    .foregroundStyle(Color.secondary)
                     .frame(maxWidth: .infinity)
                     .transition(.opacity)
                     .accessibilityLabel(replyStatus)
@@ -333,7 +352,7 @@ struct PostActionRow: View {
     private var replyButton: some View {
         #if os(watchOS)
         TextFieldLink(prompt: Text("Reply"), label: {
-            glyph("bubble.left", active: false, color: .secondary, count: tweet.replyCount)
+            glyph("bubble.left", active: false, color: .secondary, count: tweet.replyCount + sentReplies)
         }, onSubmit: { text in
             send(text)
         })
@@ -345,7 +364,7 @@ struct PostActionRow: View {
         // TextFieldLink is watchOS-only. The iPhone app has no reply composer here.
         Button {
         } label: {
-            glyph("bubble.left", active: false, color: .secondary, count: tweet.replyCount)
+            glyph("bubble.left", active: false, color: .secondary, count: tweet.replyCount + sentReplies)
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
@@ -417,22 +436,27 @@ struct PostActionRow: View {
         sendingReply = true
         statusToken += 1
         let token = statusToken
+        replyStatus = "Sending…"
         Task {
-            var ok = false
             do {
                 _ = try await app.client.createTweet(text: body, replyTo: replyTo)
-                ok = true
                 Haptics.success()
+                sendingReply = false
+                failedReply = nil
+                sentReplies += 1
+                withAnimation(.easeOut(duration: 0.15)) { replyStatus = "Sent" }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                if statusToken == token {
+                    withAnimation(.easeOut(duration: 0.15)) { replyStatus = nil }
+                }
             } catch {
                 Haptics.failure()
-            }
-            sendingReply = false
-            withAnimation(.easeOut(duration: 0.15)) {
-                replyStatus = ok ? "Sent" : "Failed"
-            }
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            if statusToken == token {
-                withAnimation(.easeOut(duration: 0.15)) { replyStatus = nil }
+                sendingReply = false
+                // Keep the text: the row turns into a retry button until it works.
+                withAnimation(.easeOut(duration: 0.15)) {
+                    replyStatus = nil
+                    failedReply = body
+                }
             }
         }
     }
@@ -497,6 +521,8 @@ struct ErrorStateView: View {
                         defer { working = false }
                         do {
                             try await app.refreshEndpoints()
+                            // A 403 is usually a stale transaction key: renew it too.
+                            try? await app.refreshMaterial()
                             message = "Updated."
                             await retry?()
                         } catch {
@@ -525,6 +551,42 @@ struct ErrorStateView: View {
         case .refreshEndpoints: return "arrow.triangle.2.circlepath"
         case .wait: return "hourglass"
         case .retry: return "wifi.exclamationmark"
+        }
+    }
+}
+
+/// Bottom of an infinitely scrolling list: a spinner while the next page loads,
+/// and after a failed page the error with a retry button (paging used to stop
+/// silently after one network blip).
+struct PagingFooter: View {
+    let isLoading: Bool
+    let error: XError?
+    let retry: () -> Void
+
+    var body: some View {
+        if isLoading {
+            ProgressView()
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+        } else if let error {
+            VStack(spacing: 4) {
+                Text(error.localizedDescription)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+                Button(action: retry) {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
         }
     }
 }

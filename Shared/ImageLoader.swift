@@ -18,6 +18,9 @@ final class ImageLoader: @unchecked Sendable {
     /// Serial queue for all disk work. `lastTrim` is only read/written on it.
     private let ioQueue = DispatchQueue(label: "com.perch.imageloader.disk", qos: .utility)
     private var lastTrim = Date.distantPast
+    /// Downloads in flight, keyed like the memory cache.
+    private let inflightLock = NSLock()
+    private var inflight: [String: Task<CGImage, Error>] = [:]
 
     final class CGImageBox {
         let image: CGImage
@@ -80,16 +83,37 @@ final class ImageLoader: @unchecked Sendable {
             cache.setObject(CGImageBox(image), forKey: k, cost: image.bytesPerRow * image.height)
             return image
         }
-        var data = await diskData(for: url)
-        if data == nil {
-            let (downloaded, _) = try await session.data(from: url)
-            data = downloaded
-            await storeOnDisk(downloaded, for: url)
+        // One download per image: the visible row and the prefetcher (or two rows
+        // showing the same avatar) share a single request.
+        let task: Task<CGImage, Error> = inflightLock.withLock {
+            if let running = inflight[k as String] { return running }
+            let created = Task<CGImage, Error> { try await self.fetchAndDecode(url, maxPixel: maxPixel, key: k) }
+            inflight[k as String] = created
+            return created
         }
-        try Task.checkCancellation()
-        guard let bytes = data, let img = Self.downsample(bytes, maxPixel: maxPixel) else {
+        defer { inflightLock.withLock { inflight[k as String] = nil } }
+        return try await task.value
+    }
+
+    private func fetchAndDecode(_ url: URL, maxPixel: Int, key k: NSString) async throws -> CGImage {
+        if let bytes = await diskData(for: url) {
+            if let img = Self.downsample(bytes, maxPixel: maxPixel) {
+                cache.setObject(CGImageBox(img), forKey: k, cost: img.bytesPerRow * img.height)
+                return img
+            }
+            // A bad file (older builds stored error pages): drop it and download again.
+            await removeFromDisk(url)
+        }
+        let (downloaded, response) = try await session.data(from: url)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw URLError(.badServerResponse)
+        }
+        guard let img = Self.downsample(downloaded, maxPixel: maxPixel) else {
             throw URLError(.cannotDecodeContentData)
         }
+        // Only bytes that really decode go to the disk cache; anything else would
+        // fail forever (and make the prefetcher skip the URL).
+        await storeOnDisk(downloaded, for: url)
         cache.setObject(CGImageBox(img), forKey: k, cost: img.bytesPerRow * img.height)
         return img
     }
@@ -122,13 +146,19 @@ final class ImageLoader: @unchecked Sendable {
         let limit = (rate > 1 && rate < 40_000) ? 4 : 40
         for tweet in tweets.prefix(limit) {
             let t = tweet.displayed
-            add(t.author.avatarURL, Int(44 * 2.5))
-            // `Avatar` swaps in the `_bigger` variant at feed size, so warm the URL
-            // the feed actually displays as well as the plain avatar.
-            add(t.author.avatarLargeURL, Int(44 * 2.5))
-            if let media = t.media.first {
-                add(media.previewURL, 200)
-                let feed = Self.feedImage(for: media)
+            // `Avatar` shows the `_bigger` variant at feed size (44 pt): warm only
+            // that one (warming the `_normal` one too doubled avatar traffic).
+            add(t.author.avatarLargeURL ?? t.author.avatarURL, Int(44 * 2.5))
+            let media = t.media
+            if media.count >= 2, media.allSatisfy({ $0.type == .photo }) {
+                // Grid tiles (FeedPostView.gridTile).
+                for m in media.prefix(4) {
+                    add(m.previewURL, 200)
+                    add(m.feedURL, 300)
+                }
+            } else if let first = media.first {
+                add(first.previewURL, 200)
+                let feed = Self.feedImage(for: first)
                 add(feed.url, feed.maxPixel)
             }
         }
@@ -199,6 +229,15 @@ final class ImageLoader: @unchecked Sendable {
     private func diskData(for url: URL) async -> Data? {
         await withCheckedContinuation { (cont: CheckedContinuation<Data?, Never>) in
             ioQueue.async { cont.resume(returning: self.readDisk(url)) }
+        }
+    }
+
+    private func removeFromDisk(_ url: URL) async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            ioQueue.async {
+                if let file = self.diskFile(for: url) { try? FileManager.default.removeItem(at: file) }
+                cont.resume()
+            }
         }
     }
 

@@ -17,6 +17,11 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
     @Published private(set) var reachedEnd = false
     @Published var error: XError?
     @Published private(set) var topCursor: String?
+    /// How many posts the last merge refresh put above the old ones (for a
+    /// "new posts" pill). 0 after a normal refresh.
+    @Published private(set) var lastMergeAdded = 0
+    /// When the last refresh succeeded (for an "updated 5m ago" line).
+    @Published private(set) var lastUpdated: Date?
 
     private var cursor: String?
     private var loadTask: Task<Void, Never>?
@@ -61,6 +66,8 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
         error = nil
         isLoading = false
         isRefreshing = false
+        lastMergeAdded = 0
+        lastUpdated = nil
     }
 
     func loadIfNeeded() async {
@@ -84,16 +91,26 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
             try Task.checkCancellation()
             guard gen == generation else { return }
             let fresh = dedupe(page.items).filter { skip?($0) != true }
+            // Merging over a list that already pages from its own cursor keeps
+            // that cursor: the fresh page's bottom cursor points just below the
+            // *new* posts, so paging from it would only return posts that are
+            // already on screen (and used to end the infinite scroll).
+            let keepCursor = merge && !items.isEmpty && cursor != nil
             if merge, !items.isEmpty {
                 let known = Set(items.map(\.id))
                 let added = fresh.filter { !known.contains($0.id) }
                 if !added.isEmpty { items.insert(contentsOf: added, at: 0) }
+                lastMergeAdded = added.count
             } else {
                 items = fresh
+                lastMergeAdded = 0
             }
-            cursor = page.cursor
+            if !keepCursor {
+                cursor = page.cursor
+                reachedEnd = page.cursor == nil || page.items.isEmpty
+            }
             topCursor = page.top
-            reachedEnd = page.cursor == nil || page.items.isEmpty
+            lastUpdated = Date()
             onFirstPage?(fresh, page.top)
             onPage?(fresh)
         } catch is CancellationError {
@@ -121,30 +138,53 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
         }
     }
 
-    private func loadMore(cursor: String) async {
+    private func loadMore(cursor start: String) async {
         let gen = generation
         defer { if gen == generation { isLoading = false } }
+        var next = start
+        // A page can be made only of posts we already show (after a merge, or
+        // after a disk seed with no cursor of its own) or of filtered filler.
+        // Follow the cursor a few more pages instead of declaring the end.
+        var duplicatePages = 0
         do {
-            let page = try await fetch(cursor)
-            try Task.checkCancellation()
-            guard gen == generation else { return }
-            let existing = Set(items.map(\.id))
-            let fresh = page.items.filter { skip?($0) != true && !existing.contains($0.id) }
-            items.append(contentsOf: fresh)
-            if !fresh.isEmpty { onPage?(fresh) }
-            self.cursor = page.cursor
-            topCursor = page.top ?? topCursor
-            // Stop when the cursor stops moving or a page brings nothing new.
-            reachedEnd = page.cursor == nil || page.cursor == cursor || fresh.isEmpty
-            // Never drop rows above the viewport while paging: removing leading
-            // items moves everything up and reads as the feed jumping. Instead stop
-            // paging at twice the window, which keeps memory bounded.
-            if items.count >= maxItems * 2 { reachedEnd = true }
+            while true {
+                let page = try await fetch(next)
+                try Task.checkCancellation()
+                guard gen == generation else { return }
+                let existing = Set(items.map(\.id))
+                let fresh = page.items.filter { skip?($0) != true && !existing.contains($0.id) }
+                items.append(contentsOf: fresh)
+                if !fresh.isEmpty { onPage?(fresh) }
+                self.cursor = page.cursor
+                topCursor = page.top ?? topCursor
+                // Never drop rows above the viewport while paging: removing leading
+                // items moves everything up and reads as the feed jumping. Instead stop
+                // paging at twice the window, which keeps memory bounded.
+                if items.count >= maxItems * 2 { reachedEnd = true; return }
+                guard let moved = page.cursor, moved != next, !page.items.isEmpty else {
+                    reachedEnd = true
+                    return
+                }
+                if !fresh.isEmpty { return }
+                duplicatePages += 1
+                if duplicatePages >= 4 { return }   // keep the cursor; scrolling retries
+                next = moved
+            }
         } catch is CancellationError {
         } catch {
-            if gen == generation { self.error = XError.from(error) }
+            let e = XError.from(error)
+            if case .network(let m) = e, m == "Cancelled" { return }
+            if gen == generation { self.error = e }
         }
     }
+
+    /// "Tap to retry" after a failed page: clears the error and loads on.
+    func retryMore() {
+        error = nil
+        if cursor != nil, !reachedEnd { loadMore() } else { Task { await refresh(merge: !items.isEmpty) } }
+    }
+
+    func clearMergeCount() { lastMergeAdded = 0 }
 
     func update(_ transform: (inout [Item]) -> Void) { transform(&items) }
 
@@ -153,6 +193,26 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
     private func dedupe(_ xs: [Item]) -> [Item] {
         var seen = Set<Item.ID>()
         return xs.filter { seen.insert($0.id).inserted }
+    }
+}
+
+/// One serial queue for every small cache write, so an older snapshot can never
+/// land on disk after a newer one (a concurrent queue allowed that).
+enum DiskWriter {
+    static let queue = DispatchQueue(label: "com.perch.disk-writer", qos: .utility)
+
+    /// Deletes the oldest files whose names start with `prefix` in `dir` until at
+    /// most `keep` remain. Call on `queue`.
+    static func trim(_ dir: URL, prefix: String, keep: Int) {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
+        let matching = files.filter { $0.lastPathComponent.hasPrefix(prefix) }
+        guard matching.count > keep else { return }
+        let dated = matching.map { url -> (URL, Date) in
+            let d = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            return (url, d ?? .distantPast)
+        }.sorted { $0.1 < $1.1 }
+        for (url, _) in dated.prefix(matching.count - keep) { try? fm.removeItem(at: url) }
     }
 }
 
@@ -166,8 +226,12 @@ enum TimelineDiskCache {
     static func save(_ items: [TimelineItem], name: String) {
         guard let url = url(name) else { return }
         let page = TimelinePage(items: Array(items.prefix(40)))
-        DispatchQueue.global(qos: .utility).async {
+        DiskWriter.queue.async {
             if let d = try? JSONEncoder().encode(page) { try? d.write(to: url, options: .atomic) }
+            // Profile timelines are one file per visited user: keep the newest few.
+            if name.hasPrefix("profile-") {
+                DiskWriter.trim(url.deletingLastPathComponent(), prefix: "perch-profile-", keep: 30)
+            }
         }
     }
 

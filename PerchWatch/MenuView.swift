@@ -13,11 +13,22 @@ struct MenuView: View {
     var onPick: (HomeKind) -> Void = { _ in }
 
     @State private var showAccounts = false
+    @State private var posting = false
+    @State private var postStatus: String?
+    /// A post that failed to send, kept so it can be retried without dictating again.
+    @State private var failedPost: String?
 
     var body: some View {
         List {
             Section {
                 accountRow
+            }
+
+            Section {
+                composeRow
+                NavigationLink(value: Route.search) {
+                    Label("Search", systemImage: "magnifyingglass")
+                }
             }
 
             Section {
@@ -74,6 +85,48 @@ struct MenuView: View {
         .task {
             await app.loadViewer()
             await app.refreshBadge()
+        }
+    }
+
+    /// "New post": the system text input opens directly; the post is sent as
+    /// soon as it is submitted. A failure keeps the text for a retry.
+    @ViewBuilder
+    private var composeRow: some View {
+        TextFieldLink(prompt: Text("What's happening?")) {
+            Label(posting ? "Posting…" : (postStatus ?? "New post"), systemImage: "square.and.pencil")
+        } onSubmit: { text in
+            publish(text)
+        }
+        .disabled(posting)
+        if let failedPost, !posting {
+            Button {
+                publish(failedPost)
+            } label: {
+                Label("Post failed. Tap to retry", systemImage: "arrow.clockwise")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private func publish(_ text: String) {
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty, !posting else { return }
+        posting = true
+        Task {
+            do {
+                _ = try await app.client.createTweet(text: body, replyTo: nil)
+                Haptics.success()
+                failedPost = nil
+                posting = false
+                postStatus = "Posted"
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                postStatus = nil
+            } catch {
+                Haptics.failure()
+                posting = false
+                failedPost = body
+            }
         }
     }
 

@@ -6,28 +6,36 @@ struct Skeleton: View {
     var corner: CGFloat = 6
 
     @State private var slide: CGFloat = -1
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// No shimmer when motion is reduced or in Low Power Mode: many of these can
+    /// be on screen at once (every image that has not loaded yet).
+    private var animated: Bool {
+        !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+    }
 
     var body: some View {
         RoundedRectangle(cornerRadius: corner, style: .continuous)
             .fill(Color.white.opacity(0.07))
             .overlay {
-                GeometryReader { geo in
-                    LinearGradient(
-                        colors: [.clear, Color.white.opacity(0.10), .clear],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                    .frame(width: max(40, geo.size.width * 0.45))
-                    .offset(x: slide * geo.size.width * 1.6)
+                if animated {
+                    GeometryReader { geo in
+                        LinearGradient(
+                            colors: [.clear, Color.white.opacity(0.10), .clear],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: max(40, geo.size.width * 0.45))
+                        .offset(x: slide * geo.size.width * 1.6)
+                        // Scoped to `slide` only. A `withAnimation(.repeatForever)`
+                        // in `onAppear` leaked into every layout change made in the
+                        // same transaction (rows drifting/bouncing in the feed).
+                        .animation(.linear(duration: 1.2).repeatForever(autoreverses: false), value: slide)
+                    }
+                    .onAppear { slide = 1.6 }
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
-            .onAppear {
-                slide = -1
-                withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
-                    slide = 1.6
-                }
-            }
             .accessibilityHidden(true)
     }
 }
