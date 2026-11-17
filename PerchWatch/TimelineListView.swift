@@ -50,6 +50,7 @@ struct TimelineListView: View {
             .padding(.horizontal, Metrics.horizontalPadding)
         }
         .background(Color.black)
+        .crownScrollFocus()
         .navigationTitle(title)
         .pullToRefresh(isRefreshing: list.isRefreshing) { await list.refresh() }
         .task(id: taskKey) {

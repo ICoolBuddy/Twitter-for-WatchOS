@@ -9,10 +9,22 @@ enum LaunchIntro {
     static func markShown() { hasShown = true }
 }
 
+/// The intro covers the launch only while there is nothing to show: it ends as
+/// soon as the feed has posts (cached ones count, so usually almost at once),
+/// the user turns out to be logged out, or after 3 s at the most (the feed's
+/// skeletons take over then). It never adds a fixed delay to startup.
 struct LaunchIntroView: View {
     @Binding var visible: Bool
 
+    @ObservedObject private var app = AppModel.shared
+    @ObservedObject private var activity = FeedActivity.shared
     @State private var shown = false
+
+    private static let maximum: UInt64 = 3_000_000_000
+
+    private var ready: Bool {
+        app.stateLoaded && (!app.canBrowse || activity.firstContentReady)
+    }
 
     var body: some View {
         ZStack {
@@ -33,12 +45,21 @@ struct LaunchIntroView: View {
         .transition(.opacity)
         .onAppear {
             LaunchIntro.markShown()
-            withAnimation(.spring(response: 0.55, dampingFraction: 0.72)) { shown = true }
-            Task {
-                try? await Task.sleep(nanoseconds: 800_000_000)
-                withAnimation(.easeOut(duration: 0.35)) { visible = false }
-            }
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) { shown = true }
+            if ready { finish() }
+        }
+        .onChange(of: ready) { _, isReady in
+            if isReady { finish() }
+        }
+        .task {
+            try? await Task.sleep(nanoseconds: Self.maximum)
+            finish()
         }
         .accessibilityLabel("Perch")
+    }
+
+    private func finish() {
+        guard visible else { return }
+        withAnimation(.easeOut(duration: 0.25)) { visible = false }
     }
 }

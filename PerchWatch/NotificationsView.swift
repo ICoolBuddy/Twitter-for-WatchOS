@@ -42,6 +42,7 @@ struct NotificationsView: View {
             .padding(.horizontal, Metrics.horizontalPadding)
         }
         .background(Color.black)
+        .crownScrollFocus()
         .navigationTitle("Notifications")
         .pullToRefresh(isRefreshing: list.isRefreshing) { await list.refresh() }
         .task(id: taskKey) {

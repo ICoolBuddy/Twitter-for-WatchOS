@@ -111,6 +111,7 @@ struct ProfileContent: View {
             .padding(.horizontal, Metrics.horizontalPadding)
         }
         .background(Color.black)
+        .crownScrollFocus()
         .task { await start(force: false) }
         .postPresentation(profile: $otherProfile, media: $mediaTarget)
     }

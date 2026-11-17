@@ -41,6 +41,7 @@ struct SavedView: View {
             .padding(.horizontal, Metrics.horizontalPadding)
         }
         .background(Color.black)
+        .crownScrollFocus()
         .navigationTitle("Saved")
         .swipeBack()
         .sheet(item: $selected) { post in
@@ -157,6 +158,7 @@ private struct SavedDetailView: View {
             .padding(.vertical, 6)
         }
         .background(Color.black)
+        .crownScrollFocus()
         .navigationTitle("Saved post")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {

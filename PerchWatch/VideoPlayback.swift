@@ -3,50 +3,42 @@ import AVFoundation
 import Combine
 import XKit
 
-/// YouTube-style adaptive playback for a post's video.
+/// Playback for a post's video on the Watch.
 ///
-/// Playback starts within a second on a small MP4 and streams it (AVPlayer keeps
-/// downloading while it plays). While it plays we read the measured bitrate from
-/// the access log and step up to better variants as soon as the link comfortably
-/// covers them, so the quality climbs instead of waiting for a huge download.
-/// The best level reached is remembered per post, so replaying (or reopening)
-/// starts where it left off instead of dropping back to the lowest.
+/// The quality is chosen once, before playing, from the measured link speed
+/// (and remembered per post). It used to step up mid-play by swapping the
+/// player item, which rebuffered and showed black frames each time; a single
+/// item for the whole playback is what makes the player behave.
 @MainActor
 final class VideoPlayback: ObservableObject {
     let player = AVPlayer()
 
     /// 0…1 of the video that is downloaded/buffered (drives the loading bar).
     @Published private(set) var buffered: Double = 0
-    /// True until the first frame is playing (thumbnail + bar are shown).
+    /// True until the first frame has really been shown (poster + bar on top).
     @Published private(set) var loading = true
+    /// Playing stalled for more data after it had started.
+    @Published private(set) var stalled = false
     @Published private(set) var failed: String?
     @Published private(set) var endedFlag = false
     /// Playback position / length, for the timestamp under the player.
     @Published private(set) var position: Double = 0
     @Published private(set) var duration: Double = 0
     @Published private(set) var isPlaying = false
+    /// Player gain 0…1 (the crown changes it; the system volume is not reachable).
+    @Published private(set) var volume: Float = 1
 
     private var levels: [XVideoVariant] = []
-    private var level = 0
-    private var started = false
     private var mediaId: String?
     private var ticker: Task<Void, Never>?
-    private var lastUpgrade = Date.distantPast
+    /// Where an in-flight crown scrub is going. While set, the ticker does not
+    /// overwrite `position` with the player's (older) time, so consecutive crown
+    /// turns add up instead of snapping back.
+    private var scrubTarget: Double?
+    private var seekToken = 0
 
-    /// Best level reached per post, for this app run.
-    private static var bestLevel: [String: Int] = [:]
-
-    /// Step up quickly: a little measured headroom is enough, and a short
-    /// cooldown lets a fast link climb several levels in the first seconds.
-    ///
-    /// Every switch swaps the player item and rebuffers (a short stall), so it is
-    /// rationed: at most `maxUpgradesPerPlay` per playback, a few seconds apart,
-    /// and only with enough buffered video to hide the swap.
-    private static let upgradeCooldown: TimeInterval = 6
-    private static let upgradeHeadroom = 1.4
-    private static let minimumBufferAhead: Double = 4
-    private static let maxUpgradesPerPlay = 2
-    private var upgradesThisPlay = 0
+    /// Quality level used per post, for this app run.
+    private static var chosenLevel: [String: Int] = [:]
 
     // MARK: Lifecycle
 
@@ -59,13 +51,12 @@ final class VideoPlayback: ObservableObject {
         mediaId = media.id
         endedFlag = false
         loading = true
+        stalled = false
         buffered = 0
         failed = nil
         position = 0
         duration = 0
-        started = false
-        lastUpgrade = .distantPast
-        upgradesThisPlay = 0
+        scrubTarget = nil
         levels = media.variants
             .filter { $0.contentType == "video/mp4" }
             .sorted { ($0.bitrate ?? 0) < ($1.bitrate ?? 0) }
@@ -73,15 +64,25 @@ final class VideoPlayback: ObservableObject {
             failed = "Video unavailable"
             return
         }
-        // Never go back down to the worst variant once a better one has played:
-        // on a replay the picture starts where it ended up last time.
-        let remembered = Self.bestLevel[media.id] ?? 0
-        // Prefer a step above the very lowest when the ladder allows it, so even
-        // the first play is not a blurry 240p.
-        let preferred = levels.count >= 3 ? 1 : 0
-        load(level: min(max(remembered, preferred), levels.count - 1))
+        let level = Self.chosenLevel[media.id] ?? pickLevel()
+        Self.chosenLevel[media.id] = level
+        player.replaceCurrentItem(with: AVPlayerItem(url: levels[level].url))
+        player.volume = volume
         player.play()
         startTicker()
+    }
+
+    /// The best variant the measured link carries with headroom; with no recent
+    /// measurement, one step above the lowest (never a blurry 240p by default).
+    private func pickLevel() -> Int {
+        let bitsPerSecond = TransferMonitor.shared.snapshot().bytesPerSecond * 8
+        let fallback = levels.count >= 3 ? 1 : 0
+        guard bitsPerSecond > 8_000 else { return fallback }
+        var best = 0
+        for (i, v) in levels.enumerated() where Double(v.bitrate ?? 0) * 1.5 <= bitsPerSecond {
+            best = i
+        }
+        return best
     }
 
     func stop() {
@@ -95,15 +96,10 @@ final class VideoPlayback: ObservableObject {
         stop()
         player.replaceCurrentItem(with: nil)
         mediaId = nil
-        started = false
         loading = true
     }
 
     // MARK: Controls
-
-    func setMuted(_ muted: Bool) {
-        player.isMuted = muted
-    }
 
     func togglePlayPause() {
         if player.timeControlStatus == .playing {
@@ -111,10 +107,12 @@ final class VideoPlayback: ObservableObject {
         } else {
             if endedFlag { replay() } else { player.play() }
         }
+        isPlaying = player.timeControlStatus == .playing || player.rate > 0
     }
 
     func replay() {
         endedFlag = false
+        scrubTarget = nil
         player.seek(to: .zero)
         player.play()
     }
@@ -124,53 +122,41 @@ final class VideoPlayback: ObservableObject {
     }
 
     /// Scrub by a number of seconds (positive = forward), clamped to the video.
-    func scrub(bySeconds seconds: Double) {
-        guard duration > 0 else { return }
+    /// Returns the new target position.
+    @discardableResult
+    func scrub(bySeconds seconds: Double) -> Double {
+        guard duration > 0 else { return position }
         endedFlag = false
-        let target = min(max(0, position + seconds), max(0, duration - 0.2))
-        let time = CMTime(seconds: target, preferredTimescale: 600)
+        let from = scrubTarget ?? position
+        let target = min(max(0, from + seconds), max(0, duration - 0.2))
+        scrubTarget = target
         position = target
-        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
-    }
-
-    /// Digital-Crown volume: the player's own gain, since the system volume is
-    /// not reachable from an app on watchOS.
-    func adjustVolume(by delta: Float) {
-        player.volume = min(1, max(0, player.volume + delta))
-    }
-
-    var volume: Float { player.volume }
-
-    // MARK: Variant loading
-
-    private func load(level index: Int) {
-        guard levels.indices.contains(index) else { return }
-        level = index
-        player.replaceCurrentItem(with: AVPlayerItem(url: levels[index].url))
-    }
-
-    private func upgrade(to index: Int) {
-        guard levels.indices.contains(index) else { return }
-        let time = player.currentTime()
-        let wasPlaying = player.timeControlStatus == .playing
-        lastUpgrade = Date()
-        upgradesThisPlay += 1
-        level = index
-        if let mediaId { Self.bestLevel[mediaId] = max(Self.bestLevel[mediaId] ?? 0, index) }
-        player.replaceCurrentItem(with: AVPlayerItem(url: levels[index].url))
-        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-            guard let self, wasPlaying else { return }
-            self.player.play()
+        seekToken += 1
+        let token = seekToken
+        // A little tolerance: exact seeks on a streamed MP4 are slow and queue up.
+        let tolerance = CMTime(seconds: 0.25, preferredTimescale: 600)
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600),
+                    toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.seekToken == token else { return }
+                self.scrubTarget = nil
+            }
         }
+        return target
     }
 
-    // MARK: Progress / adaptive quality
+    func setVolume(_ value: Float) {
+        volume = min(1, max(0, value))
+        player.volume = volume
+    }
+
+    // MARK: Progress
 
     private func startTicker() {
         ticker?.cancel()
         ticker = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 400_000_000)
+                try? await Task.sleep(nanoseconds: 250_000_000)
                 guard let self, !Task.isCancelled else { return }
                 self.tick()
             }
@@ -186,36 +172,21 @@ final class VideoPlayback: ObservableObject {
 
         let length = item.duration.seconds
         if length.isFinite, length > 0 { duration = length }
-        position = player.currentTime().seconds
-        isPlaying = player.timeControlStatus == .playing
+        let now = player.currentTime().seconds
+        if scrubTarget == nil, now.isFinite { position = now }
+        let playing = player.timeControlStatus == .playing
+        if isPlaying != playing { isPlaying = playing }
 
         if length.isFinite, length > 0 {
-            let end = bufferedSeconds(item)
-            buffered = min(1, max(0, end / length))
+            buffered = min(1, max(0, bufferedSeconds(item) / length))
         }
 
-        if player.timeControlStatus == .playing {
-            started = true
-            loading = false
-        } else if started {
-            loading = false
-        }
-
-        // Measured throughput of the stream (bits/s). Zero until the first
-        // access-log event.
-        let observed = item.accessLog()?.events.last?.observedBitrate ?? 0
-        guard observed > 0, upgradesThisPlay < Self.maxUpgradesPerPlay,
-              levels.indices.contains(level + 1) else { return }
-
-        let next = levels[level + 1]
-        let needed = Double(next.bitrate ?? 0)
-        let ahead = max(0, bufferedSeconds(item) - position)
-        guard needed > 0,
-              observed > needed * Self.upgradeHeadroom,
-              ahead > Self.minimumBufferAhead,
-              Date().timeIntervalSince(lastUpgrade) > Self.upgradeCooldown
-        else { return }
-        upgrade(to: level + 1)
+        // "Playing" is reported a moment before the first frame is on screen;
+        // keep the poster until the clock has really moved, so the reader never
+        // sees the player's black frame.
+        if loading, playing, now > 0.15 { loading = false }
+        let waiting = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+        if stalled != (!loading && waiting) { stalled = !loading && waiting }
     }
 
     private func bufferedSeconds(_ item: AVPlayerItem) -> Double {

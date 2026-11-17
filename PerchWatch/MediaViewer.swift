@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import WatchKit
 import AVKit
 import AVFoundation
 import Combine
@@ -203,7 +204,7 @@ private struct MediaPage: View {
     var body: some View {
         switch media.type {
         case .photo:
-            MediaPhotoPage(media: media, zoomed: $zoomed, touch: touch)
+            MediaPhotoPage(media: media, isActive: isActive, zoomed: $zoomed, touch: touch)
         case .video, .gif:
             MediaVideoPage(media: media, isActive: isActive,
                            controlsVisible: $controlsVisible,
@@ -217,8 +218,13 @@ private struct MediaPage: View {
 /// toggles between 1× and 2.5× (centred) and brings the close button back.
 private struct MediaPhotoPage: View {
     let media: XMedia
+    let isActive: Bool
     @Binding var zoomed: Bool
     let touch: () -> Void
+
+    /// The crown zooms the photo on screen (with several attachments, focus
+    /// used to stay on the first page).
+    @FocusState private var crownFocused: Bool
 
     @State private var zoom: Double = 1
     @State private var offset: CGSize = .zero
@@ -252,6 +258,10 @@ private struct MediaPhotoPage: View {
                 .onChange(of: geo.size) { _, size in container = size }
         }
         .focusable()
+        .focused($crownFocused)
+        .onChange(of: isActive) { _, active in
+            if active { DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { crownFocused = true } }
+        }
         .digitalCrownRotation($zoom, from: 1, through: 5, by: 0.1,
                               sensitivity: .medium, isContinuous: false,
                               isHapticFeedbackEnabled: true)
@@ -273,6 +283,7 @@ private struct MediaPhotoPage: View {
         .onAppear {
             zoomed = zoom > 1.05
             wantsFull = LinkSpeed.prefersFullPhoto(media)
+            if isActive { DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { crownFocused = true } }
         }
         .onDisappear { zoomed = false }
         .ignoresSafeArea()
@@ -315,11 +326,13 @@ private struct MediaPhotoPage: View {
     }
 }
 
-/// One video/GIF page. Playback starts immediately on a small MP4 and
-/// `VideoPlayback` steps up to better variants while it plays (see that file).
+/// One video/GIF page.
 ///
-/// The Digital Crown adjusts the volume while the video is clean; after a tap
-/// (which shows the play/pause button and the timestamp) it scrubs the video.
+/// The Digital Crown changes the volume while the video is clean; after a tap
+/// (which shows the play/pause button and the timestamp) it scrubs. Both give a
+/// haptic detent (every 5 % of volume, every second of video). The page holds
+/// crown focus itself; AVKit's player is display-only, so it can never take the
+/// crown or the taps away.
 private struct MediaVideoPage: View {
     let media: XMedia
     let isActive: Bool
@@ -328,32 +341,50 @@ private struct MediaVideoPage: View {
     let toggleControls: () -> Void
 
     @StateObject private var playback = VideoPlayback()
+    @FocusState private var crownFocused: Bool
     @State private var crown = 0.0
     @State private var lastCrown = 0.0
     @State private var volumeHUD: Double?
     @State private var volumeTask: Task<Void, Never>?
+    /// Last detent that played a haptic (volume step or whole second).
+    @State private var lastDetent: Int?
+    @State private var lastHaptic = Date.distantPast
 
     var body: some View {
         ZStack {
             Color.black
             VideoPlayer(player: playback.player)
+                .disabled(true)              // no AVKit controls, focus or crown
+                .allowsHitTesting(false)
                 .ignoresSafeArea()
 
+            // Poster until the first frame is really on screen (no black flash),
+            // and behind an error.
+            if playback.loading || playback.failed != nil {
+                poster
+            }
             if let failure = playback.failed {
                 unavailable(failure)
             } else if playback.loading {
-                loadingOverlay
+                loadingBar
+            } else if playback.stalled {
+                ProgressView()
+                    .allowsHitTesting(false)
             }
 
             // Swallow taps: AVKit's own controls never appear, the chrome is ours.
             Color.clear
                 .contentShape(Rectangle())
-                .onTapGesture { toggleControls() }
+                .onTapGesture {
+                    toggleControls()
+                    claimCrown()
+                }
 
             if controlsVisible { controls }
             if let volume = volumeHUD { volumeOverlay(volume) }
         }
         .focusable()
+        .focused($crownFocused)
         .digitalCrownRotation($crown, from: -100_000, through: 100_000, by: 1,
                               sensitivity: .low, isContinuous: false,
                               isHapticFeedbackEnabled: false)
@@ -362,20 +393,34 @@ private struct MediaVideoPage: View {
             lastCrown = value
             guard abs(delta) > 0.01 else { return }
             if controlsVisible {
-                playback.scrub(bySeconds: delta * 0.5)
+                let target = playback.scrub(bySeconds: delta * 0.5)
+                detent(Int(target.rounded(.down)))
                 touch()
             } else {
-                playback.adjustVolume(by: Float(delta) * 0.02)
+                let volume = playback.volume + Float(delta) * 0.02
+                playback.setVolume(volume)
+                detent(Int((playback.volume * 20).rounded()))
                 showVolume(playback.volume)
             }
         }
-        .onAppear { if isActive { playback.start(media) } }
+        .onChange(of: controlsVisible) { _, _ in lastDetent = nil }
+        .onAppear {
+            if isActive {
+                playback.start(media)
+                claimCrown()
+            }
+        }
         .onDisappear {
             playback.teardown()
             volumeTask?.cancel()
         }
         .onChange(of: isActive) { _, active in
-            if active { playback.start(media) } else { playback.stop() }
+            if active {
+                playback.start(media)
+                claimCrown()
+            } else {
+                playback.stop()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification)) { note in
             guard let item = note.object as? AVPlayerItem,
@@ -390,6 +435,32 @@ private struct MediaVideoPage: View {
         .accessibilityLabel(media.altText ?? (media.type == .gif ? "GIF" : "Video"))
     }
 
+    private func claimCrown() {
+        // After the viewer's open animation; focusing during it does not stick.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            if isActive { crownFocused = true }
+        }
+    }
+
+    /// A click each time the crown crosses a detent (rate-limited so a fast
+    /// spin does not buzz continuously).
+    private func detent(_ value: Int) {
+        defer { lastDetent = value }
+        guard let last = lastDetent, last != value else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastHaptic) > 0.06 else { return }
+        lastHaptic = now
+        WKInterfaceDevice.current().play(.click)
+    }
+
+    private var poster: some View {
+        let feed = ImageLoader.feedImage(for: media)
+        return RemoteImage(url: media.thumbnailURL, maxPixel: 900, contentMode: .fit,
+                           fallbackURL: feed.url, fallbackMaxPixel: feed.maxPixel)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .allowsHitTesting(false)
+    }
+
     private func unavailable(_ message: String) -> some View {
         Label(message, systemImage: "exclamationmark.triangle.fill")
             .font(.caption2)
@@ -399,30 +470,26 @@ private struct MediaVideoPage: View {
             .background(Color.black.opacity(0.65), in: Capsule())
     }
 
-    /// Thumbnail + how much of the video is buffered, until it starts playing.
-    private var loadingOverlay: some View {
-        ZStack {
-            RemoteImage(url: media.thumbnailURL, maxPixel: 900, contentMode: .fit)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            VStack(spacing: 5) {
-                Spacer(minLength: 0)
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Color.white.opacity(0.25))
-                        Capsule()
-                            .fill(Color.white)
-                            .frame(width: geo.size.width * CGFloat(min(1, max(0.03, playback.buffered))))
-                    }
+    /// How much of the video is buffered, until it starts playing.
+    private var loadingBar: some View {
+        VStack(spacing: 5) {
+            Spacer(minLength: 0)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.25))
+                    Capsule()
+                        .fill(Color.white)
+                        .frame(width: geo.size.width * CGFloat(min(1, max(0.03, playback.buffered))))
                 }
-                .frame(width: 120, height: 3)
-                Text(bufferingText)
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
+            .frame(width: 120, height: 3)
+            Text(bufferingText)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
         }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+        .allowsHitTesting(false)
     }
 
     private var bufferingText: String {
@@ -436,6 +503,7 @@ private struct MediaVideoPage: View {
             Button {
                 playback.togglePlayPause()
                 touch()
+                claimCrown()
             } label: {
                 Image(systemName: controlIcon)
                     .font(.system(size: 22, weight: .semibold))
@@ -470,6 +538,7 @@ private struct MediaVideoPage: View {
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 14)
+            .allowsHitTesting(false)
         }
     }
 

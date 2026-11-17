@@ -31,6 +31,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var remoteOverrideURL: URL?
     @Published private(set) var lastStateChange = Date()
     @Published var busyMessage: String?
+    /// True once the first `reloadState()` has read the stored session (before
+    /// that `isLoggedIn` is false even for a logged-in user).
+    @Published private(set) var stateLoaded = false
 
     weak var sync: SyncChannel?
     /// Platform hook run on logout (the Watch clears its offline caches).
@@ -80,6 +83,7 @@ final class AppModel: ObservableObject {
         if viewer == nil { viewer = activeAccount?.user }
         if wasLoggedIn != isLoggedIn { rebuildClient() }
         lastStateChange = Date()
+        stateLoaded = true
     }
 
     private static func makeClient(store: XSessionStore) -> XClient {
@@ -279,6 +283,7 @@ extension AppModel {
         self.viewer = viewer
         badge = XBadgeCounts(notifications: 0, dms: 0)
         lastStateChange = Date()
+        stateLoaded = true
     }
 }
 #endif

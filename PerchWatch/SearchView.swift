@@ -52,6 +52,7 @@ struct SearchView: View {
             .padding(.horizontal, Metrics.horizontalPadding)
         }
         .background(Color.black)
+        .crownScrollFocus()
         .navigationTitle("Search")
         .postPresentation(profile: $profileTarget, media: $mediaTarget)
         .swipeBack()

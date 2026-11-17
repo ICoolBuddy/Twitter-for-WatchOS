@@ -9,6 +9,8 @@ struct MenuView: View {
     @EnvironmentObject private var app: AppModel
     @ObservedObject private var posts = AppModel.shared.posts
 
+    /// This page is the one the root pager shows (crown focus follows it).
+    var isActive: Bool = true
     /// Switches the root pager to the feed page for that timeline.
     var onPick: (HomeKind) -> Void = { _ in }
 
@@ -73,6 +75,7 @@ struct MenuView: View {
                 }
             }
         }
+        .crownScrollFocus(active: isActive)
         // No navigationTitle: the root navigation bar only carries the pager's
         // back/hamburger button, and the menu is recognisable by its content.
         .sheet(isPresented: $showAccounts) {

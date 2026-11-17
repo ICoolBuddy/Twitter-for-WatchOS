@@ -107,17 +107,20 @@ struct RootPager: View {
 
     var body: some View {
         TabView(selection: $page) {
-            MenuView(onPick: { kind in
+            MenuView(isActive: page == 0, onPick: { kind in
                 goFeed(kind)
             })
             .tag(0)
-            HomeView(kind: .forYou)
+            HomeView(kind: .forYou, isActive: page == 1)
                 .tag(1)
-            HomeView(kind: .following)
+            HomeView(kind: .following, isActive: page == 2)
                 .tag(2)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
         .background(Color.black)
+        // One glow for the whole pager (not per page), so a refresh that is
+        // still running stays visible after swiping to the other feed or the menu.
+        .overlay { RootGlow(page: page) }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button {
