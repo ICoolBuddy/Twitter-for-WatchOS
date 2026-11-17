@@ -274,6 +274,7 @@ struct PhoneTimelineView: View {
                 let p = try await client.homeTimeline(k, cursor: cursor)
                 return (p.items, p.bottomCursor, p.topCursor)
             }
+            list.skip = { $0.isFiller }
             await list.refresh()
         }
     }

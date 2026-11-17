@@ -101,5 +101,6 @@ struct TimelineListView: View {
         list.onPage = { items in
             ImageLoader.shared.prefetchFeed(items.displayTweets)
         }
+        list.skip = { $0.isFiller }
     }
 }

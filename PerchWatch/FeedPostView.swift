@@ -110,7 +110,8 @@ struct FeedPostView: View {
                     Button {
                         onMedia?(MediaTarget(media: t.media, startIndex: 0))
                     } label: {
-                        MediaThumb(media: m, extraCount: t.media.count - 1)
+                        MediaThumb(media: m, extraCount: t.media.count - 1,
+                                   localURL: SavedStore.shared.localPhoto(tweetID: t.id, index: 0))
                     }
                     .buttonStyle(.plain)
                     .frame(maxWidth: .infinity)

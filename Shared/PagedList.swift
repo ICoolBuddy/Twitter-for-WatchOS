@@ -31,6 +31,8 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
     /// Called with every page of items that becomes available — refresh, load
     /// more and the disk seed — so images can be prefetched.
     var onPage: (([Item]) -> Void)?
+    /// Optional row filter (timeline filler); applied to every incoming page.
+    var skip: ((Item) -> Bool)?
 
     init(maxItems: Int = 300, fetch: @escaping (String?) async throws -> Page) {
         self.fetch = fetch
@@ -81,7 +83,7 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
             let page = try await fetch(nil)
             try Task.checkCancellation()
             guard gen == generation else { return }
-            let fresh = dedupe(page.items)
+            let fresh = dedupe(page.items).filter { skip?($0) != true }
             if merge, !items.isEmpty {
                 let known = Set(items.map(\.id))
                 let added = fresh.filter { !known.contains($0.id) }
@@ -127,7 +129,7 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
             try Task.checkCancellation()
             guard gen == generation else { return }
             let existing = Set(items.map(\.id))
-            let fresh = page.items.filter { !existing.contains($0.id) }
+            let fresh = page.items.filter { skip?($0) != true && !existing.contains($0.id) }
             items.append(contentsOf: fresh)
             if !fresh.isEmpty { onPage?(fresh) }
             self.cursor = page.cursor
@@ -182,6 +184,22 @@ enum TimelineDiskCache {
         else { return }
         for f in files where f.lastPathComponent.hasPrefix("perch-home-") {
             try? FileManager.default.removeItem(at: f)
+        }
+    }
+}
+
+extension TimelineItem {
+    /// Empty rows (tombstones, ad shells, prompts) are not worth a place in a
+    /// feed: no text, no media, nothing quoted.
+    var isFiller: Bool {
+        switch self {
+        case .tweet(let t):
+            let shown = t.displayed
+            return shown.text.isEmpty && shown.media.isEmpty && shown.quotedTweet == nil
+        case .conversation(let tweets):
+            return tweets.allSatisfy { $0.text.isEmpty && $0.media.isEmpty }
+        case .user:
+            return false
         }
     }
 }

@@ -255,6 +255,11 @@ struct ProfileContent: View {
         loadingProfile = true
         error = nil
         defer { loadingProfile = false }
+        if user == nil, let cached = OfflineCache.user(id: target.userId) ?? OfflineCache.user(screenName: target.screenName) {
+            apply(cached)
+            configurePosts(cached.id)
+            await list.loadIfNeeded()
+        }
         do {
             let client = app.client
             let fresh: XUser?
@@ -265,7 +270,10 @@ struct ProfileContent: View {
             } else {
                 fresh = nil
             }
-            if let fresh { apply(fresh) }
+            if let fresh {
+                apply(fresh)
+                OfflineCache.save(fresh)
+            }
             if let u = user {
                 configurePosts(u.id)
                 await list.loadIfNeeded()
@@ -273,7 +281,8 @@ struct ProfileContent: View {
                 self.error = .network("No profile to load")
             }
         } catch {
-            self.error = XError.from(error)
+            // A cached profile + cached posts still make the page usable.
+            if user == nil { self.error = XError.from(error) }
             if let u = user {
                 configurePosts(u.id)
                 await list.loadIfNeeded()
@@ -299,6 +308,11 @@ struct ProfileContent: View {
         list.onPage = { items in
             ImageLoader.shared.prefetchFeed(items.displayTweets)
         }
+        list.onFirstPage = { items, _ in
+            TimelineDiskCache.save(items, name: "profile-\(userId)")
+        }
+        list.skip = { $0.isFiller }
+        list.seed(TimelineDiskCache.load(name: "profile-\(userId)"))
     }
 
     private func toggleFollow(_ u: XUser) {

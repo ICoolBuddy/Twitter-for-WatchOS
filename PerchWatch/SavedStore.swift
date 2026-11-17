@@ -48,6 +48,13 @@ final class SavedStore: ObservableObject {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
+    /// Local copy of a post's photo, for lists that should not re-download it.
+    func localPhoto(tweetID: String, index: Int) -> URL? {
+        guard let post = items.first(where: { $0.id == tweetID }),
+              let name = photoFile(post, index: index) else { return nil }
+        return fileURL(name)
+    }
+
     func photoFile(_ post: SavedPost, index: Int) -> String? {
         guard post.mediaFiles.indices.contains(index) else { return nil }
         let name = post.mediaFiles[index]

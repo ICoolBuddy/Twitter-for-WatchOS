@@ -105,9 +105,31 @@ struct PostDetailView: View {
                 .accessibilityLabel(saved.isSaved(focal.id) ? "Remove from saved" : "Save for offline")
             }
         }
-        .task { if thread == nil { await load() } }
+        .task {
+            if thread == nil {
+                seedFromCache()
+                await load()
+            }
+        }
         .postPresentation(profile: $profileTarget, media: $mediaTarget)
         .swipeBack()
+    }
+
+    /// What was on screen last time this post was opened (offline support).
+    private func seedFromCache() {
+        guard thread == nil, let cached = OfflineCache.thread(id: tweet.displayed.id) else { return }
+        thread = cached
+        replies = cached.replies
+        cursor = cached.bottomCursor
+        ImageLoader.shared.prefetchFeed(cached.replies.displayTweets)
+    }
+
+    private func saveToCache() {
+        let page = ThreadPage(focal: thread?.focal ?? tweet.displayed,
+                              ancestors: thread?.ancestors ?? [],
+                              replies: replies,
+                              bottomCursor: cursor)
+        OfflineCache.save(page, id: tweet.displayed.id)
     }
 
     private func load() async {
@@ -119,10 +141,13 @@ struct PostDetailView: View {
             thread = t
             replies = t.replies
             cursor = t.bottomCursor
+            OfflineCache.save(t, id: tweet.displayed.id)
             ImageLoader.shared.prefetchFeed(replies.displayTweets)
         } catch is CancellationError {
         } catch {
-            self.error = XError.from(error)
+            // With a cached thread on screen this is not an error wall, just
+            // "you are offline".
+            if thread == nil { self.error = XError.from(error) }
         }
         loading = false
         // Replies auto-load: if the first page brought none, fetch the next one
@@ -150,6 +175,7 @@ struct PostDetailView: View {
             let fresh = t.replies.filter { !ids.contains($0.id) }
             replies.append(contentsOf: fresh)
             cursor = (t.bottomCursor == c || fresh.isEmpty) ? nil : t.bottomCursor
+            saveToCache()
             ImageLoader.shared.prefetchFeed(t.replies.displayTweets)
         } catch is CancellationError {
         } catch {

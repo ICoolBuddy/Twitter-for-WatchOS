@@ -171,6 +171,8 @@ struct MediaThumb: View {
     let media: XMedia
     var extraCount = 0
     var maxHeight: CGFloat? = nil
+    /// A locally saved copy of this media, preferred over the network.
+    var localURL: URL? = nil
 
     private var ratio: CGFloat {
         #if os(watchOS)
@@ -211,7 +213,8 @@ struct MediaThumb: View {
     #endif
 
     var body: some View {
-        RemoteImage(url: image.url, placeholderURL: media.previewURL, maxPixel: image.maxPixel)
+        RemoteImage(url: localURL ?? image.url, placeholderURL: media.previewURL,
+                    maxPixel: localURL != nil ? 600 : image.maxPixel)
             .aspectRatio(ratio, contentMode: .fit)
             .frame(maxWidth: .infinity, maxHeight: cap)
             .clipShape(RoundedRectangle(cornerRadius: Metrics.mediaCorner))

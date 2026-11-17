@@ -234,7 +234,7 @@ public struct NotificationsPage: Codable, Sendable, Equatable {
     }
 }
 
-public struct ThreadPage: Sendable, Equatable {
+public struct ThreadPage: Codable, Sendable, Equatable {
     public var focal: XTweet?
     public var ancestors: [XTweet]
     public var replies: [TimelineItem]

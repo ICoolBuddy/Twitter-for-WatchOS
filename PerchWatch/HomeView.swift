@@ -140,6 +140,7 @@ struct HomeView: View {
         list.onPage = { items in
             ImageLoader.shared.prefetchFeed(items.displayTweets)
         }
+        list.skip = { $0.isFiller }
         list.seed(TimelineDiskCache.load(name: cacheName))
     }
 
