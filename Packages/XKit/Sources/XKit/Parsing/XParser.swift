@@ -102,12 +102,23 @@ public enum XParser {
         if !ic["promotedMetadata"].isNull { return nil }
         switch t {
         case "TimelineTweet":
-            return tweet(ic["tweet_results"]["result"]).map(TimelineItem.tweet)
+            guard let tweet = tweet(ic["tweet_results"]["result"]) else { return nil }
+            return cleaned(tweet).map(TimelineItem.tweet)
         case "TimelineUser":
             return user(ic["user_results"]["result"]).map(TimelineItem.user)
         default:
             return nil
         }
+    }
+
+    /// Drops feed filler: a post with no text, no media and no quote/retweet is
+    /// an ad shell or a prompt, not something to read.
+    static func cleaned(_ t: XTweet) -> XTweet? {
+        let shown = t.displayed
+        if shown.text.isEmpty, shown.media.isEmpty, shown.quotedTweet == nil {
+            return nil
+        }
+        return t
     }
 
     /// Recursively finds the first `instructions` array.

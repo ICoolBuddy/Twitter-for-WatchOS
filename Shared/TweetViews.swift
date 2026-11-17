@@ -16,6 +16,7 @@ enum Route: Hashable {
     case search
     case bookmarks
     case likes
+    case saved
     case messages
     case conversation(DMConversation)
     case settings

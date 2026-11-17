@@ -7,6 +7,7 @@ struct PerchWatchApp: App {
     @WKApplicationDelegateAdaptor(PerchWatchDelegate.self) private var delegate
     @StateObject private var app = AppModel.shared
     @StateObject private var sync = WatchSync.shared
+    @State private var showIntro = LaunchIntro.shouldShow
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -15,21 +16,20 @@ struct PerchWatchApp: App {
 
     var body: some Scene {
         WindowGroup {
-            #if DEBUG
-            // Screenshot harness (CI): no-op unless launched with -PerchScreen/-PerchFixtures.
-            WatchRootView()
-                .perchDebugScreens()
-                .environmentObject(app)
-                .environmentObject(app.posts)
-                .environmentObject(sync)
-                .onAppear { sync.start() }
-            #else
-            WatchRootView()
-                .environmentObject(app)
-                .environmentObject(app.posts)
-                .environmentObject(sync)
-                .onAppear { sync.start() }
-            #endif
+            ZStack {
+                // `.perchDebugScreens()` is inert outside DEBUG builds.
+                WatchRootView()
+                    .perchDebugScreens()
+                    .environmentObject(app)
+                    .environmentObject(app.posts)
+                    .environmentObject(sync)
+                    .onAppear { sync.start() }
+
+                if showIntro {
+                    LaunchIntroView(visible: $showIntro)
+                        .zIndex(2)
+                }
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -171,6 +171,8 @@ struct RouteView: View {
             TimelineListView(kind: .likes, title: "Likes")
         case .bookmarks:
             TimelineListView(kind: .bookmarks, title: "Bookmarks")
+        case .saved:
+            SavedView()
         case .settings:
             WatchSettingsView()
         case .debugLog:

@@ -16,6 +16,7 @@ struct PostDetailView: View {
 
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
+    @ObservedObject private var saved = SavedStore.shared
 
     private var focal: XTweet { thread?.focal ?? tweet.displayed }
     private var ancestors: [XTweet] { thread?.ancestors ?? [] }
@@ -94,6 +95,16 @@ struct PostDetailView: View {
         }
         .background(Color.black)
         .navigationTitle("Post")
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button {
+                    saved.toggle(focal)
+                } label: {
+                    Image(systemName: saved.isSaved(focal.id) ? "arrow.down.circle.fill" : "arrow.down.circle")
+                }
+                .accessibilityLabel(saved.isSaved(focal.id) ? "Remove from saved" : "Save for offline")
+            }
+        }
         .task { if thread == nil { await load() } }
         .postPresentation(profile: $profileTarget, media: $mediaTarget)
         .swipeBack()

@@ -41,6 +41,10 @@ struct MenuView: View {
                 NavigationLink(value: Route.bookmarks) {
                     Label("Bookmarks", systemImage: "bookmark")
                 }
+
+                NavigationLink(value: Route.saved) {
+                    Label("Saved", systemImage: "arrow.down.circle")
+                }
             }
 
             Section {

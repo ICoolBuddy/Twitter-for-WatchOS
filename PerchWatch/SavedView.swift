@@ -1,0 +1,191 @@
+import SwiftUI
+import AVKit
+import AVFoundation
+import XKit
+
+/// Offline posts, saved from the post page. Everything here renders from local
+/// files, so it works with no connection at all.
+struct SavedView: View {
+    @ObservedObject private var store = SavedStore.shared
+    @State private var selected: SavedStore.SavedPost?
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                if store.items.isEmpty {
+                    VStack(spacing: 6) {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                        Text("No saved posts")
+                            .font(.system(size: 15, weight: .semibold))
+                        Text("Open a post and tap the download button to keep it offline.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 30)
+                }
+
+                ForEach(store.items) { post in
+                    Button {
+                        selected = post
+                    } label: {
+                        SavedRow(post: post, downloading: store.saving.contains(post.id))
+                    }
+                    .buttonStyle(.plain)
+                    PostSeparator()
+                }
+            }
+            .padding(.horizontal, Metrics.horizontalPadding)
+        }
+        .background(Color.black)
+        .navigationTitle("Saved")
+        .swipeBack()
+        .sheet(item: $selected) { post in
+            SavedDetailView(post: post)
+        }
+    }
+}
+
+private struct SavedRow: View {
+    let post: SavedStore.SavedPost
+    let downloading: Bool
+
+    private var tweet: XTweet { post.tweet.displayed }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                LocalImage(url: SavedStore.shared.fileURL(post.avatarFile), maxPixel: 88)
+                    .frame(width: 28, height: 28)
+                    .clipShape(Circle())
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(tweet.author.name)
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(1)
+                    Text("@" + tweet.author.screenName)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 2)
+                if downloading {
+                    ProgressView().scaleEffect(0.6)
+                } else if post.videoFile != nil {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text(tweet.text)
+                .font(.system(size: 15))
+                .lineLimit(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let media = tweet.media.first,
+               let name = SavedStore.shared.photoFile(post, index: 0) {
+                LocalImage(url: SavedStore.shared.fileURL(name), maxPixel: 400)
+                    .aspectRatio(max(0.2, media.aspectRatio), contentMode: .fit)
+                    .frame(maxWidth: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct SavedDetailView: View {
+    let post: SavedStore.SavedPost
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var player: AVPlayer?
+
+    private var tweet: XTweet { post.tweet.displayed }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    LocalImage(url: SavedStore.shared.fileURL(post.avatarFile), maxPixel: 88)
+                        .frame(width: 30, height: 30)
+                        .clipShape(Circle())
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(tweet.author.name)
+                            .font(.system(size: 15, weight: .semibold))
+                            .lineLimit(1)
+                        Text("@" + tweet.author.screenName)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Text(tweet.text)
+                    .font(.system(size: 17))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                ForEach(Array(tweet.media.enumerated()), id: \.offset) { index, media in
+                    if let name = SavedStore.shared.photoFile(post, index: index) {
+                        LocalImage(url: SavedStore.shared.fileURL(name), maxPixel: 900)
+                            .aspectRatio(max(0.2, media.aspectRatio), contentMode: .fit)
+                            .frame(maxWidth: .infinity)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                }
+
+                if let player {
+                    VideoPlayer(player: player)
+                        .frame(height: 200)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+
+                Button(role: .destructive) {
+                    SavedStore.shared.remove(post.id)
+                    dismiss()
+                } label: {
+                    Text("Remove from saved")
+                        .frame(maxWidth: .infinity)
+                }
+                .padding(.top, 4)
+            }
+            .padding(.horizontal, Metrics.horizontalPadding)
+            .padding(.vertical, 6)
+        }
+        .background(Color.black)
+        .navigationTitle("Saved post")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Close") { dismiss() }
+            }
+        }
+        .onAppear {
+            if let name = post.videoFile,
+               let url = SavedStore.shared.fileURL(name),
+               player == nil {
+                let p = AVPlayer(url: url)
+                player = p
+            }
+        }
+        .onDisappear { player?.pause() }
+    }
+}
+
+/// An image from a local file (saved posts). Falls back to a quiet block when the
+/// file is not there yet.
+struct LocalImage: View {
+    let url: URL?
+    var maxPixel: Int = 400
+
+    var body: some View {
+        if url != nil {
+            RemoteImage(url: url, maxPixel: maxPixel, contentMode: .fit)
+        } else {
+            Rectangle().fill(Color.white.opacity(0.06))
+        }
+    }
+}

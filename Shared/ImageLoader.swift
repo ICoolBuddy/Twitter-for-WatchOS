@@ -71,6 +71,15 @@ final class ImageLoader: @unchecked Sendable {
     func load(_ url: URL, maxPixel: Int) async throws -> CGImage {
         let k = key(url, maxPixel)
         if let c = cache.object(forKey: k) { return c.image }
+        // Saved (offline) media: decode straight from the local file.
+        if url.isFileURL {
+            guard let bytes = try? Data(contentsOf: url),
+                  let image = Self.downsample(bytes, maxPixel: maxPixel) else {
+                throw URLError(.fileDoesNotExist)
+            }
+            cache.setObject(CGImageBox(image), forKey: k, cost: image.bytesPerRow * image.height)
+            return image
+        }
         var data = await diskData(for: url)
         if data == nil {
             let (downloaded, _) = try await session.data(from: url)
@@ -107,7 +116,11 @@ final class ImageLoader: @unchecked Sendable {
             guard seen.insert("\(maxPixel)|\(url.absoluteString)").inserted else { return }
             items.append((url: url, maxPixel: maxPixel))
         }
-        for tweet in tweets {
+        // Adaptive: on a slow (Bluetooth-relayed) link only warm the few posts
+        // that are about to be visible; on a fast one warm the whole page.
+        let rate = TransferMonitor.shared.snapshot().bytesPerSecond
+        let limit = (rate > 1 && rate < 40_000) ? 4 : 40
+        for tweet in tweets.prefix(limit) {
             let t = tweet.displayed
             add(t.author.avatarURL, Int(44 * 2.5))
             // `Avatar` swaps in the `_bigger` variant at feed size, so warm the URL
@@ -337,8 +350,7 @@ struct RemoteImage: View {
                 picture(placeholder)
                     .blur(radius: 8)
             } else {
-                Rectangle()
-                    .fill(Color.gray.opacity(0.25))
+                Skeleton(corner: 0)
                     .overlay {
                         if failed { Image(systemName: "photo").foregroundStyle(.secondary) }
                     }

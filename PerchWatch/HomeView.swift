@@ -77,9 +77,12 @@ struct HomeView: View {
             ErrorStateView(error: e) { await list.refresh() }
                 .padding(.vertical, 16)
         } else if list.isEmpty && list.isLoading {
-            ProgressView()
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 40)
+            VStack(spacing: 12) {
+                PostSkeleton(mediaHeight: 130)
+                PostSkeleton(mediaHeight: 110)
+                PostSkeleton(mediaHeight: 150)
+            }
+            .padding(.vertical, 4)
         } else if list.isEmpty {
             emptyState
         } else {
