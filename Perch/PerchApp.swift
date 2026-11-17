@@ -7,6 +7,10 @@ struct PerchApp: App {
     @StateObject private var sync = PhoneSync.shared
     @Environment(\.scenePhase) private var scenePhase
 
+    init() {
+        PerchSettings.registerDefaults()
+    }
+
     var body: some Scene {
         WindowGroup {
             PhoneRootView()
@@ -59,7 +63,12 @@ struct PhoneRootView: View {
                 }
             }
             .sheet(isPresented: $showLogin) {
-                LoginSheet { creds in Task { await app.login(creds) } }
+                LoginSheet { creds in
+                    Task { @MainActor in
+                        await app.login(creds)
+                        sync.syncNow()
+                    }
+                }
             }
             .alert("Perch", isPresented: Binding(get: { alert != nil }, set: { if !$0 { alert = nil } })) {
                 Button("OK", role: .cancel) {}
@@ -76,37 +85,73 @@ struct PhoneRootView: View {
 
     private var accountSection: some View {
         Section {
-            if app.isLoggedIn {
-                if let v = app.viewer {
-                    HStack {
-                        Avatar(user: v, size: 40)
-                        VStack(alignment: .leading) {
-                            Text(v.name).font(.headline)
-                            Text("@" + v.screenName).foregroundStyle(.secondary)
-                        }
-                    }
-                } else {
-                    Label("Logged in", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                }
-                Button("Log out (iPhone and Watch)", role: .destructive) {
-                    Task { await app.logout() }
-                }
-            } else {
+            if app.accounts.isEmpty {
                 Button {
                     showLogin = true
                 } label: {
                     Label("Log in with X", systemImage: "person.crop.circle.badge.plus")
                 }
-                NavigationLink {
-                    ManualLoginView { creds in Task { await app.login(creds) } }
+            } else {
+                ForEach(app.accounts) { account in
+                    accountRow(account)
+                }
+                Button {
+                    showLogin = true
                 } label: {
-                    Label("Paste cookies instead", systemImage: "doc.on.clipboard")
+                    Label("Add account", systemImage: "person.badge.plus")
+                }
+            }
+            NavigationLink {
+                ManualLoginView { creds in
+                    Task { @MainActor in
+                        await app.login(creds)
+                        sync.syncNow()
+                    }
+                }
+            } label: {
+                Label("Paste cookies instead", systemImage: "doc.on.clipboard")
+            }
+            if !app.accounts.isEmpty {
+                Button("Log out all accounts (iPhone and Watch)", role: .destructive) {
+                    Task { @MainActor in await app.logout() }
                 }
             }
         } header: {
-            Text("Account")
+            Text("Accounts")
         } footer: {
-            Text("Your X session cookies are stored only in the Keychain on this iPhone and on your Watch.")
+            if app.accounts.isEmpty {
+                Text("Your X session cookies are stored only in the Keychain on this iPhone and on your Watch.")
+            } else {
+                Text("Tap an account to use it on this iPhone; swipe left to remove it. Your Watch keeps its own active account. Session cookies are stored only in the Keychain on these devices.")
+            }
+        }
+    }
+
+    private func accountRow(_ account: XAccount) -> some View {
+        let isActive = account.id == app.activeAccountId
+        // The signed-in profile is cached in the account; the viewer covers the brief
+        // window right after launch or a switch while `loadViewer()` is in flight.
+        let user = account.user ?? (isActive ? app.viewer : nil)
+        return Button {
+            guard !isActive else { return }
+            Task { @MainActor in
+                await app.switchAccount(to: account.id)
+                await app.loadViewer()
+                sync.syncNow()
+            }
+        } label: {
+            AccountRowView(user: user, isActive: isActive)
+        }
+        .buttonStyle(.plain)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                Task { @MainActor in
+                    await app.removeAccount(account.id)
+                    sync.syncNow()
+                }
+            } label: {
+                Label("Remove", systemImage: "trash")
+            }
         }
     }
 
@@ -148,6 +193,50 @@ struct PhoneRootView: View {
         } footer: {
             Text("Perch reads X's current GraphQL query IDs from x.com's web app. A remote override (e.g. the raw endpoints.json in your GitHub repo) is checked first.")
         }
+    }
+}
+
+/// One X login in the iPhone account picker.
+private struct AccountRowView: View {
+    let user: XUser?
+    let isActive: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Group {
+                if let user {
+                    Avatar(user: user, size: 40)
+                } else {
+                    Image(systemName: "person.crop.circle.fill")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 40, height: 40)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(user?.name ?? "X account")
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(user.map { "@" + $0.screenName } ?? "Profile not loaded yet")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            if isActive {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.green)
+                    .accessibilityLabel("Active on this iPhone")
+            }
+        }
+        .contentShape(Rectangle())
+        .padding(.vertical, 2)
     }
 }
 
