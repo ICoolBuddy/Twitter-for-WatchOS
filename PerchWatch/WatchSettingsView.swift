@@ -32,19 +32,29 @@ struct WatchSettingsView: View {
 
             Section("iPhone") {
                 Text(sync.statusText).font(.caption2)
-                Button("Sync from iPhone") { sync.syncNow() }
+                Button {
+                    sync.syncNow()
+                } label: {
+                    Text("Sync from iPhone").frame(maxWidth: .infinity)
+                }
             }
 
             Section {
                 Text("IDs: \(app.endpointsUpdatedAt.isEmpty ? "bundled" : String(app.endpointsUpdatedAt.prefix(10)))")
                     .font(.caption2)
                 Text("Key: \(app.materialSummary)").font(.caption2)
-                Button(working ? "Working…" : "Refresh endpoints") {
+                Button {
                     run { try await app.refreshEndpoints(scrape: true) }
+                } label: {
+                    Text(working ? "Working…" : "Refresh endpoints")
+                        .frame(maxWidth: .infinity)
                 }
                 .disabled(working)
-                Button("Refresh signing key") {
+                Button {
                     run { try await app.refreshMaterial() }
+                } label: {
+                    Text("Refresh signing key")
+                        .frame(maxWidth: .infinity)
                 }
                 .disabled(working || !app.isLoggedIn)
             } header: {
@@ -58,7 +68,11 @@ struct WatchSettingsView: View {
             Section {
                 NavigationLink("Request log", value: Route.debugLog)
                 if app.isLoggedIn {
-                    Button("Log out", role: .destructive) { confirmLogout = true }
+                    Button(role: .destructive) {
+                        confirmLogout = true
+                    } label: {
+                        Text("Log out").frame(maxWidth: .infinity)
+                    }
                 }
             }
         }

@@ -1,4 +1,5 @@
 import SwiftUI
+import WatchKit
 import XKit
 
 /// Identifies a profile to show, either from a cached `XUser` or by id/handle.
@@ -61,18 +62,23 @@ struct ProfileContent: View {
     @State private var followBusy = false
     @State private var otherProfile: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
-    @State private var replyTarget: XTweet?
+
+    /// Full display width, so the banner is a true 3:1 strip edge to edge.
+    private var bannerHeight: CGFloat {
+        max(56, WKInterfaceDevice.current().screenBounds.width / 3)
+    }
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if let u = user {
                     banner(u)
-                    profileHeader(u)
+                    nameBlock(u)
                     if !u.bio.isEmpty {
                         Text(u.bio)
                             .font(.system(size: 15))
                             .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.top, 4)
                     }
                     countsRow(u)
@@ -100,48 +106,54 @@ struct ProfileContent: View {
         }
         .background(Color.black)
         .task { await start(force: false) }
-        .postPresentation(profile: $otherProfile, media: $mediaTarget, reply: $replyTarget)
+        .postPresentation(profile: $otherProfile, media: $mediaTarget)
     }
 
     // MARK: Header
 
-    @ViewBuilder
+    /// Black 3:1 strip (black when the user has no banner) with the avatar
+    /// overlapping its bottom edge.
     private func banner(_ u: XUser) -> some View {
-        if let b = u.bannerURL {
-            RemoteImage(url: b, maxPixel: 300)
-                .frame(maxWidth: .infinity)
-                .frame(height: 64)
-                .clipped()
-        } else {
-            Color.white.opacity(0.06)
-                .frame(maxWidth: .infinity)
-                .frame(height: 28)
+        ZStack(alignment: .bottomLeading) {
+            ZStack {
+                Color.black
+                if let b = u.bannerURL {
+                    RemoteImage(url: b, maxPixel: 450, contentMode: .fill)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: bannerHeight)
+            .clipped()
+
+            Avatar(user: u, size: 58)
+                .overlay(Circle().stroke(Color.black, lineWidth: 2))
+                .offset(x: 2, y: 29)
         }
+        .padding(.horizontal, -Metrics.horizontalPadding)
     }
 
-    private func profileHeader(_ u: XUser) -> some View {
-        HStack(alignment: .center, spacing: 8) {
-            Avatar(user: u, size: 56)
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 3) {
-                    Text(u.name)
-                        .font(.system(size: 17, weight: .bold))
-                        .lineLimit(1)
-                    if u.isVerified {
-                        Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.blue)
-                            .accessibilityLabel("Verified")
-                    }
-                }
-                Text("@" + u.screenName)
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
+    private func nameBlock(_ u: XUser) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 3) {
+                Text(u.name)
+                    .font(.system(size: 17, weight: .bold))
                     .lineLimit(1)
+                if u.isVerified {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.blue)
+                        .accessibilityLabel("Verified")
+                }
             }
-            Spacer(minLength: 0)
+            Text("@" + u.screenName)
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
-        .padding(.top, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // Room for the lower half of the avatar that overlaps the banner.
+        .padding(.top, 31)
     }
 
     private func countsRow(_ u: XUser) -> some View {
@@ -150,6 +162,7 @@ struct ProfileContent: View {
             metric(u.followingCount, "Following")
             metric(followers, "Followers")
         }
+        .frame(maxWidth: .infinity)
         .padding(.top, 6)
     }
 
@@ -166,6 +179,7 @@ struct ProfileContent: View {
                 .minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity)
+        .multilineTextAlignment(.center)
     }
 
     @ViewBuilder
@@ -181,8 +195,11 @@ struct ProfileContent: View {
                 }
                 .frame(maxWidth: .infinity)
             }
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
             .disabled(followBusy)
             .tint(following ? Color.gray : Color.accentColor)
+            .frame(maxWidth: .infinity)
             .padding(.top, 6)
         }
     }
@@ -210,8 +227,7 @@ struct ProfileContent: View {
         ForEach(list.items) { item in
             TimelineItemRows(item: item,
                              onOpenProfile: { otherProfile = ProfileTarget(user: $0) },
-                             onMedia: { mediaTarget = $0 },
-                             onReply: { replyTarget = $0 })
+                             onMedia: { mediaTarget = $0 })
                 .onAppear { list.loadMoreIfNeeded(current: item) }
             PostSeparator()
         }
@@ -276,6 +292,9 @@ struct ProfileContent: View {
         list.fetch = { cursor in
             let p = try await client.userTweets(userId: userId, includeReplies: false, cursor: cursor)
             return (p.items, p.bottomCursor, p.topCursor)
+        }
+        list.onPage = { items in
+            ImageLoader.shared.prefetchFeed(items.displayTweets)
         }
     }
 

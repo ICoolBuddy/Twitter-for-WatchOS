@@ -1,69 +1,67 @@
 import SwiftUI
 import XKit
 
-/// The hamburger menu. Owns its own navigation stack so Settings, Likes,
-/// Bookmarks and Notifications open inside the menu, and closes on selection of
-/// a timeline so the feed is immediately visible again.
+/// The menu page: one page to the right of the feed in the root `TabView`, and
+/// the hamburger button switches to it. It uses the root `NavigationStack`, so
+/// Settings, Likes, Bookmarks and Notifications push over the menu. Choosing a
+/// timeline (or switching account) returns to the feed page.
 struct MenuView: View {
     @EnvironmentObject private var app: AppModel
-    @Environment(\.dismiss) private var dismiss
     @AppStorage(PerchSettings.homeKind) private var kindRaw = HomeKind.following.rawValue
 
-    @State private var path = NavigationPath()
+    /// Switches the root pager back to the feed page.
+    var onShowFeed: () -> Void = {}
+
     @State private var showAccounts = false
 
     var body: some View {
-        NavigationStack(path: $path) {
-            List {
-                Section {
-                    accountRow
-                }
+        List {
+            Section {
+                accountRow
+            }
 
-                Section("Timeline") {
-                    kindRow(.following)
-                    kindRow(.forYou)
-                }
+            Section("Timeline") {
+                kindRow(.following)
+                kindRow(.forYou)
+            }
 
-                Section {
-                    NavigationLink(value: Route.notifications) {
-                        HStack {
-                            Label("Notifications", systemImage: "bell")
-                            Spacer(minLength: 2)
-                            if app.badge.notifications > 0 {
-                                Text(app.badge.notifications > 99 ? "99+" : "\(app.badge.notifications)")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .padding(.horizontal, 6).padding(.vertical, 1)
-                                    .background(Color.blue, in: Capsule())
-                            }
+            Section {
+                NavigationLink(value: Route.notifications) {
+                    HStack {
+                        Label("Notifications", systemImage: "bell")
+                        Spacer(minLength: 2)
+                        if app.badge.notifications > 0 {
+                            Text(app.badge.notifications > 99 ? "99+" : "\(app.badge.notifications)")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6).padding(.vertical, 1)
+                                .background(Color.blue, in: Capsule())
                         }
                     }
-
-                    NavigationLink(value: Route.likes) {
-                        Label("Likes", systemImage: "heart")
-                    }
-
-                    NavigationLink(value: Route.bookmarks) {
-                        Label("Bookmarks", systemImage: "bookmark")
-                    }
                 }
 
-                Section {
-                    NavigationLink(value: Route.settings) {
-                        Label("Settings", systemImage: "gearshape")
-                    }
+                NavigationLink(value: Route.likes) {
+                    Label("Likes", systemImage: "heart")
+                }
+
+                NavigationLink(value: Route.bookmarks) {
+                    Label("Bookmarks", systemImage: "bookmark")
                 }
             }
-            .navigationTitle("Menu")
-            .navigationDestination(for: Route.self) { RouteView(route: $0) }
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+
+            Section {
+                NavigationLink(value: Route.settings) {
+                    Label("Settings", systemImage: "gearshape")
                 }
             }
         }
+        // No navigationTitle: the root navigation bar only carries the pager's
+        // back/hamburger button, and the menu is recognisable by its content.
         .sheet(isPresented: $showAccounts) {
-            AccountPicker()
+            AccountPicker(onDone: {
+                showAccounts = false
+                onShowFeed()
+            })
         }
         .task {
             await app.loadViewer()
@@ -102,6 +100,7 @@ struct MenuView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
         } else if let viewer = app.viewer {
             Button {
                 showAccounts = true
@@ -120,6 +119,7 @@ struct MenuView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
         } else {
             Text("No account").foregroundStyle(.secondary)
         }
@@ -128,26 +128,33 @@ struct MenuView: View {
     private func kindRow(_ kind: HomeKind) -> some View {
         Button {
             kindRaw = kind.rawValue
-            dismiss()
+            onShowFeed()
         } label: {
             HStack {
                 Text(kind == .forYou ? "For You" : "Following")
-                Spacer()
+                Spacer(minLength: 2)
                 if kindRaw == kind.rawValue {
                     Image(systemName: "checkmark")
                         .foregroundStyle(.secondary)
                 }
             }
+            .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
     }
 }
 
-/// All accounts known on the Watch. Tapping one makes it active on this device.
+/// All accounts known on the Watch. Tapping one makes it active on this device,
+/// closes the picker and returns to the feed.
 struct AccountPicker: View {
     @EnvironmentObject private var app: AppModel
     @Environment(\.dismiss) private var dismiss
+
+    /// Called after the picker closes (the menu returns to the feed page).
+    var onDone: (() -> Void)? = nil
+
     @State private var switching: String?
 
     var body: some View {
@@ -186,6 +193,7 @@ struct AccountPicker: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
                     .disabled(switching != nil)
                 }
 
@@ -201,7 +209,7 @@ struct AccountPicker: View {
             .navigationTitle("Accounts")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Done") { finish() }
                 }
             }
         }
@@ -210,14 +218,19 @@ struct AccountPicker: View {
     private func select(_ account: XAccount) {
         guard switching == nil else { return }
         if account.id == app.activeAccountId {
-            dismiss()
+            finish()
             return
         }
         switching = account.id
         Task {
             await app.switchAccount(to: account.id)
             switching = nil
-            dismiss()
+            finish()
         }
+    }
+
+    private func finish() {
+        dismiss()
+        onDone?()
     }
 }

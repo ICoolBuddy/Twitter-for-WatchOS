@@ -17,7 +17,6 @@ struct TimelineListView: View {
     @State private var configuredKey: String?
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
-    @State private var replyTarget: XTweet?
 
     var body: some View {
         ScrollView {
@@ -40,8 +39,7 @@ struct TimelineListView: View {
                 ForEach(list.items) { item in
                     TimelineItemRows(item: item,
                                      onOpenProfile: { profileTarget = ProfileTarget(user: $0) },
-                                     onMedia: { mediaTarget = $0 },
-                                     onReply: { replyTarget = $0 })
+                                     onMedia: { mediaTarget = $0 })
                         .onAppear { list.loadMoreIfNeeded(current: item) }
                     PostSeparator()
                 }
@@ -68,7 +66,7 @@ struct TimelineListView: View {
             configure()
             await list.loadIfNeeded()
         }
-        .postPresentation(profile: $profileTarget, media: $mediaTarget, reply: $replyTarget)
+        .postPresentation(profile: $profileTarget, media: $mediaTarget)
     }
 
     private var emptyText: String {
@@ -98,6 +96,9 @@ struct TimelineListView: View {
                 let p = try await client.bookmarks(cursor: cursor)
                 return (p.items, p.bottomCursor, p.topCursor)
             }
+        }
+        list.onPage = { items in
+            ImageLoader.shared.prefetchFeed(items.displayTweets)
         }
     }
 }

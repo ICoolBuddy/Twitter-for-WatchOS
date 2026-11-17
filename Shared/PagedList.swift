@@ -28,6 +28,9 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
     /// Called with the first page after a successful refresh (for disk caching
     /// and for clearing the notification badge).
     var onFirstPage: (([Item], String?) -> Void)?
+    /// Called with every page of items that becomes available — refresh, load
+    /// more and the disk seed — so images can be prefetched.
+    var onPage: (([Item]) -> Void)?
 
     init(maxItems: Int = 300, fetch: @escaping (String?) async throws -> Page) {
         self.fetch = fetch
@@ -37,7 +40,10 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
     var isEmpty: Bool { items.isEmpty }
 
     func seed(_ cached: [Item]) {
-        if items.isEmpty { items = cached }
+        if items.isEmpty {
+            items = cached
+            if !cached.isEmpty { onPage?(cached) }
+        }
     }
 
     /// Clears everything, including the cursor. Used when the account or the
@@ -77,6 +83,7 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
             topCursor = page.top
             reachedEnd = page.cursor == nil || page.items.isEmpty
             onFirstPage?(items, page.top)
+            onPage?(items)
         } catch is CancellationError {
         } catch {
             let e = XError.from(error)
@@ -112,6 +119,7 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
             let existing = Set(items.map(\.id))
             let fresh = page.items.filter { !existing.contains($0.id) }
             items.append(contentsOf: fresh)
+            if !fresh.isEmpty { onPage?(fresh) }
             if items.count > maxItems { items.removeFirst(items.count - maxItems) }
             self.cursor = page.cursor
             topCursor = page.top ?? topCursor
@@ -162,6 +170,22 @@ enum TimelineDiskCache {
         for f in files where f.lastPathComponent.hasPrefix("perch-home-") {
             try? FileManager.default.removeItem(at: f)
         }
+    }
+}
+
+/// Every tweet that will be displayed for these timeline items, quoted posts
+/// included, de-duplicated by id. Used to warm the image cache after each page.
+extension Array where Element == TimelineItem {
+    var displayTweets: [XTweet] {
+        var out: [XTweet] = []
+        var seen = Set<String>()
+        for tweet in flatMap(\.tweets) {
+            let shown = tweet.displayed
+            for t in [shown, shown.quotedTweet?.value].compactMap({ $0 }) {
+                if seen.insert(t.id).inserted { out.append(t) }
+            }
+        }
+        return out
     }
 }
 

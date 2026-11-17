@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import XKit
 
@@ -8,12 +9,12 @@ struct MediaTarget: Identifiable {
     var id: String { media.map(\.id).joined(separator: ",") + "-\(startIndex)" }
 }
 
-/// Presents the profile sheet, the media viewer and the reply composer from any
-/// screen. Each screen owns its own state so sheets never fight over a presenter.
+/// Presents the profile sheet and the media viewer from any screen. Each screen
+/// owns its own state so sheets never fight over a presenter. Replies use
+/// `TextFieldLink` inside the action row, so there is no reply sheet.
 struct PostPresentation: ViewModifier {
     @Binding var profile: ProfileTarget?
     @Binding var media: MediaTarget?
-    @Binding var reply: XTweet?
 
     func body(content: Content) -> some View {
         content
@@ -23,17 +24,13 @@ struct PostPresentation: ViewModifier {
             .fullScreenCover(item: $media) { target in
                 MediaViewer(media: target.media, startIndex: target.startIndex)
             }
-            .sheet(item: $reply) { tweet in
-                ReplyComposer(tweet: tweet)
-            }
     }
 }
 
 extension View {
     func postPresentation(profile: Binding<ProfileTarget?>,
-                          media: Binding<MediaTarget?>,
-                          reply: Binding<XTweet?>) -> some View {
-        modifier(PostPresentation(profile: profile, media: media, reply: reply))
+                          media: Binding<MediaTarget?>) -> some View {
+        modifier(PostPresentation(profile: profile, media: media))
     }
 }
 
@@ -42,14 +39,18 @@ extension View {
 /// media viewer; tapping the avatar or name opens the profile sheet.
 struct FeedPostView: View {
     let tweet: XTweet
-    var isTop = false
     var compact = false
     var showActions = true
-    var showBookmark = false
     var showDate = false
+    /// The focal post of the post page is not a link to itself.
+    var linkToPost = true
+    /// Long posts are collapsed to 8 lines with "Show more" in the feed; the
+    /// post page shows its focal post in full.
+    var clampLongText = true
     var onOpenProfile: ((XUser) -> Void)? = nil
     var onMedia: ((MediaTarget) -> Void)? = nil
-    var onReply: ((XTweet) -> Void)? = nil
+
+    @State private var expanded = false
 
     private var t: XTweet { tweet.displayed }
 
@@ -80,7 +81,7 @@ struct FeedPostView: View {
                         .font(.system(size: lineFont))
                         .foregroundStyle(.secondary)
                 }
-                if !t.text.isEmpty { bodyText }
+                if !t.text.isEmpty { textBlock }
                 if !compact, let m = t.media.first {
                     Button {
                         onMedia?(MediaTarget(media: t.media, startIndex: 0))
@@ -88,6 +89,7 @@ struct FeedPostView: View {
                         MediaThumb(media: m, extraCount: t.media.count - 1)
                     }
                     .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
                     .accessibilityLabel("Open media")
                 }
                 if let q = t.quotedTweet?.value {
@@ -110,8 +112,7 @@ struct FeedPostView: View {
                     .foregroundStyle(.secondary)
                 }
                 if showActions {
-                    PostActionRow(tweet: t, isTop: isTop, showBookmark: showBookmark,
-                                  onReply: { onReply?(t) })
+                    PostActionRow(tweet: t)
                 }
             }
         }
@@ -163,17 +164,63 @@ struct FeedPostView: View {
         }
     }
 
-    private var bodyText: some View {
-        NavigationLink(value: Route.post(t)) {
-            Text(t.text)
-                .font(bodyFont)
-                .foregroundStyle(.primary)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+    // MARK: Text
+
+    /// Longer than 280 characters or about 8 lines (we cannot measure lines in
+    /// SwiftUI, so estimate from the character count per line).
+    private var isLong: Bool {
+        if t.text.count > 280 { return true }
+        var lines = 0
+        for line in t.text.components(separatedBy: "\n") {
+            lines += max(1, (line.count + 23) / 24)
         }
-        .buttonStyle(.plain)
+        return lines > 8
+    }
+
+    private var isClamped: Bool { clampLongText && isLong && !expanded }
+
+    @ViewBuilder
+    private var textBlock: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            textView
+            if isClamped {
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) { expanded = true }
+                } label: {
+                    Text("Show more")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .foregroundStyle(Color.accentColor)
+                .accessibilityLabel("Show more of this post")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var textView: some View {
+        if linkToPost {
+            NavigationLink(value: Route.post(t)) {
+                textBody
+            }
+            .buttonStyle(.plain)
+        } else {
+            textBody
+        }
+    }
+
+    private var textBody: some View {
+        Text(t.text)
+            .font(bodyFont)
+            .foregroundStyle(.primary)
+            .multilineTextAlignment(.leading)
+            .lineLimit(isClamped ? 8 : nil)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
     }
 }
 
@@ -181,22 +228,20 @@ struct FeedPostView: View {
 /// consecutive posts.
 struct TimelineItemRows: View {
     let item: TimelineItem
-    var isTop = false
     var compact = false
     var onOpenProfile: ((XUser) -> Void)? = nil
     var onMedia: ((MediaTarget) -> Void)? = nil
-    var onReply: ((XTweet) -> Void)? = nil
 
     var body: some View {
         switch item {
         case .tweet(let t):
-            FeedPostView(tweet: t, isTop: isTop, compact: compact,
-                         onOpenProfile: onOpenProfile, onMedia: onMedia, onReply: onReply)
+            FeedPostView(tweet: t, compact: compact,
+                         onOpenProfile: onOpenProfile, onMedia: onMedia)
         case .conversation(let ts):
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(ts.enumerated()), id: \.element.id) { idx, t in
-                    FeedPostView(tweet: t, isTop: isTop && idx == 0, compact: compact,
-                                 onOpenProfile: onOpenProfile, onMedia: onMedia, onReply: onReply)
+                    FeedPostView(tweet: t, compact: compact,
+                                 onOpenProfile: onOpenProfile, onMedia: onMedia)
                     if idx < ts.count - 1 { PostSeparator() }
                 }
             }

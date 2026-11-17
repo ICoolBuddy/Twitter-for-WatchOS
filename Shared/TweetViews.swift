@@ -1,6 +1,9 @@
 import Foundation
 import SwiftUI
 import XKit
+#if os(watchOS)
+import WatchKit
+#endif
 
 /// Navigation destinations shared by both apps.
 enum Route: Hashable {
@@ -137,7 +140,7 @@ struct MediaThumb: View {
 
     private var ratio: CGFloat {
         #if os(watchOS)
-        return CGFloat(media.aspectRatio)
+        return max(0.05, CGFloat(media.aspectRatio))
         #else
         return max(0.75, min(CGFloat(media.aspectRatio), 2.2))
         #endif
@@ -145,23 +148,36 @@ struct MediaThumb: View {
 
     private var cap: CGFloat? {
         #if os(watchOS)
+        // Absurdly tall images (long screenshots) would otherwise be many screens
+        // high: scale them to fit, centred, and keep the aspect. Normal phone
+        // screenshots (ratio >= 0.45) stay full width. Callers that asked for a
+        // small cap (quotes, notifications) keep it.
+        if maxHeight == nil, media.aspectRatio < 0.45 {
+            return WKInterfaceDevice.current().screenBounds.height * 1.3
+        }
         return maxHeight
         #else
         return maxHeight ?? Metrics.mediaMaxHeight
         #endif
     }
 
+    #if os(watchOS)
+    /// Same URL + decode size the prefetcher warms, so the feed hits the memory cache.
+    private var image: (url: URL, maxPixel: Int) { ImageLoader.feedImage(for: media) }
+    #else
     /// Tall images (screenshots) are shown full width, so their long side needs far more
     /// pixels than a landscape photo: use X's 1200 px "medium" and decode at width / ratio.
     private var isTall: Bool { media.aspectRatio < 0.9 }
-    private var imageURL: URL { isTall ? media.fullURL : media.feedURL }
-    private var decodePixels: Int {
-        guard isTall else { return Metrics.imagePixels }
-        return min(1400, Int(Double(Metrics.imagePixels) / max(media.aspectRatio, 0.3)))
+    private var image: (url: URL, maxPixel: Int) {
+        let pixels = isTall
+            ? min(1400, Int(Double(Metrics.imagePixels) / max(media.aspectRatio, 0.3)))
+            : Metrics.imagePixels
+        return (isTall ? media.fullURL : media.feedURL, pixels)
     }
+    #endif
 
     var body: some View {
-        RemoteImage(url: imageURL, placeholderURL: media.previewURL, maxPixel: decodePixels)
+        RemoteImage(url: image.url, placeholderURL: media.previewURL, maxPixel: image.maxPixel)
             .aspectRatio(ratio, contentMode: .fit)
             .frame(maxWidth: .infinity, maxHeight: cap)
             .clipShape(RoundedRectangle(cornerRadius: Metrics.mediaCorner))
@@ -238,39 +254,66 @@ struct CountsRow: View {
     }
 }
 
-/// The Parrot-style action row: reply / repost / like / share, evenly spaced.
-/// Like and repost are optimistic (via `PostStateStore`) and give one subtle
-/// haptic on an explicit tap.
+/// The Parrot-style action row: reply / repost / like / bookmark, four evenly
+/// spaced quarters with the glyph and count centred in each. Reply opens the
+/// system text input directly (`TextFieldLink`) and reports "Sent" / "Failed"
+/// inline — no sheet. Like and repost are optimistic (via `PostStateStore`).
 struct PostActionRow: View {
     let tweet: XTweet
-    var isTop = false
-    var showBookmark = false
-    var onReply: (() -> Void)? = nil
 
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var posts: PostStateStore
 
+    @State private var sendingReply = false
+    @State private var replyStatus: String?
+    @State private var statusToken = 0
+
     var body: some View {
         let s = posts.state(for: tweet)
-        HStack(spacing: 0) {
-            replyButton
-            repostButton(s)
-            likeButton(s)
-            if showBookmark { bookmarkButton(s) }
-            shareButton
+        VStack(spacing: 2) {
+            HStack(spacing: 0) {
+                replyButton
+                repostButton(s)
+                likeButton(s)
+                bookmarkButton(s)
+            }
+            .font(Metrics.actionFont)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+
+            if let replyStatus {
+                Text(replyStatus)
+                    .font(.caption2)
+                    .foregroundStyle(replyStatus == "Failed" ? Color.orange : Color.secondary)
+                    .frame(maxWidth: .infinity)
+                    .transition(.opacity)
+                    .accessibilityLabel(replyStatus)
+            }
         }
-        .font(Metrics.actionFont)
-        .foregroundStyle(.secondary)
     }
 
+    @ViewBuilder
     private var replyButton: some View {
+        #if os(watchOS)
+        TextFieldLink(prompt: Text("Reply"), label: {
+            glyph("bubble.left", active: false, color: .secondary, count: tweet.replyCount)
+        }, onSubmit: { text in
+            send(text)
+        })
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .disabled(sendingReply)
+        .accessibilityLabel("Reply")
+        #else
+        // TextFieldLink is watchOS-only. The iPhone app has no reply composer here.
         Button {
-            onReply?()
         } label: {
             glyph("bubble.left", active: false, color: .secondary, count: tweet.replyCount)
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
         .accessibilityLabel("Reply")
+        #endif
     }
 
     private func repostButton(_ s: PostStateStore.State) -> some View {
@@ -280,29 +323,18 @@ struct PostActionRow: View {
             glyph("arrow.2.squarepath", active: s.retweeted, color: .green, count: s.retweetCount)
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
         .accessibilityLabel(s.retweeted ? "Undo repost" : "Repost")
     }
 
-    @ViewBuilder
     private func likeButton(_ s: PostStateStore.State) -> some View {
-        #if os(watchOS)
-        if isTop {
-            baseLikeButton(s).handGestureShortcut(.primaryAction)
-        } else {
-            baseLikeButton(s)
-        }
-        #else
-        baseLikeButton(s)
-        #endif
-    }
-
-    private func baseLikeButton(_ s: PostStateStore.State) -> some View {
         Button {
             posts.toggleLike(tweet, client: app.client)
         } label: {
             glyph(s.liked ? "heart.fill" : "heart", active: s.liked, color: .pink, count: s.likeCount)
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
         .accessibilityLabel(s.liked ? "Unlike" : "Like")
     }
 
@@ -313,15 +345,8 @@ struct PostActionRow: View {
             glyph(s.bookmarked ? "bookmark.fill" : "bookmark", active: s.bookmarked, color: .blue, count: nil)
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
         .accessibilityLabel(s.bookmarked ? "Remove bookmark" : "Bookmark")
-    }
-
-    private var shareButton: some View {
-        ShareLink(item: shareURL) {
-            glyph("square.and.arrow.up", active: false, color: .secondary, count: nil)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Share")
     }
 
     private func glyph(_ name: String, active: Bool, color: Color, count: Int?) -> some View {
@@ -339,9 +364,33 @@ struct PostActionRow: View {
         .contentShape(Rectangle())
     }
 
-    private var shareURL: URL {
-        URL(string: "https://x.com/\(tweet.author.screenName)/status/\(tweet.id)")
-            ?? URL(string: "https://x.com")!
+    /// Sends the reply right away; the keyboard/dictation is the system one opened
+    /// by `TextFieldLink`. The result is a small label under the row for ~2 s.
+    private func send(_ text: String) {
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty, !sendingReply else { return }
+        let replyTo = tweet.id
+        sendingReply = true
+        statusToken += 1
+        let token = statusToken
+        Task {
+            var ok = false
+            do {
+                _ = try await app.client.createTweet(text: body, replyTo: replyTo)
+                ok = true
+                Haptics.success()
+            } catch {
+                Haptics.failure()
+            }
+            sendingReply = false
+            withAnimation(.easeOut(duration: 0.15)) {
+                replyStatus = ok ? "Sent" : "Failed"
+            }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            if statusToken == token {
+                withAnimation(.easeOut(duration: 0.15)) { replyStatus = nil }
+            }
+        }
     }
 }
 
@@ -393,6 +442,7 @@ struct ErrorStateView: View {
                 Text("Open Perch on your iPhone and log in again.")
                     .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 Button("Sync from iPhone") { app.sync?.syncNow(); message = "Requested…" }
+                    .frame(maxWidth: .infinity)
                 #else
                 Text("Log in again from the Account section.").font(.caption).foregroundStyle(.secondary)
                 #endif
@@ -410,11 +460,15 @@ struct ErrorStateView: View {
                         }
                     }
                 }
+                .frame(maxWidth: .infinity)
                 .disabled(working)
             case .wait:
                 EmptyView()
             case .retry:
-                if let retry { Button("Retry") { Task { await retry() } } }
+                if let retry {
+                    Button("Retry") { Task { await retry() } }
+                        .frame(maxWidth: .infinity)
+                }
             }
         }
         .padding(.vertical, 8)
