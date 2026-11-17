@@ -340,7 +340,9 @@ private struct MediaPhotoPage: View {
 
 /// One video/GIF page.
 ///
-/// The Digital Crown changes the volume while the video is clean; after a tap
+/// The Digital Crown changes the *Watch's* volume while the video is clean
+/// (through WatchKit's system volume control, so it starts at the current
+/// volume and is the same setting Now Playing uses); after a tap
 /// (which shows the play/pause button and the timestamp) it scrubs. Both give a
 /// haptic detent (every 5 % of volume, every second of video). The page holds
 /// crown focus itself; AVKit's player is display-only, so it can never take the
@@ -397,6 +399,15 @@ private struct MediaVideoPage: View {
 
             if controlsVisible { controls }
             if let volume = volumeHUD { volumeOverlay(volume) }
+
+            // The system volume control owns the crown while the chrome is
+            // hidden. Nearly invisible: our HUD above shows the level.
+            SystemVolumeControl(focused: isActive && !controlsVisible && !presenter.closing)
+                .frame(width: 40, height: 40)
+                .opacity(0.02)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
         }
         .focusable()
         .focused($crownFocused)
@@ -407,18 +418,22 @@ private struct MediaVideoPage: View {
             let delta = value - lastCrown
             lastCrown = value
             guard abs(delta) > 0.01 else { return }
-            if controlsVisible {
-                let target = playback.scrub(bySeconds: delta * 0.5)
-                detent(Int(target.rounded(.down)))
-                touch()
-            } else {
-                let volume = playback.volume + Float(delta) * 0.02
-                playback.setVolume(volume)
-                detent(Int((playback.volume * 20).rounded()))
-                showVolume(playback.volume)
-            }
+            // Only reached while our page holds the crown (chrome visible).
+            guard controlsVisible else { return }
+            let target = playback.scrub(bySeconds: delta * 0.5)
+            detent(Int(target.rounded(.down)))
+            touch()
         }
-        .onChange(of: controlsVisible) { _, _ in lastDetent = nil }
+        .onChange(of: controlsVisible) { _, visible in
+            lastDetent = nil
+            // Chrome visible: our page takes the crown (scrub). Hidden: hand it
+            // to the system volume control.
+            crownFocused = visible && isActive
+        }
+        // The Watch's volume changed (crown, or the Now Playing app): show it.
+        .onChange(of: playback.systemVolume) { _, value in
+            if isActive, !controlsVisible { showVolume(value) }
+        }
         .onChange(of: presenter.closing) { _, closing in
             if closing { crownFocused = false }
         }
@@ -456,7 +471,8 @@ private struct MediaVideoPage: View {
     private func claimCrown() {
         // After the viewer's open animation; focusing during it does not stick.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            if isActive { crownFocused = true }
+            // Scrubbing needs our focus; volume belongs to the system control.
+            if isActive { crownFocused = controlsVisible }
         }
     }
 
@@ -627,5 +643,22 @@ enum LinkSpeed {
         let rate = TransferMonitor.shared.snapshot().bytesPerSecond
         guard rate > 1 else { return true }          // idle: no measurement to trust
         return estimate / rate <= 3
+    }
+}
+
+/// WatchKit's system volume control, which SwiftUI has no equivalent of. When
+/// focused it takes the Digital Crown and changes the Watch's own output volume
+/// (with the system's haptics), starting from the current level.
+struct SystemVolumeControl: WKInterfaceObjectRepresentable {
+    var focused: Bool
+
+    func makeWKInterfaceObject(context: Context) -> WKInterfaceVolumeControl {
+        let control = WKInterfaceVolumeControl(origin: .local)
+        control.setTintColor(.white)
+        return control
+    }
+
+    func updateWKInterfaceObject(_ control: WKInterfaceVolumeControl, context: Context) {
+        if focused { control.focus() } else { control.resignFocus() }
     }
 }

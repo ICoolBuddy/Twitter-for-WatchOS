@@ -26,8 +26,10 @@ final class VideoPlayback: ObservableObject {
     @Published private(set) var position: Double = 0
     @Published private(set) var duration: Double = 0
     @Published private(set) var isPlaying = false
-    /// Player gain 0…1 (the crown changes it; the system volume is not reachable).
-    @Published private(set) var volume: Float = 1
+    /// The Watch's output volume 0…1 (changed by the crown through
+    /// `SystemVolumeControl`); the player itself always plays at full gain.
+    @Published private(set) var systemVolume: Float = AVAudioSession.sharedInstance().outputVolume
+    private var volumeObservation: NSKeyValueObservation?
 
     private var levels: [XVideoVariant] = []
     private var mediaId: String?
@@ -76,7 +78,8 @@ final class VideoPlayback: ObservableObject {
         let level = Self.chosenLevel[media.id] ?? pickLevel()
         Self.chosenLevel[media.id] = level
         player.replaceCurrentItem(with: AVPlayerItem(url: levels[level].url))
-        player.volume = volume
+        player.volume = 1
+        observeSystemVolume()
         self.title = title
         self.caption = caption
         startTicker()
@@ -124,6 +127,8 @@ final class VideoPlayback: ObservableObject {
         player.replaceCurrentItem(with: nil)
         mediaId = nil
         loading = true
+        volumeObservation?.invalidate()
+        volumeObservation = nil
         clearNowPlaying()
         if backgroundSession {
             backgroundSession = false
@@ -231,9 +236,13 @@ final class VideoPlayback: ObservableObject {
         return target
     }
 
-    func setVolume(_ value: Float) {
-        volume = min(1, max(0, value))
-        player.volume = volume
+    private func observeSystemVolume() {
+        guard volumeObservation == nil else { return }
+        systemVolume = AVAudioSession.sharedInstance().outputVolume
+        volumeObservation = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { [weak self] session, _ in
+            let value = session.outputVolume
+            Task { @MainActor in self?.systemVolume = value }
+        }
     }
 
     // MARK: Progress
