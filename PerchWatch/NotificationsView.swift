@@ -126,7 +126,8 @@ struct NotificationRow: View {
 
                 if !t.media.isEmpty, let onMedia {
                     Button {
-                        onMedia(MediaTarget(media: t.media, startIndex: 0))
+                        onMedia(MediaTarget(media: t.media, startIndex: 0,
+                                            title: t.author.name, caption: t.text))
                     } label: {
                         MediaThumb(media: t.media[0], extraCount: t.media.count - 1, maxHeight: 90)
                             .frame(maxWidth: .infinity)

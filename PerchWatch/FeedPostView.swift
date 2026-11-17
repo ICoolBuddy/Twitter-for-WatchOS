@@ -6,6 +6,9 @@ import XKit
 struct MediaTarget: Identifiable {
     let media: [XMedia]
     let startIndex: Int
+    /// Shown in Now Playing for videos: the author, and the post text.
+    var title: String? = nil
+    var caption: String? = nil
     var id: String { media.map(\.id).joined(separator: ",") + "-\(startIndex)" }
 }
 
@@ -207,7 +210,8 @@ struct FeedPostView: View {
             .clipShape(RoundedRectangle(cornerRadius: Metrics.mediaCorner))
         } else if let m = media.first {
             Button {
-                onMedia?(MediaTarget(media: media, startIndex: 0))
+                onMedia?(MediaTarget(media: media, startIndex: 0,
+                                     title: t.author.name, caption: t.text))
             } label: {
                 MediaThumb(media: m, extraCount: media.count - 1,
                            localURL: SavedStore.shared.localPhoto(tweetID: t.id, index: 0))
@@ -222,7 +226,8 @@ struct FeedPostView: View {
         let m = media[index]
         let local = SavedStore.shared.localPhoto(tweetID: t.id, index: index)
         return Button {
-            onMedia?(MediaTarget(media: media, startIndex: index))
+            onMedia?(MediaTarget(media: media, startIndex: index,
+                                 title: t.author.name, caption: t.text))
         } label: {
             Color.clear
                 .aspectRatio(wide ? 2 : 1, contentMode: .fit)

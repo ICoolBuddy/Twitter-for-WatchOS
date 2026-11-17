@@ -9,6 +9,8 @@ enum PerchSettings {
     static let homeKind = "homeKind"
     /// Feed text size (`PerchTextSize.rawValue`).
     static let textSize = "textSize"
+    /// Videos keep playing in the background through Bluetooth audio (default ON).
+    static let backgroundVideo = "backgroundVideo"
 
     /// Call before any view reads `@AppStorage` values.
     static func registerDefaults() {
@@ -16,6 +18,7 @@ enum PerchSettings {
             autoRefreshOnOpen: true,
             homeKind: HomeKind.forYou.rawValue,
             textSize: PerchTextSize.medium.rawValue,
+            backgroundVideo: true,
         ])
     }
 }

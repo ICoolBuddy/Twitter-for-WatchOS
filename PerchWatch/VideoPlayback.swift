@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import MediaPlayer
 import Combine
 import XKit
 
@@ -37,14 +38,22 @@ final class VideoPlayback: ObservableObject {
     private var scrubTarget: Double?
     private var seekToken = 0
 
+    /// Now Playing text and the remote-command handlers registered for it.
+    private var title: String?
+    private var caption: String?
+    private var commandTokens: [(MPRemoteCommand, Any)] = []
+    private var lastNowPlaying = Date.distantPast
+    private var backgroundSession = false
+
     /// Quality level used per post, for this app run.
     private static var chosenLevel: [String: Int] = [:]
 
     // MARK: Lifecycle
 
-    func start(_ media: XMedia) {
+    func start(_ media: XMedia, title: String? = nil, caption: String? = nil) {
         if mediaId == media.id {
             player.play()
+            updateNowPlaying(force: true)
             return
         }
         stop()
@@ -68,8 +77,26 @@ final class VideoPlayback: ObservableObject {
         Self.chosenLevel[media.id] = level
         player.replaceCurrentItem(with: AVPlayerItem(url: levels[level].url))
         player.volume = volume
-        player.play()
+        self.title = title
+        self.caption = caption
         startTicker()
+
+        // Videos with sound play like music: the long-form audio session keeps
+        // them going with the wrist down / in the background. GIFs are silent.
+        guard media.type == .video else {
+            player.play()
+            return
+        }
+        let id = media.id
+        BackgroundAudio.activate { [weak self] background in
+            guard let self, self.mediaId == id else { return }
+            self.backgroundSession = background
+            self.player.play()
+            if background {
+                self.registerRemoteCommands()
+                self.updateNowPlaying(force: true)
+            }
+        }
     }
 
     /// The best variant the measured link carries with headroom; with no recent
@@ -97,6 +124,65 @@ final class VideoPlayback: ObservableObject {
         player.replaceCurrentItem(with: nil)
         mediaId = nil
         loading = true
+        clearNowPlaying()
+        if backgroundSession {
+            backgroundSession = false
+            BackgroundAudio.deactivate()
+        }
+    }
+
+    // MARK: Now Playing (watch Now Playing app, Bluetooth controls)
+
+    private func registerRemoteCommands() {
+        guard commandTokens.isEmpty else { return }
+        let center = MPRemoteCommandCenter.shared()
+        func on(_ command: MPRemoteCommand, _ action: @escaping @MainActor (VideoPlayback) -> Void) {
+            command.isEnabled = true
+            let token = command.addTarget { [weak self] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    action(self)
+                    self.updateNowPlaying(force: true)
+                }
+                return .success
+            }
+            commandTokens.append((command, token))
+        }
+        on(center.playCommand) { $0.resume() }
+        on(center.pauseCommand) { $0.player.pause() }
+        on(center.togglePlayPauseCommand) { $0.togglePlayPause() }
+        center.skipForwardCommand.preferredIntervals = [15]
+        center.skipBackwardCommand.preferredIntervals = [15]
+        on(center.skipForwardCommand) { _ = $0.scrub(bySeconds: 15) }
+        on(center.skipBackwardCommand) { _ = $0.scrub(bySeconds: -15) }
+    }
+
+    private func resume() {
+        if endedFlag { replay() } else { player.play() }
+    }
+
+    private func updateNowPlaying(force: Bool = false) {
+        guard backgroundSession else { return }
+        let now = Date()
+        guard force || now.timeIntervalSince(lastNowPlaying) > 4 else { return }
+        lastNowPlaying = now
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: title ?? "Video",
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: position,
+            MPNowPlayingInfoPropertyPlaybackRate: player.rate > 0 ? 1.0 : 0.0,
+        ]
+        if duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
+        if let caption, !caption.isEmpty {
+            let line = caption.split(whereSeparator: { $0.isNewline }).joined(separator: " ")
+            info[MPMediaItemPropertyArtist] = String(line.prefix(120))
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func clearNowPlaying() {
+        for (command, token) in commandTokens { command.removeTarget(token) }
+        commandTokens.removeAll()
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
     // MARK: Controls
@@ -175,7 +261,12 @@ final class VideoPlayback: ObservableObject {
         let now = player.currentTime().seconds
         if scrubTarget == nil, now.isFinite { position = now }
         let playing = player.timeControlStatus == .playing
-        if isPlaying != playing { isPlaying = playing }
+        if isPlaying != playing {
+            isPlaying = playing
+            updateNowPlaying(force: true)
+        } else {
+            updateNowPlaying()
+        }
 
         if length.isFinite, length > 0 {
             buffered = min(1, max(0, bufferedSeconds(item) / length))
@@ -193,5 +284,41 @@ final class VideoPlayback: ObservableObject {
         item.loadedTimeRanges.compactMap { $0.timeRangeValue }
             .map { CMTimeGetSeconds($0.start) + CMTimeGetSeconds($0.duration) }
             .max() ?? 0
+    }
+}
+
+/// The long-form audio session that lets a video keep playing in the
+/// background (watchOS routes it to Bluetooth headphones/speakers and shows
+/// its own route picker when none is connected).
+@MainActor
+enum BackgroundAudio {
+    /// Calls `then(true)` once the long-form session is active, or `then(false)`
+    /// when background playback is off or could not start (the reader closed
+    /// the route picker, no Bluetooth output): the video then plays as before,
+    /// in the foreground only.
+    static func activate(then: @escaping @MainActor (Bool) -> Void) {
+        let session = AVAudioSession.sharedInstance()
+        guard UserDefaults.standard.bool(forKey: PerchSettings.backgroundVideo) else {
+            then(false)
+            return
+        }
+        do {
+            try session.setCategory(.playback, mode: .default, policy: .longFormAudio, options: [])
+        } catch {
+            then(false)
+            return
+        }
+        session.activate(options: []) { ok, _ in
+            Task { @MainActor in
+                if !ok { try? session.setCategory(.soloAmbient) }
+                then(ok)
+            }
+        }
+    }
+
+    static func deactivate() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setActive(false, options: .notifyOthersOnDeactivation)
+        try? session.setCategory(.soloAmbient)
     }
 }

@@ -82,6 +82,7 @@ struct WatchRootView: View {
             // button, and the clock can be hidden while it is open.
             if let target = presenter.target {
                 MediaViewer(media: target.media, startIndex: target.startIndex,
+                            title: target.title, caption: target.caption,
                             onClose: { presenter.close() })
                     .transition(.opacity)
                     .zIndex(1)

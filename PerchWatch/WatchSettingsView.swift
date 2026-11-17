@@ -6,6 +6,7 @@ struct WatchSettingsView: View {
     @EnvironmentObject private var sync: WatchSync
     @AppStorage(PerchSettings.autoRefreshOnOpen) private var autoRefreshOnOpen = true
     @AppStorage(PerchSettings.textSize) private var textSizeRaw = PerchTextSize.medium.rawValue
+    @AppStorage(PerchSettings.backgroundVideo) private var backgroundVideo = true
 
     @State private var message: String?
     @State private var working = false
@@ -36,6 +37,14 @@ struct WatchSettingsView: View {
                 Text("Feed")
             } footer: {
                 Text("When off, the feed shows cached posts until you pull to refresh.")
+            }
+
+            Section {
+                Toggle("Background playback", isOn: $backgroundVideo)
+            } header: {
+                Text("Videos")
+            } footer: {
+                Text("Videos keep playing when you lower your wrist or leave Perch, with controls in Now Playing. watchOS plays background audio only through Bluetooth headphones or speakers.")
             }
 
             Section("iPhone") {

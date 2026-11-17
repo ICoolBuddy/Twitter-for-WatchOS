@@ -84,6 +84,9 @@ targets:
         WKApplication: true
         WKCompanionAppBundleIdentifier: $(PERCH_BUNDLE_ID)
         WKRunsIndependentlyOfCompanionApp: true
+        # Videos keep playing (audio) with the wrist down / app in the background,
+        # like a music player (long-form audio, Bluetooth output on watchOS).
+        UIBackgroundModes: [audio]
         PerchAppGroup: "group.$(PERCH_BUNDLE_ID)"
     settings:
       base:

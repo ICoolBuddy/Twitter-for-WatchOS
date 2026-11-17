@@ -15,6 +15,9 @@ import XKit
 /// The chrome (close button) hides itself after a second; tapping brings it back.
 struct MediaViewer: View {
     let media: [XMedia]
+    /// Now Playing text for videos (author, post text).
+    var title: String? = nil
+    var caption: String? = nil
     /// Dismiss handler for the root overlay presentation (`nil` inside a cover).
     var onClose: (() -> Void)? = nil
 
@@ -26,8 +29,11 @@ struct MediaViewer: View {
     @State private var controlsVisible = true
     @State private var hideTask: Task<Void, Never>?
 
-    init(media: [XMedia], startIndex: Int, onClose: (() -> Void)? = nil) {
+    init(media: [XMedia], startIndex: Int, title: String? = nil, caption: String? = nil,
+         onClose: (() -> Void)? = nil) {
         self.media = media
+        self.title = title
+        self.caption = caption
         self.onClose = onClose
         let start = media.isEmpty ? 0 : min(max(startIndex, 0), media.count - 1)
         _selection = State(initialValue: start)
@@ -58,14 +64,14 @@ struct MediaViewer: View {
     private var activePage: some View {
         if media.count == 1 {
             // One attachment is not a pager: no sideways swipe at all.
-            MediaPage(media: media[0], isActive: true, zoomed: $zoomed,
+            MediaPage(media: media[0], title: title, caption: caption, isActive: true, zoomed: $zoomed,
                       controlsVisible: $controlsVisible,
                       touch: showControls, toggleControls: toggleControls)
                 .ignoresSafeArea()
         } else {
             TabView(selection: $selection) {
                 ForEach(media.indices, id: \.self) { index in
-                    MediaPage(media: media[index],
+                    MediaPage(media: media[index], title: title, caption: caption,
                               isActive: selection == index,
                               zoomed: selection == index ? $zoomed : .constant(false),
                               controlsVisible: $controlsVisible,
@@ -195,6 +201,8 @@ struct MediaViewer: View {
 /// Dispatches one page to the photo or the video/GIF view.
 private struct MediaPage: View {
     let media: XMedia
+    var title: String?
+    var caption: String?
     let isActive: Bool
     @Binding var zoomed: Bool
     @Binding var controlsVisible: Bool
@@ -206,7 +214,7 @@ private struct MediaPage: View {
         case .photo:
             MediaPhotoPage(media: media, isActive: isActive, zoomed: $zoomed, touch: touch)
         case .video, .gif:
-            MediaVideoPage(media: media, isActive: isActive,
+            MediaVideoPage(media: media, title: title, caption: caption, isActive: isActive,
                            controlsVisible: $controlsVisible,
                            touch: touch, toggleControls: toggleControls)
         }
@@ -335,6 +343,8 @@ private struct MediaPhotoPage: View {
 /// crown or the taps away.
 private struct MediaVideoPage: View {
     let media: XMedia
+    var title: String?
+    var caption: String?
     let isActive: Bool
     @Binding var controlsVisible: Bool
     let touch: () -> Void
@@ -406,7 +416,7 @@ private struct MediaVideoPage: View {
         .onChange(of: controlsVisible) { _, _ in lastDetent = nil }
         .onAppear {
             if isActive {
-                playback.start(media)
+                playback.start(media, title: title, caption: caption)
                 claimCrown()
             }
         }
@@ -416,7 +426,7 @@ private struct MediaVideoPage: View {
         }
         .onChange(of: isActive) { _, active in
             if active {
-                playback.start(media)
+                playback.start(media, title: title, caption: caption)
                 claimCrown()
             } else {
                 playback.stop()
