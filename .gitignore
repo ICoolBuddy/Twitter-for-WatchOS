@@ -2,6 +2,7 @@
 *.xcodeproj
 Perch/Info.plist
 PerchWatch/Info.plist
+PerchWidget/Info.plist
 # Build output
 build/
 DerivedData/
