@@ -15,11 +15,21 @@ struct PerchWatchApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            // Screenshot harness (CI): no-op unless launched with -PerchScreen/-PerchFixtures.
+            WatchRootView()
+                .perchDebugScreens()
+                .environmentObject(app)
+                .environmentObject(app.posts)
+                .environmentObject(sync)
+                .onAppear { sync.start() }
+            #else
             WatchRootView()
                 .environmentObject(app)
                 .environmentObject(app.posts)
                 .environmentObject(sync)
                 .onAppear { sync.start() }
+            #endif
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
