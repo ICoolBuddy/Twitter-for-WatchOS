@@ -38,6 +38,11 @@ struct HomeView: View {
             .padding(.horizontal, Metrics.horizontalPadding)
         }
         .scrollPosition(id: $topID, anchor: .top)
+        // Before the first scroll nothing is "at the top"; treat the first post as current
+        // so double-tap likes it right away.
+        .onChange(of: list.items.first?.id) { _, first in
+            if topID == nil { topID = first }
+        }
         .background(Color.black)
         .pullToRefresh(isRefreshing: list.isRefreshing) { await list.refresh() }
         .toolbar {
