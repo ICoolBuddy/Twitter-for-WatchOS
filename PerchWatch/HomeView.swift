@@ -58,7 +58,6 @@ struct HomeView: View {
             }
             .background(Color.black)
             .crownScrollFocus(active: isActive)
-            .overlay(alignment: .top) { newPostsPill(proxy) }
             // Loading look: a soft glow around the screen edge (Pigeon-style),
             // drawn once by `RootGlow` over the whole pager; this page reports
             // its pull progress and loading state to `FeedActivity`.
@@ -103,33 +102,6 @@ struct HomeView: View {
     private var offlineText: String {
         guard let d = list.lastUpdated else { return "Offline · cached posts" }
         return "Offline · updated \(RelativeTime.short(d)) ago"
-    }
-
-    /// "↑ 5 new posts" after the silent refresh on open put posts above the
-    /// reader; tapping scrolls up. It goes away by itself after a few seconds.
-    @ViewBuilder
-    private func newPostsPill(_ proxy: ScrollViewProxy) -> some View {
-        if list.lastMergeAdded > 0, let first = list.items.first {
-            Button {
-                withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(first.id, anchor: .top) }
-                list.clearMergeCount()
-            } label: {
-                Label("\(list.lastMergeAdded) new post\(list.lastMergeAdded == 1 ? "" : "s")",
-                      systemImage: "arrow.up")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Color.accentColor, in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 2)
-            .transition(.move(edge: .top).combined(with: .opacity))
-            .task(id: list.lastMergeAdded) {
-                try? await Task.sleep(nanoseconds: 4_000_000_000)
-                if !Task.isCancelled { withAnimation(.easeOut(duration: 0.2)) { list.clearMergeCount() } }
-            }
-        }
     }
 
     @ViewBuilder
