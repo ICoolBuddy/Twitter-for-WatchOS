@@ -19,6 +19,12 @@ settings:
     DEVELOPMENT_TEAM: ""
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     GENERATE_INFOPLIST_FILE: NO
+  configs:
+    # The screenshot harness in PerchWatch/Debug is compiled only when DEBUG is
+    # defined. XcodeGen's Debug preset sets this too; make it explicit so CI can
+    # never build an inert harness by accident.
+    Debug:
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: "DEBUG $(inherited)"
 packages:
   XKit:
     path: Packages/XKit
@@ -56,6 +62,14 @@ targets:
     platform: watchOS
     sources:
       - path: PerchWatch
+        excludes:
+          - "Debug/Fixtures"
+          - "Debug/Fixtures/**"
+          - "Debug/Fixtures/*.json"
+      # Screenshot-harness fixtures: explicit resources so they always end up in
+      # the bundle (DEBUG builds / CI screenshots only).
+      - path: PerchWatch/Debug/Fixtures
+        buildPhase: resources
       - path: Shared
     dependencies:
       - package: XKit
@@ -78,11 +92,21 @@ targets:
         TARGETED_DEVICE_FAMILY: "4"
         # Series 9/10/Ultra 2 run arm64; older watches arm64_32. Ship both.
         ARCHS: "arm64 arm64_32"
+        # watchOS Simulator is arm64 on the Apple Silicon CI runner (arm64_32 is
+        # not a simulator architecture, so keep it out of simulator builds).
+        "ARCHS[sdk=watchsimulator*]": "arm64"
         ONLY_ACTIVE_ARCH: NO
         SKIP_INSTALL: YES
         CODE_SIGN_ENTITLEMENTS: Config/PerchWatch.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+      configs:
+        # R20: the whole screenshot harness (PerchWatch/Debug) is compiled into
+        # DEBUG builds only. Release builds also get no fixture JSON. Everything
+        # here is additionally wrapped in #if DEBUG, so a stale project file can
+        # never make a shipping build depend on it.
+        Release:
+          EXCLUDED_SOURCE_FILE_NAMES: "PerchDebug.swift FixtureXClient.swift FixtureHarness.swift *.json"
   PerchWidget:
     type: app-extension
     platform: watchOS
@@ -105,6 +129,7 @@ targets:
         PRODUCT_NAME: PerchWidget
         TARGETED_DEVICE_FAMILY: "4"
         ARCHS: "arm64 arm64_32"
+        "ARCHS[sdk=watchsimulator*]": "arm64"
         ONLY_ACTIVE_ARCH: NO
         SKIP_INSTALL: YES
         APPLICATION_EXTENSION_API_ONLY: YES

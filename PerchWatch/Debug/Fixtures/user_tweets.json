@@ -1,0 +1,238 @@
+{
+ "data": {
+  "user": {
+   "result": {
+    "__typename": "User",
+    "timeline": {
+     "timeline": {
+      "instructions": [
+       {
+        "type": "TimelineClearCache"
+       },
+       {
+        "entry": {
+         "content": {
+          "__typename": "TimelineTimelineItem",
+          "entryType": "TimelineTimelineItem",
+          "itemContent": {
+           "__typename": "TimelineTweet",
+           "itemType": "TimelineTweet",
+           "tweetDisplayType": "Tweet",
+           "tweet_results": {
+            "result": {
+             "__typename": "Tweet",
+             "core": {
+              "user_results": {
+               "result": {
+                "__typename": "User",
+                "avatar": {
+                 "image_url": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png"
+                },
+                "core": {
+                 "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                 "name": "Vera Fixture",
+                 "screen_name": "vera_fixture"
+                },
+                "id": "VXNlcjoxMDA1",
+                "is_blue_verified": true,
+                "legacy": {
+                 "description": "Writes about engines. https://t.co/Bio1",
+                 "entities": {
+                  "description": {
+                   "urls": [
+                    {
+                     "expanded_url": "https://example.com",
+                     "url": "https://t.co/Bio1"
+                    }
+                   ]
+                  }
+                 },
+                 "followers_count": 5400,
+                 "friends_count": 80,
+                 "location": "Somewhere",
+                 "statuses_count": 999
+                },
+                "privacy": {
+                 "protected": false
+                },
+                "relationship_perspectives": {
+                 "following": false
+                },
+                "rest_id": "1005"
+               }
+              }
+             },
+             "edit_control": {
+              "edit_tweet_ids": [
+               "1860000000000000030"
+              ],
+              "is_edit_eligible": false
+             },
+             "legacy": {
+              "bookmark_count": 0,
+              "bookmarked": false,
+              "conversation_id_str": "1860000000000000030",
+              "created_at": "Mon Nov 16 18:30:00 +0000 2026",
+              "display_text_range": [
+               0,
+               11
+              ],
+              "entities": {
+               "hashtags": [],
+               "symbols": [],
+               "urls": [],
+               "user_mentions": []
+              },
+              "favorite_count": 100,
+              "favorited": false,
+              "full_text": "Pinned post",
+              "id_str": "1860000000000000030",
+              "lang": "en",
+              "quote_count": 0,
+              "reply_count": 0,
+              "retweet_count": 1,
+              "retweeted": false,
+              "user_id_str": "1005"
+             },
+             "rest_id": "1860000000000000030",
+             "views": {
+              "count": "4000",
+              "state": "EnabledWithCount"
+             }
+            }
+           }
+          }
+         },
+         "entryId": "tweet-1860000000000000030",
+         "sortIndex": "9"
+        },
+        "type": "TimelinePinEntry"
+       },
+       {
+        "entries": [
+         {
+          "content": {
+           "__typename": "TimelineTimelineItem",
+           "entryType": "TimelineTimelineItem",
+           "itemContent": {
+            "__typename": "TimelineTweet",
+            "itemType": "TimelineTweet",
+            "tweetDisplayType": "Tweet",
+            "tweet_results": {
+             "result": {
+              "__typename": "Tweet",
+              "core": {
+               "user_results": {
+                "result": {
+                 "__typename": "User",
+                 "avatar": {
+                  "image_url": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png"
+                 },
+                 "core": {
+                  "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+                  "name": "Vera Fixture",
+                  "screen_name": "vera_fixture"
+                 },
+                 "id": "VXNlcjoxMDA1",
+                 "is_blue_verified": true,
+                 "legacy": {
+                  "description": "Writes about engines. https://t.co/Bio1",
+                  "entities": {
+                   "description": {
+                    "urls": [
+                     {
+                      "expanded_url": "https://example.com",
+                      "url": "https://t.co/Bio1"
+                     }
+                    ]
+                   }
+                  },
+                  "followers_count": 5400,
+                  "friends_count": 80,
+                  "location": "Somewhere",
+                  "statuses_count": 999
+                 },
+                 "privacy": {
+                  "protected": false
+                 },
+                 "relationship_perspectives": {
+                  "following": false
+                 },
+                 "rest_id": "1005"
+                }
+               }
+              },
+              "edit_control": {
+               "edit_tweet_ids": [
+                "1860000000000000031"
+               ],
+               "is_edit_eligible": false
+              },
+              "legacy": {
+               "bookmark_count": 0,
+               "bookmarked": false,
+               "conversation_id_str": "1860000000000000031",
+               "created_at": "Mon Nov 16 18:30:00 +0000 2026",
+               "display_text_range": [
+                0,
+                22
+               ],
+               "entities": {
+                "hashtags": [],
+                "symbols": [],
+                "urls": [],
+                "user_mentions": []
+               },
+               "favorite_count": 4,
+               "favorited": false,
+               "full_text": "A regular profile post",
+               "id_str": "1860000000000000031",
+               "lang": "en",
+               "quote_count": 0,
+               "reply_count": 0,
+               "retweet_count": 1,
+               "retweeted": false,
+               "user_id_str": "1005"
+              },
+              "rest_id": "1860000000000000031",
+              "views": {
+               "count": "160",
+               "state": "EnabledWithCount"
+              }
+             }
+            }
+           }
+          },
+          "entryId": "tweet-1860000000000000031",
+          "sortIndex": "5"
+         },
+         {
+          "content": {
+           "__typename": "TimelineTimelineCursor",
+           "cursorType": "Top",
+           "entryType": "TimelineTimelineCursor",
+           "value": "UTTOP"
+          },
+          "entryId": "cursor-top-10",
+          "sortIndex": "10"
+         },
+         {
+          "content": {
+           "__typename": "TimelineTimelineCursor",
+           "cursorType": "Bottom",
+           "entryType": "TimelineTimelineCursor",
+           "value": "UTBOTTOM"
+          },
+          "entryId": "cursor-bottom-0",
+          "sortIndex": "0"
+         }
+        ],
+        "type": "TimelineAddEntries"
+       }
+      ]
+     }
+    }
+   }
+  }
+ }
+}

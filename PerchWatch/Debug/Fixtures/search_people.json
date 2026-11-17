@@ -1,0 +1,126 @@
+{
+ "data": {
+  "search_by_raw_query": {
+   "search_timeline": {
+    "timeline": {
+     "instructions": [
+      {
+       "entries": [
+        {
+         "content": {
+          "__typename": "TimelineTimelineItem",
+          "entryType": "TimelineTimelineItem",
+          "itemContent": {
+           "__typename": "TimelineUser",
+           "itemType": "TimelineUser",
+           "userDisplayType": "User",
+           "user_results": {
+            "result": {
+             "__typename": "User",
+             "avatar": {
+              "image_url": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png"
+             },
+             "core": {
+              "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+              "name": "Ada Example",
+              "screen_name": "ada_example"
+             },
+             "id": "VXNlcjo1001",
+             "is_blue_verified": true,
+             "legacy": {
+              "description": "Writes about engines. https://t.co/Bio1",
+              "entities": {
+               "description": {
+                "urls": [
+                 {
+                  "expanded_url": "https://example.com",
+                  "url": "https://t.co/Bio1"
+                 }
+                ]
+               }
+              },
+              "followers_count": 5400,
+              "friends_count": 80,
+              "location": "Somewhere",
+              "statuses_count": 999
+             },
+             "privacy": {
+              "protected": false
+             },
+             "relationship_perspectives": {
+              "following": false
+             },
+             "rest_id": "1001"
+            }
+           }
+          }
+         },
+         "entryId": "user-1001",
+         "sortIndex": "3"
+        },
+        {
+         "content": {
+          "__typename": "TimelineTimelineItem",
+          "entryType": "TimelineTimelineItem",
+          "itemContent": {
+           "__typename": "TimelineUser",
+           "itemType": "TimelineUser",
+           "userDisplayType": "User",
+           "user_results": {
+            "result": {
+             "__typename": "User",
+             "avatar": {
+              "image_url": "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png"
+             },
+             "core": {
+              "created_at": "Tue Mar 21 20:50:14 +0000 2006",
+              "name": "Cleo &amp; Co",
+              "screen_name": "cleo_co"
+             },
+             "id": "VXNlcjo1003",
+             "is_blue_verified": false,
+             "legacy": {
+              "description": "",
+              "entities": {
+               "description": {
+                "urls": []
+               }
+              },
+              "followers_count": 120,
+              "friends_count": 80,
+              "location": "Somewhere",
+              "statuses_count": 999
+             },
+             "privacy": {
+              "protected": false
+             },
+             "relationship_perspectives": {
+              "following": false
+             },
+             "rest_id": "1003"
+            }
+           }
+          }
+         },
+         "entryId": "user-1003",
+         "sortIndex": "2"
+        },
+        {
+         "content": {
+          "__typename": "TimelineTimelineCursor",
+          "cursorType": "Bottom",
+          "entryType": "TimelineTimelineCursor",
+          "value": "PEOPLEBOTTOM"
+         },
+         "entryId": "cursor-bottom-0",
+         "sortIndex": "0"
+        }
+       ],
+       "type": "TimelineAddEntries"
+      }
+     ]
+    }
+   }
+  }
+ }
+}
