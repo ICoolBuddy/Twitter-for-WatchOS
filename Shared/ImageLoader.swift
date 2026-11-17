@@ -30,10 +30,14 @@ final class ImageLoader: @unchecked Sendable {
     private static let diskLimit = 150 * 1024 * 1024
     #endif
 
+    /// Background prefetch never runs more than three downloads at a time, across
+    /// all `prefetch` / `prefetchFeed` calls.
+    private static let prefetchGate = PrefetchGate(limit: 3)
+
     private init() {
         #if os(watchOS)
-        cache.totalCostLimit = 12 * 1024 * 1024
-        cache.countLimit = 60
+        cache.totalCostLimit = 24 * 1024 * 1024
+        cache.countLimit = 150
         #else
         cache.totalCostLimit = 60 * 1024 * 1024
         cache.countLimit = 300
@@ -83,16 +87,70 @@ final class ImageLoader: @unchecked Sendable {
 
     /// Fire-and-forget, low priority warm-up used by background refresh: downloads the
     /// bytes into the disk cache and decodes them so the feed renders instantly when the
-    /// app is opened. Deliberately not `async`, so no caller has to await it; callers that
-    /// want to spend their background budget on it can `await` the returned task's `value`.
+    /// app is opened. At most three downloads run at a time; URLs that are already in
+    /// memory or on disk are skipped. Not `async`, so no caller has to await it; callers
+    /// that want to spend their background budget on it can `await` the returned task.
     @discardableResult
     func prefetch(_ urls: [URL], maxPixel: Int) -> Task<Void, Never> {
-        let list = Self.unique(urls)
-        return Task.detached(priority: .utility) { [self] in
-            for url in list {
-                if Task.isCancelled { return }
-                if self.cache.object(forKey: self.key(url, maxPixel)) != nil { continue }
-                _ = try? await self.load(url, maxPixel: maxPixel)
+        prefetchItems(urls.map { (url: $0, maxPixel: maxPixel) })
+    }
+
+    /// Warms the exact images a feed page is about to display, so prefetch and display
+    /// share cache keys: each post's author avatar, the first media's tiny preview and
+    /// the full feed image (see `feedImage(for:)`).
+    @discardableResult
+    func prefetchFeed(_ tweets: [XTweet]) -> Task<Void, Never> {
+        var items: [(url: URL, maxPixel: Int)] = []
+        var seen = Set<String>()
+        func add(_ url: URL?, _ maxPixel: Int) {
+            guard let url else { return }
+            guard seen.insert("\(maxPixel)|\(url.absoluteString)").inserted else { return }
+            items.append((url: url, maxPixel: maxPixel))
+        }
+        for tweet in tweets {
+            let t = tweet.displayed
+            add(t.author.avatarURL, Int(44 * 2.5))
+            // `Avatar` swaps in the `_bigger` variant at feed size, so warm the URL
+            // the feed actually displays as well as the plain avatar.
+            add(t.author.avatarLargeURL, Int(44 * 2.5))
+            if let media = t.media.first {
+                add(media.previewURL, 200)
+                let feed = Self.feedImage(for: media)
+                add(feed.url, feed.maxPixel)
+            }
+        }
+        return prefetchItems(items)
+    }
+
+    /// The URL and decode size the feed uses for one media item. Aspect ratios below
+    /// 0.9 (screenshots) use the 1200 px "medium" image decoded tall enough to stay
+    /// sharp at full width; everything else uses the 680 px "small" one at 450 px.
+    static func feedImage(for media: XMedia) -> (url: URL, maxPixel: Int) {
+        let ratio = media.aspectRatio
+        if ratio < 0.9 {
+            return (media.fullURL, min(1400, Int(450 / max(ratio, 0.3))))
+        }
+        return (media.feedURL, 450)
+    }
+
+    @discardableResult
+    private func prefetchItems(_ items: [(url: URL, maxPixel: Int)]) -> Task<Void, Never> {
+        Task.detached(priority: .utility) { [self] in
+            await withTaskGroup(of: Void.self) { group in
+                for item in items {
+                    group.addTask { [self] in
+                        if Task.isCancelled { return }
+                        if self.cache.object(forKey: self.key(item.url, item.maxPixel)) != nil { return }
+                        if self.hasDiskData(for: item.url) { return }
+                        await Self.prefetchGate.acquire()
+                        if Task.isCancelled {
+                            await Self.prefetchGate.release()
+                            return
+                        }
+                        _ = try? await self.load(item.url, maxPixel: item.maxPixel)
+                        await Self.prefetchGate.release()
+                    }
+                }
             }
         }
     }
@@ -101,13 +159,11 @@ final class ImageLoader: @unchecked Sendable {
 
     private func key(_ url: URL, _ px: Int) -> NSString { "\(px)|\(url.absoluteString)" as NSString }
 
-    private static func unique(_ urls: [URL]) -> [URL] {
-        var seen = Set<String>()
-        var out: [URL] = []
-        for url in urls where seen.insert(url.absoluteString).inserted {
-            out.append(url)
-        }
-        return out
+    /// Cheap synchronous check used by prefetch to avoid downloading bytes that are
+    /// already cached. Callable from any thread (the disk folder is immutable).
+    private func hasDiskData(for url: URL) -> Bool {
+        guard let file = diskFile(for: url) else { return false }
+        return FileManager.default.fileExists(atPath: file.path)
     }
 
     // MARK: - Disk cache (Caches/perch-img, LRU by modification date)
@@ -203,8 +259,41 @@ final class ImageLoader: @unchecked Sendable {
     }
 }
 
+/// Caps concurrent background downloads. Requests that arrive while the slots are
+/// full park on a continuation and are resumed in FIFO order.
+private actor PrefetchGate {
+    private let limit: Int
+    private var active = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(limit: Int) {
+        self.limit = limit
+    }
+
+    func acquire() async {
+        if active < limit {
+            active += 1
+            return
+        }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            active = max(0, active - 1)
+        } else {
+            // Hand this slot straight to the next waiter; `active` stays unchanged.
+            let next = waiters.removeFirst()
+            next.resume()
+        }
+    }
+}
+
 /// `AsyncImage` replacement backed by `ImageLoader`. `placeholderURL` (X's tiny preview)
-/// is shown, blurred, until `url` has finished loading.
+/// is shown, blurred, until `url` has finished loading. The memory cache is read
+/// synchronously in `init`, so an already-decoded image is on screen in the first frame.
 struct RemoteImage: View {
     let url: URL?
     var placeholderURL: URL? = nil
@@ -216,6 +305,19 @@ struct RemoteImage: View {
     @State private var failed = false
 
     private static let placeholderPixels = 200
+
+    init(url: URL?, placeholderURL: URL? = nil, maxPixel: Int = 300, contentMode: ContentMode = .fill) {
+        self.url = url
+        self.placeholderURL = placeholderURL
+        self.maxPixel = maxPixel
+        self.contentMode = contentMode
+        _image = State(initialValue: url.flatMap {
+            ImageLoader.shared.cached($0, maxPixel: maxPixel)
+        })
+        _placeholder = State(initialValue: placeholderURL.flatMap {
+            ImageLoader.shared.cached($0, maxPixel: RemoteImage.placeholderPixels)
+        })
+    }
 
     var body: some View {
         ZStack {
@@ -245,12 +347,17 @@ struct RemoteImage: View {
 
     private func loadFull() async {
         failed = false
-        image = nil
-        guard let url else { return }
+        guard let url else {
+            image = nil
+            return
+        }
+        // The view starts with the cached image (see `init`); never blank it on
+        // appear, only replace it when the cache no longer has this URL/size.
         if let c = ImageLoader.shared.cached(url, maxPixel: maxPixel) {
             image = c
             return
         }
+        image = nil
         do {
             image = try await ImageLoader.shared.load(url, maxPixel: maxPixel)
         } catch {
@@ -259,8 +366,10 @@ struct RemoteImage: View {
     }
 
     private func loadPlaceholder() async {
-        placeholder = nil
-        guard let placeholderURL else { return }
+        guard let placeholderURL else {
+            placeholder = nil
+            return
+        }
         if let c = ImageLoader.shared.cached(placeholderURL, maxPixel: Self.placeholderPixels) {
             placeholder = c
             return

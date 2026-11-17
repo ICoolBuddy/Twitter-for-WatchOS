@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import AVKit
 import AVFoundation
@@ -6,7 +7,8 @@ import XKit
 
 /// Full-screen media viewer, presented by the callers with `.fullScreenCover`:
 /// black background, one page per media item, swipe sideways, photos zoom with the
-/// Digital Crown (drag to pan, double-tap to reset), videos/GIFs autoplay.
+/// Digital Crown (drag to pan, single tap toggles 1×/2.5×), videos/GIFs are
+/// downloaded first (progress at the bottom) and then autoplay from the local file.
 struct MediaViewer: View {
     let media: [XMedia]
     @Environment(\.dismiss) private var dismiss
@@ -19,7 +21,7 @@ struct MediaViewer: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
+        ZStack {
             Color.black.ignoresSafeArea()
 
             if media.isEmpty {
@@ -29,7 +31,7 @@ struct MediaViewer: View {
                 if media.count > 1 { counter }
             }
 
-            closeButton
+            closeGesture
         }
         .background(Color.black)
     }
@@ -63,18 +65,19 @@ struct MediaViewer: View {
         .accessibilityHidden(true)
     }
 
-    private var closeButton: some View {
-        Button { dismiss() } label: {
-            Image(systemName: "xmark")
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 30, height: 30)
-                .background(Color.black.opacity(0.6), in: Circle())
+    /// `fullScreenCover` already draws the system close (X) button. This invisible
+    /// button only claims the hand double-tap so it closes the viewer too.
+    private var closeGesture: some View {
+        Button {
+            dismiss()
+        } label: {
+            Color.clear
         }
         .buttonStyle(.plain)
-        .padding(.leading, 4)
-        .padding(.top, 2)
-        .accessibilityLabel("Close")
+        .frame(width: 1, height: 1)
+        .opacity(0)
+        .accessibilityHidden(true)
+        .handGestureShortcut(.primaryAction)
     }
 
     private var emptyState: some View {
@@ -102,7 +105,8 @@ private struct MediaPage: View {
     }
 }
 
-/// One photo page: Fit inside the screen, crown zoom, drag to pan, double-tap to reset.
+/// One photo page: fit inside the screen, crown zoom, drag to pan, single tap toggles
+/// between 1× and 2.5× (centred).
 private struct MediaPhotoPage: View {
     let media: XMedia
 
@@ -112,19 +116,22 @@ private struct MediaPhotoPage: View {
 
     var body: some View {
         GeometryReader { geo in
-            RemoteImage(url: media.imageURL(size: "medium"), maxPixel: 1200, contentMode: .fit)
+            RemoteImage(url: media.fullURL, maxPixel: 1200, contentMode: .fit)
                 .frame(width: geo.size.width, height: geo.size.height)
                 .scaleEffect(zoom)
                 .offset(offset)
                 .gesture(panGesture, including: zoom > 1 ? GestureMask.all : GestureMask())
-                .onTapGesture(count: 2) { reset() }
+                .onTapGesture { toggleZoom() }
         }
         .focusable()
         .digitalCrownRotation($zoom, from: 1, through: 5, by: 0.1,
                               sensitivity: .medium, isContinuous: false,
                               isHapticFeedbackEnabled: true)
         .onChange(of: zoom) { _, value in
-            if value < 1.05 { reset() }
+            if value < 1.05 {
+                offset = .zero
+                dragStart = .zero
+            }
         }
         .ignoresSafeArea()
         .accessibilityLabel(media.altText ?? "Image")
@@ -143,6 +150,14 @@ private struct MediaPhotoPage: View {
             }
     }
 
+    private func toggleZoom() {
+        withAnimation(.easeOut(duration: 0.2)) {
+            zoom = zoom > 1.05 ? 1 : 2.5
+            offset = .zero
+        }
+        dragStart = .zero
+    }
+
     private func reset() {
         withAnimation(.easeOut(duration: 0.2)) {
             zoom = 1
@@ -152,35 +167,34 @@ private struct MediaPhotoPage: View {
     }
 }
 
-/// One video/GIF page: autoplays while it is the visible page, pauses otherwise.
-/// GIFs loop because they have no useful end state.
+/// One video/GIF page: downloads the lowest-bitrate MP4 first (thumbnail + thin
+/// progress bar + "42% · 180 KB/s" at the bottom), then autoplays the local file
+/// while it is the visible page. GIFs loop.
 private struct MediaVideoPage: View {
     let media: XMedia
     let isActive: Bool
 
+    @StateObject private var downloader = VideoDownloader()
     @State private var player: AVPlayer?
-    @State private var failed = false
+    @State private var unavailable = false
 
     var body: some View {
         ZStack {
             Color.black
-            RemoteImage(url: media.thumbnailURL, maxPixel: 900, contentMode: .fit)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             if let player {
                 VideoPlayer(player: player)
-            } else if failed {
-                Label("Video unavailable", systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Color.black.opacity(0.65), in: Capsule())
+            } else {
+                placeholder
             }
         }
         .onAppear { if isActive { start() } }
         .onDisappear { player?.pause() }
         .onChange(of: isActive) { _, active in
             if active { start() } else { player?.pause() }
+        }
+        .onChange(of: downloader.fileURL) { _, url in
+            guard let url, isActive else { return }
+            play(url)
         }
         .onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification)) { note in
             guard media.type == .gif,
@@ -192,17 +206,82 @@ private struct MediaVideoPage: View {
         .accessibilityLabel(media.altText ?? (media.type == .gif ? "GIF" : "Video"))
     }
 
+    private var placeholder: some View {
+        ZStack {
+            RemoteImage(url: media.thumbnailURL, maxPixel: 900, contentMode: .fit)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if downloader.error != nil || unavailable {
+                Label("Video unavailable", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.black.opacity(0.65), in: Capsule())
+            } else {
+                VStack(spacing: 4) {
+                    Spacer(minLength: 0)
+                    progressBar
+                    Text(progressText)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 10)
+            }
+        }
+    }
+
+    private var progressBar: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.25))
+                Capsule()
+                    .fill(Color.white)
+                    .frame(width: CGFloat(min(1, max(0, downloader.progress))) * geo.size.width)
+            }
+        }
+        .frame(width: 120, height: 3)
+    }
+
+    private var progressText: String {
+        let rate = downloader.bytesPerSecond > 0
+            ? " · " + Self.rateText(downloader.bytesPerSecond)
+            : ""
+        if downloader.totalBytes == nil, downloader.progress <= 0 {
+            return "Downloading" + rate
+        }
+        let pct = Int((min(1, max(0, downloader.progress)) * 100).rounded())
+        return "\(pct)%" + rate
+    }
+
     private func start() {
-        if let player {
-            player.play()
+        if let ready = downloader.fileURL {
+            play(ready)
             return
         }
-        guard let url = media.playbackURL() else {
-            failed = true
+        guard let url = media.lowestBitrateMP4 ?? media.playbackURL(maxBitrate: 0) else {
+            unavailable = true
+            return
+        }
+        unavailable = false
+        downloader.start(url)
+        if let ready = downloader.fileURL { play(ready) }
+    }
+
+    private func play(_ url: URL) {
+        if let player {
+            player.play()
             return
         }
         let p = AVPlayer(url: url)
         player = p
         p.play()
+    }
+
+    private static func rateText(_ bps: Double) -> String {
+        if bps >= 1_000_000 { return String(format: "%.1f MB/s", bps / 1_000_000) }
+        if bps >= 1_000 { return String(format: "%.0f KB/s", bps / 1_000) }
+        return String(format: "%.0f B/s", bps)
     }
 }
