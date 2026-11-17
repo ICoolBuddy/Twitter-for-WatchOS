@@ -151,8 +151,17 @@ struct MediaThumb: View {
         #endif
     }
 
+    /// Tall images (screenshots) are shown full width, so their long side needs far more
+    /// pixels than a landscape photo: use X's 1200 px "medium" and decode at width / ratio.
+    private var isTall: Bool { media.aspectRatio < 0.9 }
+    private var imageURL: URL { isTall ? media.fullURL : media.feedURL }
+    private var decodePixels: Int {
+        guard isTall else { return Metrics.imagePixels }
+        return min(1400, Int(Double(Metrics.imagePixels) / max(media.aspectRatio, 0.3)))
+    }
+
     var body: some View {
-        RemoteImage(url: media.feedURL, placeholderURL: media.previewURL, maxPixel: Metrics.imagePixels)
+        RemoteImage(url: imageURL, placeholderURL: media.previewURL, maxPixel: decodePixels)
             .aspectRatio(ratio, contentMode: .fit)
             .frame(maxWidth: .infinity, maxHeight: cap)
             .clipShape(RoundedRectangle(cornerRadius: Metrics.mediaCorner))
