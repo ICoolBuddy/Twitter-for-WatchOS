@@ -7,6 +7,9 @@ import XKit
 final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
     typealias Page = (items: [Item], cursor: String?, top: String?)
 
+    /// Start loading the next page when a row this close to the end appears.
+    static var prefetchDistance: Int { 8 }
+
     @Published private(set) var items: [Item] = []
     @Published private(set) var isLoading = false
     /// True only while `refresh()` runs (not while loading further pages).
@@ -18,8 +21,12 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
     private var cursor: String?
     private var loadTask: Task<Void, Never>?
     private let maxItems: Int
+    /// Bumped by every refresh and reset so late results from an older account
+    /// or timeline kind are thrown away instead of overwriting the new list.
+    private var generation = 0
     var fetch: (String?) async throws -> Page
-    /// Called with the first page after a successful refresh (for disk caching).
+    /// Called with the first page after a successful refresh (for disk caching
+    /// and for clearing the notification badge).
     var onFirstPage: (([Item], String?) -> Void)?
 
     init(maxItems: Int = 300, fetch: @escaping (String?) async throws -> Page) {
@@ -33,19 +40,38 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
         if items.isEmpty { items = cached }
     }
 
+    /// Clears everything, including the cursor. Used when the account or the
+    /// timeline kind changes.
+    func reset() {
+        generation += 1
+        loadTask?.cancel()
+        loadTask = nil
+        items = []
+        cursor = nil
+        topCursor = nil
+        reachedEnd = false
+        error = nil
+        isLoading = false
+        isRefreshing = false
+    }
+
     func loadIfNeeded() async {
-        if items.isEmpty || cursor == nil && !reachedEnd { await refresh() }
+        guard !isLoading, !isRefreshing else { return }
+        if items.isEmpty || (cursor == nil && !reachedEnd) { await refresh() }
     }
 
     func refresh() async {
         loadTask?.cancel()
+        generation += 1
+        let gen = generation
         isLoading = true
         isRefreshing = true
         error = nil
-        defer { isLoading = false; isRefreshing = false }
+        defer { if gen == generation { isLoading = false; isRefreshing = false } }
         do {
             let page = try await fetch(nil)
             try Task.checkCancellation()
+            guard gen == generation else { return }
             items = dedupe(page.items)
             cursor = page.cursor
             topCursor = page.top
@@ -55,38 +81,45 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
         } catch {
             let e = XError.from(error)
             if case .network(let m) = e, m == "Cancelled" { return }
-            self.error = e
+            if gen == generation { self.error = e }
         }
     }
 
     /// Call from a row's `onAppear`; loads the next page when the row is near the end.
     func loadMoreIfNeeded(current item: Item) {
-        guard !isLoading, !reachedEnd, error == nil, let cursor else { return }
-        guard let idx = items.firstIndex(where: { $0.id == item.id }), idx >= items.count - 4 else { return }
-        loadTask = Task { await loadMore(cursor: cursor) }
+        guard !isLoading, !reachedEnd, error == nil, cursor != nil else { return }
+        guard let idx = items.firstIndex(where: { $0.id == item.id }),
+              idx >= items.count - Self.prefetchDistance else { return }
+        loadMore()
     }
 
     func loadMore() {
         guard !isLoading, !reachedEnd, let cursor else { return }
-        loadTask = Task { await loadMore(cursor: cursor) }
+        isLoading = true
+        loadTask = Task { [weak self] in
+            guard let self else { return }
+            await self.loadMore(cursor: cursor)
+        }
     }
 
     private func loadMore(cursor: String) async {
-        isLoading = true
-        defer { isLoading = false }
+        let gen = generation
+        defer { if gen == generation { isLoading = false } }
         do {
             let page = try await fetch(cursor)
             try Task.checkCancellation()
+            guard gen == generation else { return }
             let existing = Set(items.map(\.id))
             let fresh = page.items.filter { !existing.contains($0.id) }
             items.append(contentsOf: fresh)
             if items.count > maxItems { items.removeFirst(items.count - maxItems) }
             self.cursor = page.cursor
+            topCursor = page.top ?? topCursor
             // Stop when the cursor stops moving or a page brings nothing new.
             reachedEnd = page.cursor == nil || page.cursor == cursor || fresh.isEmpty
         } catch is CancellationError {
         } catch {
-            self.error = XError.from(error)
+            if gen == generation { self.error = XError.from(error) }
         }
     }
 
@@ -121,8 +154,14 @@ enum TimelineDiskCache {
         return p.items
     }
 
+    /// Removes every cached home timeline (`perch-home-*`), for every account.
     static func clear() {
-        for n in ["home-forYou", "home-following"] { if let u = url(n) { try? FileManager.default.removeItem(at: u) } }
+        guard let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first,
+              let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+        else { return }
+        for f in files where f.lastPathComponent.hasPrefix("perch-home-") {
+            try? FileManager.default.removeItem(at: f)
+        }
     }
 }
 

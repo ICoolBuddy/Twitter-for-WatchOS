@@ -4,6 +4,8 @@ import XKit
 struct WatchSettingsView: View {
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var sync: WatchSync
+    @AppStorage(PerchSettings.autoRefreshOnOpen) private var autoRefreshOnOpen = true
+
     @State private var message: String?
     @State private var working = false
     @State private var confirmLogout = false
@@ -11,18 +13,28 @@ struct WatchSettingsView: View {
     var body: some View {
         List {
             Section("Account") {
-                if let v = app.viewer {
-                    UserRow(user: v)
+                if let u = app.activeAccount?.user ?? app.viewer {
+                    NavigationLink(value: Route.profileMe) {
+                        UserRow(user: u)
+                    }
                 } else if app.isLoggedIn {
                     Label("Logged in", systemImage: "checkmark.circle")
                 } else {
                     Text("Not logged in").foregroundStyle(.secondary)
                 }
             }
+
+            Section {
+                Toggle("Refresh when opening", isOn: $autoRefreshOnOpen)
+            } footer: {
+                Text("When off, the feed shows cached posts until you pull to refresh.")
+            }
+
             Section("iPhone") {
                 Text(sync.statusText).font(.caption2)
                 Button("Sync from iPhone") { sync.syncNow() }
             }
+
             Section {
                 Text("IDs: \(app.endpointsUpdatedAt.isEmpty ? "bundled" : String(app.endpointsUpdatedAt.prefix(10)))")
                     .font(.caption2)
