@@ -132,6 +132,7 @@ struct RootPager: View {
                 HomeView(kind: .forYou, isActive: page == 1)
                     .frame(width: w)
                     .disabled(page != 1)
+                    .layoutProbe("page", .green)
                 HomeView(kind: .following, isActive: page == 2)
                     .frame(width: w)
                     .disabled(page != 2)
@@ -145,6 +146,7 @@ struct RootPager: View {
         // safe-area insets for its content), instead of black bars there.
         .ignoresSafeArea()
         .clipped()
+        .layoutProbe("pager", .red)
         .background(Color.black)
         // One glow for the whole pager (not per page), so a refresh that is
         // still running stays visible after swiping to the other feed or the menu.
