@@ -1,0 +1,194 @@
+[
+  {
+    "fixture": "xclid_page_1.html",
+    "indices": [
+      35,
+      42,
+      37,
+      10
+    ],
+    "verificationKey": "apq2SfoM1EWywcDsmgNQPSj3jOxdYOEh3+PaeD5ZUmrl3Nof03MzwPFtjNK+Tvo1",
+    "frameTime": 0,
+    "frameRow": [
+      129.0,
+      236.0,
+      125.0,
+      172.0,
+      105.0,
+      61.0,
+      190.0,
+      56.0,
+      90.0,
+      67.0,
+      116.0
+    ],
+    "animationKey": "81ec7d100100",
+    "transactions": [
+      {
+        "method": "GET",
+        "path": "/i/api/graphql/KmJCeZ__ef1fNos7tKN_fg/HomeTimeline",
+        "time": 112233445,
+        "random": 0,
+        "id": "AGqatkn6DNRFssHA7JoDUD0o94zsXWDhId/j2ng+WVJq5dzaH9NzM8DxbYzSvk76NeWLsAaLeB6ot3z+C5t65ZrDngJOAw"
+      },
+      {
+        "method": "POST",
+        "path": "/i/api/graphql/lI07N6Otwv1PhnEgXILM7A/FavoriteTweet",
+        "time": 112233999,
+        "random": 77,
+        "id": "TSfX+wS3QZkI/4yNoddOHXBlusGhEC2sbJKulzVzFB8nqJGXUp4+fo28IMGf8wO3eELD/UuwTLjBQscBrg7g1E9QOED/Tg"
+      },
+      {
+        "method": "GET",
+        "path": "/i/api/1.1/dm/inbox_initial_state.json",
+        "time": 120000000,
+        "random": 255,
+        "id": "/5VlSbYF8yu6TT4/E2X8r8LXCHMTop8e3iAcJYfBpq2VGiMl4CyMzD8OknMtQbEFyv/x2PjsYuGnlkWQQ0tmlQU3lX/3/A"
+      }
+    ]
+  },
+  {
+    "fixture": "xclid_page_2.html",
+    "indices": [
+      35,
+      42,
+      37,
+      10
+    ],
+    "verificationKey": "m0m6VaYS+xBnqmQ1X0Jm9gWFlExhh5jPD8voy83SP+oPAE/F4E8mdhuzxvpFkFZj",
+    "frameTime": 360,
+    "frameRow": [
+      86.0,
+      18.0,
+      171.0,
+      232.0,
+      192.0,
+      66.0,
+      203.0,
+      113.0,
+      25.0,
+      67.0,
+      119.0
+    ],
+    "animationKey": "400bb0b3333333333330b5c28f5c28f5c0b5c28f5c28f5c0b33333333333300",
+    "transactions": [
+      {
+        "method": "GET",
+        "path": "/i/api/graphql/KmJCeZ__ef1fNos7tKN_fg/HomeTimeline",
+        "time": 112233445,
+        "random": 0,
+        "id": "AJtJulWmEvsQZ6pkNV9CZvYFhZRMYYeYzw/L6MvN0j/qDwBPxeBPJnYbs8b6RZBWY+WLsAatET81l1nfBHbHXc0IYlvpAw"
+      },
+      {
+        "method": "POST",
+        "path": "/i/api/graphql/lI07N6Otwv1PhnEgXILM7A/FavoriteTweet",
+        "time": 112233999,
+        "random": 77,
+        "id": "TdYE9xjrX7ZdKucpeBIPK7tIyNkBLMrVgkKGpYaAn3KnQk0CiK0CaztW/ou3CN0bLkLD/Uu+l543sYTqlW0jLNzmjeoYTg"
+      },
+      {
+        "method": "GET",
+        "path": "/i/api/1.1/dm/inbox_initial_state.json",
+        "time": 120000000,
+        "random": 255,
+        "id": "/2S2RapZ7QTvmFWbyqC9mQn6emuznnhnMPA0FzQyLcAV8P+wOh+w2YnkTDkFum+pnP/x2PjzSbcXuWun4C7OmWq0bXIN/A"
+      }
+    ]
+  },
+  {
+    "fixture": "xclid_page_3.html",
+    "indices": [
+      35,
+      42,
+      37,
+      10
+    ],
+    "verificationKey": "OmEAAqguheg8R/CRBkuwK4gHVSewQjXJTarF/8FcTCz30lIC+BZCvPBlQkhJfZhq",
+    "frameTime": 0,
+    "frameRow": [
+      1.0,
+      238.0,
+      234.0,
+      82.0,
+      82.0,
+      78.0,
+      79.0,
+      188.0,
+      51.0,
+      107.0,
+      85.0
+    ],
+    "animationKey": "1eeea100100",
+    "transactions": [
+      {
+        "method": "GET",
+        "path": "/i/api/graphql/KmJCeZ__ef1fNos7tKN_fg/HomeTimeline",
+        "time": 112233445,
+        "random": 0,
+        "id": "ADphAAKoLoXoPEfwkQZLsCuIB1UnsEI1yU2qxf/BXEws99JSAvgWQrzwZUJISX2YauWLsAb33g9UJ2InDybLt5n2UpvlAw"
+      },
+      {
+        "method": "POST",
+        "path": "/i/api/graphql/lI07N6Otwv1PhnEgXILM7A/FavoriteTweet",
+        "time": 112233999,
+        "random": 77,
+        "id": "TXcsTU/lY8ilcQq93EsG/WbFShhq/Q94hADniLKMEQFhup8fT7VbD/G9KA8FBDDVJ0LD/UvYF3C4nE7BQYm6Tw45RIY2Tg"
+      },
+      {
+        "method": "GET",
+        "path": "/i/api/1.1/dm/inbox_initial_state.json",
+        "time": 120000000,
+        "random": 255,
+        "id": "/8We//1X0XoXw7gPbvm0T9R3+KrYT73KNrJVOgA+o7PTCC2t/QfpvUMPmr23toJnlf/x2PicOWGspO7r4v9gPbKqjHx8/A"
+      }
+    ]
+  },
+  {
+    "fixture": "xclid_page_4.html",
+    "indices": [
+      35,
+      42,
+      37,
+      10
+    ],
+    "verificationKey": "3pP/nSEooQ3mURajuCfraIEcOxgno6K/0rnCTOcVQsnzrn8pM05i2VB+Onlp5jQK",
+    "frameTime": 840,
+    "frameRow": [
+      125.0,
+      60.0,
+      17.0,
+      11.0,
+      111.0,
+      219.0,
+      13.0,
+      114.0,
+      151.0,
+      32.0,
+      227.0
+    ],
+    "animationKey": "6a45330fae147ae147ae03851eb851eb85203851eb851eb8520fae147ae147ae00",
+    "transactions": [
+      {
+        "method": "GET",
+        "path": "/i/api/graphql/KmJCeZ__ef1fNos7tKN_fg/HomeTimeline",
+        "time": 112233445,
+        "random": 0,
+        "id": "AN6T/50hKKEN5lEWo7gn62iBHDsYJ6Oiv9K5wkznFULJ865/KTNOYtlQfjp5aeY0CuWLsAaDSqeqcP604EoOLRnnS+t0Aw"
+      },
+      {
+        "method": "POST",
+        "path": "/i/api/graphql/lI07N6Otwv1PhnEgXILM7A/FavoriteTweet",
+        "time": 112233999,
+        "random": 77,
+        "id": "TZPestBsZexAqxxb7vVqpiXMUXZVau7v8p/0jwGqWA+EvuMyZH4DL5QdM3c0JKt5R0LD/UsW9VVUEhXiEPoSsiOO86PaTg"
+      },
+      {
+        "method": "GET",
+        "path": "/i/api/1.1/dm/inbox_initial_state.json",
+        "time": 120000000,
+        "random": 255,
+        "id": "/yFsAGLe117yGa7pXEfYFJd+48Tn2FxdQC1GPbMY6r02DFGA1syxnSavgcWGlhnL9f/x2Pg4cH1dVjnTrIm9hpLuHFwS/A"
+      }
+    ]
+  }
+]

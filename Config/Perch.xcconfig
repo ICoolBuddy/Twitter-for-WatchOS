@@ -1,0 +1,5 @@
+// Single place to change the bundle identifiers.
+// The Watch app is always "$(PERCH_BUNDLE_ID).watchkitapp" and its
+// WKCompanionAppBundleIdentifier is "$(PERCH_BUNDLE_ID)".
+// CI can override this too: workflow_dispatch input "bundle_id".
+PERCH_BUNDLE_ID = com.CHANGEME.perch

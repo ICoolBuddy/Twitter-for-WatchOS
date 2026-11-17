@@ -1,0 +1,123 @@
+name: Build
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      bundle_id:
+        description: "iOS bundle ID (Watch app becomes <id>.watchkitapp)"
+        required: false
+        default: ""
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      XCODE_APP: /Applications/Xcode_26.6.app
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode
+        run: |
+          if [ ! -d "$XCODE_APP" ]; then
+            echo "::warning::$XCODE_APP not found, using newest installed Xcode"
+            XCODE_APP=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          fi
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          xcodebuild -version
+          xcodebuild -showsdks | grep -Ei 'iphoneos|watchos'
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: XKit unit tests
+        working-directory: Packages/XKit
+        run: swift test 2>&1 | tail -40; exit ${PIPESTATUS[0]}
+
+      - name: Archive (unsigned)
+        run: |
+          mkdir -p build
+          EXTRA=()
+          if [ -n "${{ github.event.inputs.bundle_id }}" ]; then
+            EXTRA+=("PERCH_BUNDLE_ID=${{ github.event.inputs.bundle_id }}")
+          fi
+          set +e
+          xcodebuild archive \
+            -project Perch.xcodeproj \
+            -scheme Perch \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Perch.xcarchive \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            "${EXTRA[@]}" > build/xcodebuild.log 2>&1
+          STATUS=$?
+          set -e
+          grep -E ': error:|error: |\*\* ARCHIVE' build/xcodebuild.log | sort -u | head -80 || true
+          if [ $STATUS -ne 0 ]; then
+            echo "::error::xcodebuild archive failed ($STATUS)"
+            tail -60 build/xcodebuild.log
+            exit $STATUS
+          fi
+          test -d build/Perch.xcarchive/Products/Applications/Perch.app
+
+      - name: Package IPA
+        run: |
+          rm -rf build/Payload && mkdir -p build/Payload
+          cp -R build/Perch.xcarchive/Products/Applications/Perch.app build/Payload/
+          (cd build && zip -qry Perch-unsigned.ipa Payload)
+          ls -la build/Perch-unsigned.ipa
+
+      - name: Verify IPA contents
+        run: |
+          set -e
+          APP=build/Payload/Perch.app
+          WATCH=$APP/Watch/PerchWatch.app
+          if [ ! -d "$WATCH" ]; then
+            echo "::error::Watch app missing at Payload/Perch.app/Watch/PerchWatch.app"
+            find $APP -maxdepth 3 -name '*.app'
+            exit 1
+          fi
+          BIN="$WATCH/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$WATCH/Info.plist")"
+          echo "Watch binary: $BIN"
+          lipo -info "$BIN"
+          if ! lipo -archs "$BIN" | tr ' ' '\n' | grep -qx arm64; then
+            echo "::error::Watch binary lacks the arm64 slice (needed for Series 9/10/Ultra 2)"
+            exit 1
+          fi
+          lipo -archs "$BIN" | tr ' ' '\n' | grep -qx arm64_32 || echo "::warning::no arm64_32 slice"
+          IOS_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")
+          W_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$WATCH/Info.plist")
+          COMPANION=$(/usr/libexec/PlistBuddy -c 'Print :WKCompanionAppBundleIdentifier' "$WATCH/Info.plist")
+          INDEP=$(/usr/libexec/PlistBuddy -c 'Print :WKRunsIndependentlyOfCompanionApp' "$WATCH/Info.plist")
+          echo "iOS: $IOS_ID  Watch: $W_ID  Companion: $COMPANION  Independent: $INDEP"
+          [ "$COMPANION" = "$IOS_ID" ] || { echo "::error::WKCompanionAppBundleIdentifier mismatch"; exit 1; }
+          case "$W_ID" in "$IOS_ID".*) ;; *) echo "::error::Watch bundle ID must be prefixed by iOS ID"; exit 1;; esac
+          [ "$INDEP" = "true" ] || { echo "::error::WKRunsIndependentlyOfCompanionApp must be YES"; exit 1; }
+          lipo -info "$APP/Perch"
+          du -sh "$APP" "$WATCH"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v6
+        with:
+          name: Perch-unsigned-ipa
+          path: build/Perch-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7

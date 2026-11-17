@@ -1,0 +1,16 @@
+{
+ "data": {
+  "viewer_v2": {
+   "user_results": {
+    "result": {
+     "__typename": "User",
+     "badge_counts": {
+      "dm_unread_count": 1,
+      "ntab_unread_count": 4,
+      "total_unread_count": 5
+     }
+    }
+   }
+  }
+ }
+}
