@@ -18,7 +18,6 @@ struct WatchSettingsView: View {
                 } else {
                     Text("Not logged in").foregroundStyle(.secondary)
                 }
-                Toggle("Demo mode", isOn: $app.demoMode)
             }
             Section("iPhone") {
                 Text(sync.statusText).font(.caption2)

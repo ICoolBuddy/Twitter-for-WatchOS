@@ -83,8 +83,6 @@ struct OnboardingView: View {
                     Label("Sync from iPhone", systemImage: "iphone.and.arrow.forward")
                 }
                 Text(sync.statusText).font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                Button("Try demo mode") { app.demoMode = true }
-                    .buttonStyle(.bordered)
             }
             .padding(.horizontal, 4)
         }

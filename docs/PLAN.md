@@ -35,7 +35,7 @@ Packages/XKit/      shared Swift package (builds & tests on Linux too)
   Transaction/       pure-Swift x-client-transaction-id + HTML extraction
   Endpoints/         EndpointConfig (endpoints.json), EndpointDiscovery (bundle scraper),
                      TransactionMaterialFetcher (signer discovery)
-  Networking/        LiveXClient (GraphQL/REST), MockXClient (demo), RateLimiter,
+  Networking/        LiveXClient (GraphQL/REST), RateLimiter,
                      RequestLog (redacted), XSessionStore (Keychain + cache)
   Auth/              XCredentials, KeychainStore, Redactor
   Sync/              SyncPayload (iPhone → Watch), RemoteOverride

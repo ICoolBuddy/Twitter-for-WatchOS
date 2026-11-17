@@ -41,7 +41,6 @@ struct PhoneRootView: View {
                 }
                 endpointsSection
                 Section {
-                    Toggle("Demo mode (sample data)", isOn: $app.demoMode)
                     NavigationLink("Request log (redacted)") { DebugLogView() }
                 } header: {
                     Text("Debug")

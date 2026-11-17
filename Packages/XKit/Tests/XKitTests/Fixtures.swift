@@ -14,3 +14,10 @@ enum Fixtures {
     static func string(_ name: String) throws -> String { String(decoding: try data(name), as: UTF8.self) }
     static func json(_ name: String) throws -> JSON { try JSON(data: data(name)) }
 }
+
+/// Anonymized sample X responses (Fixtures/Mock) for the parser tests.
+enum MockData {
+    static func json(_ name: String) -> JSON {
+        (try? Fixtures.json("Mock/\(name).json")) ?? .null
+    }
+}

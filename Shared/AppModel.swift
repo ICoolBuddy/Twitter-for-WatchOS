@@ -17,14 +17,11 @@ protocol SyncChannel: AnyObject {
 final class AppModel: ObservableObject {
     static let shared = AppModel()
 
-    let store = XSessionStore()
+    let store: XSessionStore
     let posts = PostStateStore()
 
     @Published private(set) var isLoggedIn = false
-    @Published private(set) var client: XClient = MockXClient()
-    @Published var demoMode: Bool {
-        didSet { UserDefaults.standard.set(demoMode, forKey: "demoMode"); rebuildClient() }
-    }
+    @Published private(set) var client: XClient
     @Published private(set) var badge = XBadgeCounts(notifications: 0, dms: 0)
     @Published private(set) var viewer: XUser?
     @Published private(set) var endpointsUpdatedAt = ""
@@ -39,16 +36,17 @@ final class AppModel: ObservableObject {
     static let pollInterval: TimeInterval = 15 * 60
 
     private init() {
-        demoMode = UserDefaults.standard.bool(forKey: "demoMode")
-        let store = self.store
+        let store = XSessionStore()
+        self.store = store
+        client = Self.makeClient(store: store)
+        UserDefaults.standard.removeObject(forKey: "demoMode")  // left over from the removed demo mode
         Task { [weak self] in
             await store.observe { Task { @MainActor in await AppModel.shared.reloadState() } }
             await self?.reloadState()
         }
     }
 
-    var usesLiveClient: Bool { isLoggedIn && !demoMode }
-    var canBrowse: Bool { isLoggedIn || demoMode }
+    var canBrowse: Bool { isLoggedIn }
 
     func reloadState() async {
         let creds = await store.credentials
@@ -61,28 +59,26 @@ final class AppModel: ObservableObject {
         } else {
             materialSummary = "none"
         }
-        if wasLoggedIn != isLoggedIn || !(client is LiveXClient) == usesLiveClient { rebuildClient() }
+        if wasLoggedIn != isLoggedIn { rebuildClient() }
         lastStateChange = Date()
     }
 
+    private static func makeClient(store: XSessionStore) -> XClient {
+        LiveXClient(store: store, refreshMaterial: {
+            let creds = await store.credentials
+            let cfg = await store.config
+            return try await TransactionMaterialFetcher(credentials: creds, config: cfg).fetch()
+        })
+    }
+
     private func rebuildClient() {
-        if usesLiveClient {
-            let store = self.store
-            client = LiveXClient(store: store, refreshMaterial: {
-                let creds = await store.credentials
-                let cfg = await store.config
-                return try await TransactionMaterialFetcher(credentials: creds, config: cfg).fetch()
-            })
-        } else {
-            client = MockXClient()
-        }
+        client = Self.makeClient(store: store)
         viewer = nil
     }
 
     // MARK: Account
 
     func login(_ creds: XCredentials) async {
-        demoMode = false
         await store.setCredentials(creds)
         await reloadState()
         sync?.syncNow()

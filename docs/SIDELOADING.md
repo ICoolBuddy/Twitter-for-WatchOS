@@ -54,7 +54,7 @@ If the profile is a *development* profile, enable Developer Mode on the Watch:
 
 1. Open **Perch** on the iPhone → *Log in with X* (or *Paste cookies instead*).
 2. The session is sent to the Watch automatically (or tap *Sync to Watch now*).
-3. Open Perch on the Watch. No phone handy? *Try demo mode* shows sample data.
+3. Open Perch on the Watch.
 
 ## Free Apple ID from Linux (Arch)
 

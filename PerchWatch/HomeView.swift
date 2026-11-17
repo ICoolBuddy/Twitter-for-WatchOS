@@ -17,16 +17,6 @@ struct HomeView: View {
                 PullToRefreshSpinnerRow()
             }
             kindPicker
-            if app.demoMode {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Demo mode — sample data").font(.caption2.bold()).foregroundStyle(.orange)
-                    if app.isLoggedIn {
-                        Button("Show my timeline") { app.demoMode = false }
-                            .font(.caption2)
-                    }
-                }
-                .listRowBackground(Color.clear)
-            }
             if let e = list.error, list.isEmpty {
                 ErrorStateView(error: e) { await list.refresh() }
                     .listRowBackground(Color.clear)
@@ -56,7 +46,7 @@ struct HomeView: View {
                 .accessibilityLabel("Settings")
             }
         }
-        .task(id: "\(kindRaw)-\(app.usesLiveClient)") {
+        .task(id: "\(kindRaw)-\(app.isLoggedIn)") {
             configure()
             await list.loadIfNeeded()
         }
@@ -84,20 +74,19 @@ struct HomeView: View {
     }
 
     private func configure() {
-        let key = "\(kind.rawValue)-\(app.usesLiveClient)"
+        let key = "\(kind.rawValue)-\(app.isLoggedIn)"
         guard configuredFor != key else { return }
         configuredFor = key
         let client = app.client
         let k = kind
         let cacheName = "home-\(k.rawValue)"
-        let live = app.usesLiveClient
         list.fetch = { cursor in
             let p = try await client.homeTimeline(k, cursor: cursor)
             return (p.items, p.bottomCursor, p.topCursor)
         }
-        list.onFirstPage = { items, _ in if live { TimelineDiskCache.save(items, name: cacheName) } }
+        list.onFirstPage = { items, _ in TimelineDiskCache.save(items, name: cacheName) }
         list.update { $0.removeAll() }
-        if live { list.seed(TimelineDiskCache.load(name: cacheName)) }
+        list.seed(TimelineDiskCache.load(name: cacheName))
     }
 }
 

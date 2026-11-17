@@ -180,14 +180,6 @@ final class ClientTests: XCTestCase {
         XCTAssertTrue(scripts.contains("https://abs.twimg.com/responsive-web/client-web/bundle.Home.0123456789abcdefa.js"))
         XCTAssertEqual(EndpointDiscovery.featureDefaults(html), ["f1": true, "f2": false])
     }
-
-    func testMockClientWorks() async throws {
-        let c = MockXClient(latencyMs: 0)
-        let home = try await c.homeTimeline(.forYou, cursor: nil)
-        XCTAssertFalse(home.items.isEmpty)
-        let n = try await c.notifications(.all, cursor: nil)
-        XCTAssertEqual(n.notifications.count, 3)
-    }
 }
 
 actor Counter {

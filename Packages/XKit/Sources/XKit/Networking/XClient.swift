@@ -15,8 +15,7 @@ public enum SearchProduct: String, Sendable, CaseIterable {
     case top = "Top", latest = "Latest", people = "People", media = "Media"
 }
 
-/// Everything the UI needs from X. `LiveXClient` talks to x.com, `MockXClient`
-/// serves fixture JSON so the UI can run without a network.
+/// Everything the UI needs from X. `LiveXClient` talks to x.com.
 public protocol XClient: Sendable {
     func homeTimeline(_ kind: HomeKind, cursor: String?) async throws -> TimelinePage
     func tweetDetail(id: String, cursor: String?) async throws -> ThreadPage

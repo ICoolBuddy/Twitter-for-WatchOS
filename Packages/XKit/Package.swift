@@ -10,7 +10,7 @@ let package = Package(
     targets: [
         .target(
             name: "XKit",
-            resources: [.copy("Resources/endpoints.json"), .copy("Resources/Mock")]
+            resources: [.copy("Resources/endpoints.json")]
         ),
         .testTarget(
             name: "XKitTests",
