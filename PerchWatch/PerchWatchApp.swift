@@ -132,7 +132,6 @@ struct RootPager: View {
                 HomeView(kind: .forYou, isActive: page == 1)
                     .frame(width: w)
                     .disabled(page != 1)
-                    .layoutProbe("page", .green)
                 HomeView(kind: .following, isActive: page == 2)
                     .frame(width: w)
                     .disabled(page != 2)
@@ -148,7 +147,6 @@ struct RootPager: View {
         // at the top and bottom, and ignoring the safe area removed the
         // scroll view's insets (first post under the clock). The neighbouring
         // pages sit outside the display anyway, so nothing needs clipping.
-        .layoutProbe("pager", .red)
         .background(Color.black)
         // One glow for the whole pager (not per page), so a refresh that is
         // still running stays visible after swiping to the other feed or the menu.
