@@ -26,9 +26,18 @@ struct MenuView: View {
 
                 Section {
                     NavigationLink(value: Route.notifications) {
-                        Label("Notifications", systemImage: "bell")
+                        HStack {
+                            Label("Notifications", systemImage: "bell")
+                            Spacer(minLength: 2)
+                            if app.badge.notifications > 0 {
+                                Text(app.badge.notifications > 99 ? "99+" : "\(app.badge.notifications)")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 6).padding(.vertical, 1)
+                                    .background(Color.blue, in: Capsule())
+                            }
+                        }
                     }
-                    .badge(app.badge.notifications)
 
                     NavigationLink(value: Route.likes) {
                         Label("Likes", systemImage: "heart")

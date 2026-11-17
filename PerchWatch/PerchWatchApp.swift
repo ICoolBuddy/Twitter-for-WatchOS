@@ -1,8 +1,10 @@
 import SwiftUI
+import WatchKit
 import XKit
 
 @main
 struct PerchWatchApp: App {
+    @WKApplicationDelegateAdaptor(PerchWatchDelegate.self) private var delegate
     @StateObject private var app = AppModel.shared
     @StateObject private var sync = WatchSync.shared
     @Environment(\.scenePhase) private var scenePhase
@@ -28,10 +30,7 @@ struct PerchWatchApp: App {
             default: break
             }
         }
-        // ~every 30 min (watchOS decides); feed + badge + complication. See BackgroundRefresh.swift.
-        .backgroundTask(.appRefresh) {
-            await BackgroundRefresh.handle()
-        }
+
     }
 }
 
@@ -119,5 +118,22 @@ struct OnboardingView: View {
             .padding(.horizontal, 4)
         }
         .navigationTitle("Welcome")
+    }
+}
+
+/// Background app refresh (~every 30 min, watchOS decides): feed cache, badge and
+/// complication. See BackgroundRefresh.swift.
+final class PerchWatchDelegate: NSObject, WKApplicationDelegate {
+    func handle(_ backgroundTasks: Set<WKRefreshBackgroundTask>) {
+        for task in backgroundTasks {
+            if let refresh = task as? WKApplicationRefreshBackgroundTask {
+                Task { @MainActor in
+                    await BackgroundRefresh.handle()
+                    refresh.setTaskCompletedWithSnapshot(false)
+                }
+            } else {
+                task.setTaskCompletedWithSnapshot(false)
+            }
+        }
     }
 }
