@@ -56,9 +56,9 @@ every 15 minutes; promoted content not requested; nothing automated.
 
 ## Milestones
 
-1. **CI → IPA** with iOS app + embedded Watch app (arm64 + arm64_32), verification step. ← *in progress*
-2. Login (WKWebView + manual paste), Keychain, WatchConnectivity sync, settings, debug log.
-3. Home timeline read-only on Watch (For You / Following, pagination, refresh, images).
+1. ✅ **CI → IPA** with iOS app + embedded Watch app (arm64 + arm64_32), verification step. (CI green 2026-11-17; awaiting hardware install test)
+2. ✅ (code, CI) Login (WKWebView + manual paste), Keychain, WatchConnectivity sync, settings, debug log. Awaiting hardware test.
+3. ✅ (code, CI) Home timeline read-only on Watch (For You / Following, pagination, refresh, images, post detail). Awaiting hardware test.
 4. Actions: like, repost, bookmark, reply, new post (optimistic + rollback).
 5. Remaining MVP: notifications + badge, profile + follow, search (posts/users), post detail.
 6. Stretch: bookmarks list, video, DMs, complication, offline cache.
@@ -70,3 +70,11 @@ every 15 minutes; promoted content not requested; nothing automated.
 - The legacy responsive-web app is being phased out route by route. When it disappears
   completely, Perch will need to move to x-web Relay ops on `api.x.com` (different response shapes).
   `EndpointDiscovery` will then fail loudly ("No GraphQL operations found") rather than silently.
+
+## Keeping endpoints fresh
+
+`python3 scripts/update_endpoints.py` rewrites both `endpoints.json` copies from x.com's public
+bundles (stdlib only, no account). Commit the result; if the app's remote override URL points at
+the raw file on GitHub, the apps pick it up on the next *Refresh endpoints* without reinstalling.
+(An automatic weekly GitHub Action that commits the file was considered but not added; it can be
+added on request.)

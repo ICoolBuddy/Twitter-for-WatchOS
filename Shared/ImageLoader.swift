@@ -2,6 +2,7 @@ import Foundation
 import ImageIO
 import SwiftUI
 import CoreGraphics
+import XKit
 
 /// Memory-conscious image loading: downloads with a plain URLSession (no cookies),
 /// decodes with ImageIO downsampling to the display size, caches decoded CGImages in
