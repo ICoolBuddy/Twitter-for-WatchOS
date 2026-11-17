@@ -19,6 +19,12 @@ struct HomeView: View {
     @State private var pullProgress: CGFloat = 0
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
+    /// Ids of the rows currently on screen; the hand double-tap scrolls from the
+    /// topmost one. Cheap: a couple of entries change per swipe, not per frame.
+    @State private var visibleIDs: Set<String> = []
+
+    /// How many posts a hand double-tap advances (≈ two screens of normal posts).
+    private static let pinchStep = 4
 
     private var taskKey: String {
         "\(kind.rawValue)-\(app.isLoggedIn)-\(app.activeAccountId ?? "none")"
@@ -47,6 +53,9 @@ struct HomeView: View {
             .pullToRefresh(isRefreshing: list.isRefreshing, progress: $pullProgress) {
                 await refresh(proxy, merge: false)
             }
+            .overlay(alignment: .bottomTrailing) {
+                pinchButton(proxy)
+            }
             .task(id: taskKey) {
                 configure()
                 await start(proxy)
@@ -74,6 +83,9 @@ struct HomeView: View {
                                      onOpenProfile: { profileTarget = ProfileTarget(user: $0) },
                                      onMedia: { mediaTarget = $0 })
                         .onAppear { list.loadMoreIfNeeded(current: item) }
+                        .onScrollVisibilityChange { isVisible in
+                            if isVisible { visibleIDs.insert(item.id) } else { visibleIDs.remove(item.id) }
+                        }
                     if item.id != list.items.last?.id { PostSeparator() }
                 }
                 .id(item.id)
@@ -149,6 +161,38 @@ struct HomeView: View {
         try? await Task.sleep(nanoseconds: 60_000_000)
         guard !list.items.isEmpty else { return }
         proxy.scrollTo(list.items[0].id, anchor: .top)
+    }
+
+    /// Hand double-tap (pinch). Claiming the shortcut replaces the system's
+    /// one-screen scroll, which felt too short: this jumps `pinchStep` posts,
+    /// about two screens, from the topmost visible post.
+    private func pinchButton(_ proxy: ScrollViewProxy) -> some View {
+        Button {
+            scrollFurther(proxy)
+        } label: {
+            Color.clear
+        }
+        .buttonStyle(.plain)
+        .frame(width: 1, height: 1)
+        // Barely-there rather than fully transparent: the system can treat a
+        // zero-opacity view as hidden and drop the gesture shortcut.
+        .opacity(0.01)
+        .accessibilityHidden(true)
+        .handGestureShortcut(.primaryAction)
+    }
+
+    private func scrollFurther(_ proxy: ScrollViewProxy) {
+        guard !list.items.isEmpty else { return }
+        let anchor = list.items.firstIndex { visibleIDs.contains($0.id) } ?? 0
+        let target = min(anchor + Self.pinchStep, list.items.count - 1)
+        guard target > anchor else { return }
+        withAnimation(.easeOut(duration: 0.28)) {
+            proxy.scrollTo(list.items[target].id, anchor: .top)
+        }
+        // Near the end now: ask for the next page while the animation runs.
+        if target >= list.items.count - 3 {
+            list.loadMoreIfNeeded(current: list.items[target])
+        }
     }
 }
 

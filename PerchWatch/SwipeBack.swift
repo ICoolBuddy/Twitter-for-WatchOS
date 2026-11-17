@@ -24,8 +24,13 @@ struct SwipeBack: ViewModifier {
                         let dx = value.translation.width
                         let go = enabled && dx > 55
                             && abs(dx) > abs(value.translation.height) * 1.8
-                        withAnimation(.easeOut(duration: 0.2)) { offsetX = 0 }
-                        if go { dismiss() }
+                        if go {
+                            // Do not slide back to 0 first: let the pop continue
+                            // from where the finger left the screen.
+                            dismiss()
+                        } else {
+                            withAnimation(.easeOut(duration: 0.2)) { offsetX = 0 }
+                        }
                     }
             )
     }
