@@ -252,6 +252,8 @@ struct AccountPicker: View {
                     .foregroundStyle(.secondary)
             }
             .navigationTitle("Accounts")
+            // Swiping right closes the picker, like the other screens.
+            .swipeBack()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { finish() }

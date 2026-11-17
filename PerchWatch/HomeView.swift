@@ -270,11 +270,11 @@ enum DisplayShape {
     }
 }
 
-/// Loading look: a rainbow ring glowing around the screen edge (Pigeon-style).
-/// It brightens as a pull/crown turn fills up; while the feed loads it pulses
-/// and its colours flow around the screen. There is no progress text.
+/// Loading look: a thin ring around the screen edge (Pigeon-style). It
+/// brightens as a pull/crown turn fills up and pulses softly while the feed
+/// loads. There is no progress text.
 ///
-/// Drawn as plain gradient strokes (no full-screen blur, which is costly on the
+/// Drawn as one plain stroke (no full-screen blur, which is costly on the
 /// Watch GPU). The loading animation lives in its own subview that is removed
 /// when loading ends, so it stops for good instead of leaking a repeat-forever
 /// animation into the feed's layout.
@@ -298,39 +298,25 @@ struct EdgeGlow: View {
     }
 }
 
-/// Pulses (brightness + a slight breathing width) and rotates the hues.
+/// A gentle opacity pulse: the cheapest animation there is (no gradients,
+/// hue rotation or scaling, which made the ring stutter on the Watch).
 private struct LoadingGlow: View {
-    @State private var hue: Double = 0
+    @State private var bright = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GlowShape()
-            .hueRotation(.degrees(hue))
-            .animation(reduceMotion ? nil : .linear(duration: 2.4).repeatForever(autoreverses: false), value: hue)
-            .phaseAnimator([false, true]) { content, bright in
-                content
-                    .opacity(bright ? 0.95 : 0.35)
-                    .scaleEffect(bright ? 1 : 0.985)
-            } animation: { _ in .easeInOut(duration: 0.9) }
-            .onAppear { if !reduceMotion { hue = 360 } }
+            .opacity(bright ? 0.8 : 0.25)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
+                       value: bright)
+            .onAppear { bright = true }
     }
 }
 
+/// One thin white ring inside the display's rounded corners.
 private struct GlowShape: View {
-    private static let rainbow = AngularGradient(
-        colors: [.red, .orange, .yellow, .green, .cyan, .blue, .purple, .pink, .red],
-        center: .center)
-
     var body: some View {
-        ZStack {
-            // Both strokes sit fully inside a shape with the display's own corner
-            // radius, so no part of the ring falls into the clipped corners.
-            RoundedRectangle(cornerRadius: DisplayShape.cornerRadius, style: .continuous)
-                .strokeBorder(Self.rainbow, lineWidth: 7)
-                .opacity(0.35)
-            RoundedRectangle(cornerRadius: max(0, DisplayShape.cornerRadius - 2), style: .continuous)
-                .strokeBorder(Self.rainbow, lineWidth: 2)
-                .padding(2)
-        }
+        RoundedRectangle(cornerRadius: DisplayShape.cornerRadius, style: .continuous)
+            .strokeBorder(Color.white, lineWidth: 2)
     }
 }

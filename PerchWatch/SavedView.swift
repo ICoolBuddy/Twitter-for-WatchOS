@@ -44,7 +44,8 @@ struct SavedView: View {
         .background(Color.black)
         .navigationTitle("Saved")
         .swipeBack()
-        .sheet(item: $selected) { post in
+        // Pushed, not a sheet: swipe right goes back like everywhere else.
+        .navigationDestination(item: $selected) { post in
             SavedDetailView(post: post)
         }
     }
@@ -150,8 +151,10 @@ private struct SavedDetailView: View {
                     dismiss()
                 } label: {
                     Text("Remove from saved")
-                        .frame(maxWidth: .infinity)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
+                .frame(maxWidth: .infinity)
                 .padding(.top, 4)
             }
             .padding(.horizontal, Metrics.horizontalPadding)
@@ -160,11 +163,7 @@ private struct SavedDetailView: View {
         .crownScrollFocus()
         .background(Color.black)
         .navigationTitle("Saved post")
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Close") { dismiss() }
-            }
-        }
+        .swipeBack()
         .onAppear {
             if let name = post.videoFile,
                let url = SavedStore.shared.fileURL(name),

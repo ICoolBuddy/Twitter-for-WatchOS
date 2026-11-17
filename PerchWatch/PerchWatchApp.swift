@@ -105,19 +105,34 @@ struct RootPager: View {
     /// The feed page to return to from the menu (1 = For You, 2 = Following).
     @State private var lastFeed = 1
     @State private var didStart = false
+    /// Live horizontal finger offset while swiping between pages.
+    @State private var dragX: CGFloat = 0
+    /// The current drag was recognised as a horizontal page swipe.
+    @State private var swiping = false
 
+    // A hand-rolled pager instead of `TabView(.page)`: a page-style TabView
+    // inside the root NavigationStack rendered a black screen after a pushed
+    // screen (Bookmarks, Notifications…) was popped with a swipe. Three pages
+    // side by side, moved by offset; vertical scrolling inside them is left
+    // alone (only clearly horizontal drags page).
     var body: some View {
-        TabView(selection: $page) {
-            MenuView(isActive: page == 0, onPick: { kind in
-                goFeed(kind)
-            })
-            .tag(0)
-            HomeView(kind: .forYou, isActive: page == 1)
-                .tag(1)
-            HomeView(kind: .following, isActive: page == 2)
-                .tag(2)
+        GeometryReader { geo in
+            let w = geo.size.width
+            HStack(spacing: 0) {
+                MenuView(isActive: page == 0, onPick: { kind in
+                    goFeed(kind)
+                })
+                .frame(width: w)
+                HomeView(kind: .forYou, isActive: page == 1)
+                    .frame(width: w)
+                HomeView(kind: .following, isActive: page == 2)
+                    .frame(width: w)
+            }
+            .frame(width: w, alignment: .leading)
+            .offset(x: -CGFloat(page) * w + dragX)
+            .simultaneousGesture(pagerDrag(width: w))
         }
-        .tabViewStyle(.page(indexDisplayMode: .never))
+        .clipped()
         .background(Color.black)
         // One glow for the whole pager (not per page), so a refresh that is
         // still running stays visible after swiping to the other feed or the menu.
@@ -159,6 +174,33 @@ struct RootPager: View {
     private func goFeed(_ kind: HomeKind) {
         kindRaw = kind.rawValue
         go(kind == .following ? 2 : 1)
+    }
+
+    private func pagerDrag(width w: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 15)
+            .onChanged { value in
+                let dx = value.translation.width
+                let dy = value.translation.height
+                if !swiping {
+                    guard abs(dx) > abs(dy) * 1.5 else { return }
+                    swiping = true
+                }
+                // Rubber band past the first and last page.
+                let atEdge = (page == 0 && dx > 0) || (page == 2 && dx < 0)
+                dragX = atEdge ? dx * 0.25 : dx
+            }
+            .onEnded { value in
+                guard swiping else { return }
+                swiping = false
+                let travel = value.predictedEndTranslation.width
+                var target = page
+                if travel < -w * 0.35, page < 2 { target += 1 }
+                if travel > w * 0.35, page > 0 { target -= 1 }
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+                    page = target
+                    dragX = 0
+                }
+            }
     }
 
     private func go(_ target: Int) {

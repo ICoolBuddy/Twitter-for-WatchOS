@@ -10,7 +10,7 @@ import XKit
 /// background task and appear as they land.
 @MainActor
 final class SavedStore: ObservableObject {
-    struct SavedPost: Codable, Identifiable, Equatable {
+    struct SavedPost: Codable, Identifiable, Hashable {
         var tweet: XTweet
         var savedAt: Date
         var avatarFile: String?
