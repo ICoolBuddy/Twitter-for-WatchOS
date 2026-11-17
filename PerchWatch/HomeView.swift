@@ -14,9 +14,9 @@ struct HomeView: View {
     @StateObject private var list = PagedList<TimelineItem>(maxItems: 200, fetch: { _ in ([], nil, nil) })
     @State private var configuredFor: String?
     @State private var startedFor: String?
-    /// Scroll position. Set to the new first item after a refresh so a stale id
-    /// never leaves the feed blank.
-    @State private var scrollID: String?
+    /// False once the reader scrolls away from the top. A refresh that lands
+    /// afterwards must not replace the list under them (that jumped the feed).
+    @State private var atTop = true
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
 
@@ -27,31 +27,39 @@ struct HomeView: View {
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                content
+        // `ScrollViewReader` instead of `.scrollPosition(id:)`: that binding is
+        // rewritten by the system on every scroll and re-applied on every list
+        // update, so the feed jumped back to a stale post after refreshes and
+        // while pages loaded. We only scroll explicitly, once, when a refresh
+        // has brought a new first post.
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    content
+                }
+                .padding(.horizontal, Metrics.horizontalPadding)
             }
-            .scrollTargetLayout()
-            .padding(.horizontal, Metrics.horizontalPadding)
+            .background(Color.black)
+            .pullToRefresh(isRefreshing: list.isRefreshing, atTop: $atTop) { await refresh(proxy) }
+            // Fixed height: the status line appears and disappears as pages load,
+            // and a safe-area inset that changes height moves the whole feed.
+            .safeAreaInset(edge: .top, spacing: 0) {
+                LoadingStatusLine(active: (list.isRefreshing || list.isLoading) && !list.isEmpty)
+                    .frame(height: 14)
+            }
+            .task(id: taskKey) {
+                configure()
+                await start(proxy)
+            }
+            .postPresentation(profile: $profileTarget, media: $mediaTarget)
+            .onDisappear { list.cancel() }
         }
-        .scrollPosition(id: $scrollID, anchor: .top)
-        .background(Color.black)
-        .pullToRefresh(isRefreshing: list.isRefreshing) { await refresh() }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            LoadingStatusLine(active: (list.isRefreshing || list.isLoading) && !list.isEmpty)
-        }
-        .task(id: taskKey) {
-            configure()
-            await start()
-        }
-        .postPresentation(profile: $profileTarget, media: $mediaTarget)
-        .onDisappear { list.cancel() }
     }
 
     @ViewBuilder
     private var content: some View {
         if let e = list.error, list.isEmpty {
-            ErrorStateView(error: e) { await refresh() }
+            ErrorStateView(error: e) { await list.refresh() }
                 .padding(.vertical, 16)
         } else if list.isEmpty && list.isLoading {
             ProgressView()
@@ -99,7 +107,6 @@ struct HomeView: View {
         guard configuredFor != key else { return }
         configuredFor = key
         list.reset()
-        scrollID = nil
 
         let client = app.client
         let k = kind
@@ -120,22 +127,26 @@ struct HomeView: View {
     /// Show the cached feed immediately; only go to the network when
     /// "Refresh when opening the app" is on, or when there is no cache at all.
     /// Runs once per account/kind so closing a sheet does not re-fetch.
-    private func start() async {
+    private func start(_ proxy: ScrollViewProxy) async {
         guard startedFor != taskKey else { return }
         startedFor = taskKey
         if list.isEmpty {
-            await refresh()
+            await refresh(proxy)
         } else if autoRefreshOnOpen {
-            await refresh()
+            await refresh(proxy)
         }
     }
 
-    private func refresh() async {
-        // Drop the stale item id first: if it disappears during the refresh the
-        // scroll view can end up blank. Then pin to the new first post.
-        scrollID = nil
-        await list.refresh()
-        scrollID = list.items.first?.id
+    private func refresh(_ proxy: ScrollViewProxy) async {
+        await list.refresh(applyIf: { atTop })
+        // Only follow the new first post when the reader is still at the top
+        // (pull-to-refresh, or the first load). If they already scrolled, the
+        // list was kept as-is above and there is nothing to move.
+        guard atTop, !list.items.isEmpty else { return }
+        // The list has to lay out its first row before `scrollTo` can find it.
+        try? await Task.sleep(nanoseconds: 60_000_000)
+        guard atTop, !list.items.isEmpty else { return }
+        proxy.scrollTo(list.items[0].id, anchor: .top)
     }
 }
 

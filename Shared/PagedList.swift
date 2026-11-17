@@ -66,7 +66,11 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
         if items.isEmpty || (cursor == nil && !reachedEnd) { await refresh() }
     }
 
-    func refresh() async {
+    /// - Parameter shouldApply: asked *after* the page arrives. Return false when
+    ///   the reader has scrolled away meanwhile: the page then only refreshes the
+    ///   disk cache instead of replacing the content under the finger, which read
+    ///   as the feed jumping.
+    func refresh(applyIf shouldApply: @MainActor () -> Bool = { true }) async {
         loadTask?.cancel()
         generation += 1
         let gen = generation
@@ -78,7 +82,14 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
             let page = try await fetch(nil)
             try Task.checkCancellation()
             guard gen == generation else { return }
-            items = dedupe(page.items)
+            let fresh = dedupe(page.items)
+            guard shouldApply() else {
+                // Cache the new posts and count them as seen, but leave the list
+                // on screen untouched.
+                onFirstPage?(fresh, page.top)
+                return
+            }
+            items = fresh
             cursor = page.cursor
             topCursor = page.top
             reachedEnd = page.cursor == nil || page.items.isEmpty
@@ -120,11 +131,14 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
             let fresh = page.items.filter { !existing.contains($0.id) }
             items.append(contentsOf: fresh)
             if !fresh.isEmpty { onPage?(fresh) }
-            if items.count > maxItems { items.removeFirst(items.count - maxItems) }
             self.cursor = page.cursor
             topCursor = page.top ?? topCursor
             // Stop when the cursor stops moving or a page brings nothing new.
             reachedEnd = page.cursor == nil || page.cursor == cursor || fresh.isEmpty
+            // Never drop rows above the viewport while paging: removing leading
+            // items moves everything up and reads as the feed jumping. Instead stop
+            // paging at twice the window, which keeps memory bounded.
+            if items.count >= maxItems * 2 { reachedEnd = true }
         } catch is CancellationError {
         } catch {
             if gen == generation { self.error = XError.from(error) }
