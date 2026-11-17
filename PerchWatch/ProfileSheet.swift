@@ -33,6 +33,8 @@ struct ProfileSheet: View {
                     }
                 }
         }
+        // Swiping right leaves the profile sheet too.
+        .swipeBack()
     }
 }
 

@@ -7,7 +7,6 @@ import XKit
 /// the menu. Choosing a timeline (or switching account) swipes back to its feed.
 struct MenuView: View {
     @EnvironmentObject private var app: AppModel
-    @AppStorage(PerchSettings.homeKind) private var kindRaw = HomeKind.forYou.rawValue
 
     /// Switches the root pager to the feed page for that timeline.
     var onPick: (HomeKind) -> Void = { _ in }
@@ -18,11 +17,6 @@ struct MenuView: View {
         List {
             Section {
                 accountRow
-            }
-
-            Section("Timeline") {
-                kindRow(.forYou)
-                kindRow(.following)
             }
 
             Section {
@@ -126,27 +120,6 @@ struct MenuView: View {
         }
     }
 
-    private func kindRow(_ kind: HomeKind) -> some View {
-        Button {
-            // Set the stored kind here too: the checkmark must follow even if the
-            // pager takes a moment to swipe over.
-            kindRaw = kind.rawValue
-            onPick(kind)
-        } label: {
-            HStack {
-                Text(kind == .forYou ? "For You" : "Following")
-                Spacer(minLength: 2)
-                if kindRaw == kind.rawValue {
-                    Image(systemName: "checkmark")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity)
-    }
 }
 
 /// All accounts known on the Watch. Tapping one makes it active on this device,

@@ -9,20 +9,36 @@ struct MediaTarget: Identifiable {
     var id: String { media.map(\.id).joined(separator: ",") + "-\(startIndex)" }
 }
 
-/// Presents the profile sheet and the media viewer from any screen. Each screen
+/// App-wide full-screen media presentation. The viewer is drawn as an overlay at
+/// the root (`WatchRootView`) instead of a `fullScreenCover`, so it has no system
+/// close button: we draw our own and can hide it with the rest of the chrome.
+@MainActor
+final class MediaPresenter: ObservableObject {
+    static let shared = MediaPresenter()
+    @Published private(set) var target: MediaTarget?
+
+    func show(_ target: MediaTarget) { self.target = target }
+    func close() { target = nil }
+}
+
+/// Presents the profile sheet and routes media to the root overlay. Each screen
 /// owns its own state so sheets never fight over a presenter. Replies use
 /// `TextFieldLink` inside the action row, so there is no reply sheet.
 struct PostPresentation: ViewModifier {
     @Binding var profile: ProfileTarget?
     @Binding var media: MediaTarget?
 
+    @ObservedObject private var presenter = MediaPresenter.shared
+
     func body(content: Content) -> some View {
         content
             .sheet(item: $profile) { target in
                 ProfileSheet(target: target)
             }
-            .fullScreenCover(item: $media) { target in
-                MediaViewer(media: target.media, startIndex: target.startIndex)
+            .onChange(of: media?.id) { _, _ in
+                guard let target = media else { return }
+                media = nil
+                presenter.show(target)
             }
     }
 }

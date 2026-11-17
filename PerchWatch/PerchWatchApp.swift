@@ -46,16 +46,31 @@ struct PerchWatchApp: App {
 
 struct WatchRootView: View {
     @EnvironmentObject private var app: AppModel
+    @ObservedObject private var presenter = MediaPresenter.shared
 
     var body: some View {
-        if app.canBrowse {
-            NavigationStack {
-                RootPager()
-                    .navigationDestination(for: Route.self) { RouteView(route: $0) }
+        ZStack {
+            if app.canBrowse {
+                NavigationStack {
+                    RootPager()
+                        .navigationDestination(for: Route.self) { RouteView(route: $0) }
+                }
+            } else {
+                NavigationStack { OnboardingView() }
             }
-        } else {
-            NavigationStack { OnboardingView() }
+
+            // Full-screen media lives above the whole app: no system close
+            // button, and the clock can be hidden while it is open.
+            if let target = presenter.target {
+                MediaViewer(media: target.media, startIndex: target.startIndex,
+                            onClose: { presenter.close() })
+                    .transition(.opacity)
+                    .zIndex(1)
+                    .ignoresSafeArea()
+            }
         }
+        .animation(.easeInOut(duration: 0.18), value: presenter.target?.id)
+        ._statusBarHidden(presenter.target != nil)
     }
 }
 
@@ -69,6 +84,7 @@ struct RootPager: View {
     @State private var page = 1
     /// The feed page to return to from the menu (1 = For You, 2 = Following).
     @State private var lastFeed = 1
+    @State private var didStart = false
 
     var body: some View {
         TabView(selection: $page) {
@@ -94,6 +110,10 @@ struct RootPager: View {
             }
         }
         .onAppear {
+            // Only once: re-assigning the page every time the root comes back
+            // from a pushed screen made the pager flash black while it settled.
+            guard !didStart else { return }
+            didStart = true
             page = kindRaw == HomeKind.following.rawValue ? 2 : 1
             lastFeed = page
         }

@@ -5,22 +5,29 @@ import AVFoundation
 import Combine
 import XKit
 
-/// Full-screen media viewer, presented by the callers with `.fullScreenCover`:
-/// black background, swipe sideways between attachments (only when there is more
-/// than one), swipe down to close, photos zoom with the Digital Crown (drag to
-/// pan, single tap toggles 1×/2.5×) and start from the feed's decoded copy before
-/// upgrading to the full-size image, videos/GIFs start playing immediately on the
-/// lowest-bitrate MP4 and step up to better variants while they play.
+/// Full-screen media viewer, drawn as an overlay at the root (see
+/// `MediaPresenter`): black background, swipe sideways between attachments (only
+/// when there is more than one), swipe down to close, photos zoom with the
+/// Digital Crown and start from the feed's decoded copy, videos start playing
+/// immediately on a small MP4 and step up to better variants while they play.
+///
+/// The chrome (close button) hides itself after a second; tapping brings it back.
 struct MediaViewer: View {
     let media: [XMedia]
+    /// Dismiss handler for the root overlay presentation (`nil` inside a cover).
+    var onClose: (() -> Void)? = nil
+
     @Environment(\.dismiss) private var dismiss
     @State private var selection: Int
     /// The visible photo is zoomed: a downward drag pans instead of closing.
     @State private var zoomed = false
     @State private var dragDown: CGFloat = 0
+    @State private var controlsVisible = true
+    @State private var hideTask: Task<Void, Never>?
 
-    init(media: [XMedia], startIndex: Int) {
+    init(media: [XMedia], startIndex: Int, onClose: (() -> Void)? = nil) {
         self.media = media
+        self.onClose = onClose
         let start = media.isEmpty ? 0 : min(max(startIndex, 0), media.count - 1)
         _selection = State(initialValue: start)
     }
@@ -37,24 +44,32 @@ struct MediaViewer: View {
                 if media.count > 1 { counter }
             }
 
+            closeButton
             closeGesture
         }
         .background(Color.black)
         .simultaneousGesture(dismissDrag)
+        .onAppear { showControls() }
+        .onDisappear { hideTask?.cancel() }
     }
 
     @ViewBuilder
     private var activePage: some View {
         if media.count == 1 {
             // One attachment is not a pager: no sideways swipe at all.
-            MediaPage(media: media[0], isActive: true, zoomed: $zoomed)
+            MediaPage(media: media[0], isActive: true, zoomed: $zoomed,
+                      controlsVisible: $controlsVisible,
+                      touch: showControls, toggleControls: toggleControls)
                 .ignoresSafeArea()
         } else {
             TabView(selection: $selection) {
                 ForEach(media.indices, id: \.self) { index in
                     MediaPage(media: media[index],
                               isActive: selection == index,
-                              zoomed: selection == index ? $zoomed : .constant(false))
+                              zoomed: selection == index ? $zoomed : .constant(false),
+                              controlsVisible: $controlsVisible,
+                              touch: showControls,
+                              toggleControls: toggleControls)
                         .tag(index)
                 }
             }
@@ -81,8 +96,62 @@ struct MediaViewer: View {
         .accessibilityHidden(true)
     }
 
-    /// Swipe down to close (the system X stays too). Ignored while a photo is
-    /// zoomed, where the drag pans the image instead.
+    // MARK: Chrome
+
+    /// Our own close button (the overlay has no system one). Visible for a
+    /// moment, then it fades so the picture/video fills the screen.
+    private var closeButton: some View {
+        VStack {
+            HStack {
+                Button {
+                    close()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 28, height: 28)
+                        .background(Color.black.opacity(0.55), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close")
+                Spacer(minLength: 0)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 4)
+        .padding(.top, 2)
+        .opacity(controlsVisible ? 1 : 0)
+        .allowsHitTesting(controlsVisible)
+        .animation(.easeOut(duration: 0.2), value: controlsVisible)
+    }
+
+    private func showControls() {
+        hideTask?.cancel()
+        if !controlsVisible {
+            withAnimation(.easeOut(duration: 0.15)) { controlsVisible = true }
+        }
+        hideTask = Task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.25)) { controlsVisible = false }
+        }
+    }
+
+    private func hideControls() {
+        hideTask?.cancel()
+        hideTask = nil
+        withAnimation(.easeOut(duration: 0.25)) { controlsVisible = false }
+    }
+
+    private func toggleControls() {
+        if controlsVisible { hideControls() } else { showControls() }
+    }
+
+    private func close() {
+        if let onClose { onClose() } else { dismiss() }
+    }
+
+    /// Swipe down to close (ignored while a photo is zoomed: that drag pans).
     private var dismissDrag: some Gesture {
         DragGesture(minimumDistance: 20)
             .onChanged { value in
@@ -94,15 +163,14 @@ struct MediaViewer: View {
             .onEnded { _ in
                 let shouldClose = !zoomed && dragDown > 60
                 withAnimation(.easeOut(duration: 0.2)) { dragDown = 0 }
-                if shouldClose { dismiss() }
+                if shouldClose { close() }
             }
     }
 
-    /// `fullScreenCover` already draws the system close (X) button. This invisible
-    /// button only claims the hand double-tap so it closes the viewer too.
+    /// Hand double-tap closes the viewer too.
     private var closeGesture: some View {
         Button {
-            dismiss()
+            close()
         } label: {
             Color.clear
         }
@@ -128,23 +196,29 @@ private struct MediaPage: View {
     let media: XMedia
     let isActive: Bool
     @Binding var zoomed: Bool
+    @Binding var controlsVisible: Bool
+    let touch: () -> Void
+    let toggleControls: () -> Void
 
     var body: some View {
         switch media.type {
         case .photo:
-            MediaPhotoPage(media: media, zoomed: $zoomed)
+            MediaPhotoPage(media: media, zoomed: $zoomed, touch: touch)
         case .video, .gif:
-            MediaVideoPage(media: media, isActive: isActive)
+            MediaVideoPage(media: media, isActive: isActive,
+                           controlsVisible: $controlsVisible,
+                           touch: touch, toggleControls: toggleControls)
         }
     }
 }
 
 /// One photo page: fit inside the screen, crown zoom, drag to pan (clamped to the
 /// image so zooming out can never leave black around a corner), single tap
-/// toggles between 1× and 2.5× (centred).
+/// toggles between 1× and 2.5× (centred) and brings the close button back.
 private struct MediaPhotoPage: View {
     let media: XMedia
     @Binding var zoomed: Bool
+    let touch: () -> Void
 
     @State private var zoom: Double = 1
     @State private var offset: CGSize = .zero
@@ -170,7 +244,10 @@ private struct MediaPhotoPage: View {
                 .scaleEffect(zoom)
                 .offset(clamped(offset, in: geo.size))
                 .gesture(panGesture(in: geo.size), including: zoom > 1 ? GestureMask.all : GestureMask())
-                .onTapGesture { toggleZoom() }
+                .onTapGesture {
+                    touch()
+                    toggleZoom()
+                }
                 .onAppear { container = geo.size }
                 .onChange(of: geo.size) { _, size in container = size }
         }
@@ -238,15 +315,23 @@ private struct MediaPhotoPage: View {
     }
 }
 
-/// One video/GIF page. Playback starts immediately on the lowest-bitrate MP4 and
+/// One video/GIF page. Playback starts immediately on a small MP4 and
 /// `VideoPlayback` steps up to better variants while it plays (see that file).
-/// Until the first frame is up, the thumbnail and a thin buffer bar are shown.
+///
+/// The Digital Crown adjusts the volume while the video is clean; after a tap
+/// (which shows the play/pause button and the timestamp) it scrubs the video.
 private struct MediaVideoPage: View {
     let media: XMedia
     let isActive: Bool
+    @Binding var controlsVisible: Bool
+    let touch: () -> Void
+    let toggleControls: () -> Void
 
     @StateObject private var playback = VideoPlayback()
-    @State private var muted = false
+    @State private var crown = 0.0
+    @State private var lastCrown = 0.0
+    @State private var volumeHUD: Double?
+    @State private var volumeTask: Task<Void, Never>?
 
     var body: some View {
         ZStack {
@@ -260,15 +345,37 @@ private struct MediaVideoPage: View {
                 loadingOverlay
             }
 
-            controls
+            // Swallow taps: AVKit's own controls never appear, the chrome is ours.
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { toggleControls() }
+
+            if controlsVisible { controls }
+            if let volume = volumeHUD { volumeOverlay(volume) }
+        }
+        .focusable()
+        .digitalCrownRotation($crown, from: -100_000, through: 100_000, by: 1,
+                              sensitivity: .low, isContinuous: false,
+                              isHapticFeedbackEnabled: false)
+        .onChange(of: crown) { _, value in
+            let delta = value - lastCrown
+            lastCrown = value
+            guard abs(delta) > 0.01 else { return }
+            if controlsVisible {
+                playback.scrub(bySeconds: delta * 0.5)
+                touch()
+            } else {
+                playback.adjustVolume(by: Float(delta) * 0.02)
+                showVolume(playback.volume)
+            }
         }
         .onAppear { if isActive { playback.start(media) } }
-        .onDisappear { playback.teardown() }
+        .onDisappear {
+            playback.teardown()
+            volumeTask?.cancel()
+        }
         .onChange(of: isActive) { _, active in
             if active { playback.start(media) } else { playback.stop() }
-        }
-        .onChange(of: muted) { _, value in
-            playback.setMuted(value)
         }
         .onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification)) { note in
             guard let item = note.object as? AVPlayerItem,
@@ -277,6 +384,7 @@ private struct MediaVideoPage: View {
                 playback.replay()
             } else {
                 playback.markEnded()
+                touch()
             }
         }
         .accessibilityLabel(media.altText ?? (media.type == .gif ? "GIF" : "Video"))
@@ -322,52 +430,100 @@ private struct MediaVideoPage: View {
         return "Buffering \(Int((playback.buffered * 100).rounded()))%"
     }
 
-    /// Mute toggle (top-right, opposite the system close button) and a replay
-    /// button once a video has ended. GIFs just loop.
+    /// Play/pause in the middle and the timestamp + position bar at the bottom.
     private var controls: some View {
         ZStack {
-            if playback.endedFlag, media.type != .gif {
-                Button {
-                    playback.replay()
-                } label: {
-                    Image(systemName: "arrow.counterclockwise")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .padding(13)
-                        .background(Color.black.opacity(0.6), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Replay")
+            Button {
+                playback.togglePlayPause()
+                touch()
+            } label: {
+                Image(systemName: controlIcon)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 52, height: 52)
+                    .background(Color.black.opacity(0.55), in: Circle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel(playback.endedFlag ? "Replay" : (playback.isPlaying ? "Pause" : "Play"))
 
             VStack {
-                HStack(spacing: 4) {
-                    if !playback.quality.isEmpty {
-                        Text(playback.quality)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.8))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Color.black.opacity(0.5), in: Capsule())
-                    }
-                    Spacer(minLength: 2)
-                    Button {
-                        muted.toggle()
-                    } label: {
-                        Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(6)
-                            .background(Color.black.opacity(0.55), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(muted ? "Unmute" : "Mute")
-                }
                 Spacer(minLength: 0)
+                HStack(spacing: 6) {
+                    Text(Self.clock(playback.position))
+                    Spacer(minLength: 0)
+                    Text(Self.clock(playback.duration))
+                }
+                .font(.system(size: 10, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(.white.opacity(0.85))
+
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.25))
+                        Capsule()
+                            .fill(Color.white)
+                            .frame(width: geo.size.width * progressFraction)
+                    }
+                }
+                .frame(height: 2.5)
+                .padding(.top, 3)
             }
-            .padding(.top, 4)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 14)
         }
+    }
+
+    private var controlIcon: String {
+        if playback.endedFlag { return "arrow.counterclockwise" }
+        return playback.isPlaying ? "pause.fill" : "play.fill"
+    }
+
+    private var progressFraction: CGFloat {
+        guard playback.duration > 0 else { return 0 }
+        return CGFloat(min(1, max(0, playback.position / playback.duration)))
+    }
+
+    /// Small transient speaker bar while the crown changes the volume.
+    private func volumeOverlay(_ value: Double) -> some View {
+        VStack {
+            Spacer(minLength: 0)
+            HStack(spacing: 5) {
+                Image(systemName: value <= 0.001 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.25))
+                        Capsule()
+                            .fill(Color.white)
+                            .frame(width: geo.size.width * CGFloat(min(1, max(0, value))))
+                    }
+                }
+                .frame(width: 70, height: 3)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Color.black.opacity(0.6), in: Capsule())
+            .padding(.bottom, 34)
+        }
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+
+    private func showVolume(_ value: Float) {
+        volumeTask?.cancel()
+        volumeHUD = Double(value)
+        volumeTask = Task {
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.2)) { volumeHUD = nil }
+        }
+    }
+
+    private static func clock(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds > 0 else { return "0:00" }
+        let total = Int(seconds.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }
 

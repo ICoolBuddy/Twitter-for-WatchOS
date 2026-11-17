@@ -5,11 +5,12 @@ import XKit
 
 /// YouTube-style adaptive playback for a post's video.
 ///
-/// The lowest-bitrate MP4 is started immediately (so playback begins while the
-/// rest is still downloading — AVPlayer streams it), and while it plays we read
-/// the measured bitrate from the access log. When the measured rate comfortably
-/// covers a higher variant *and* the current one is buffered ahead, the player
-/// switches to it at the same position. GIFs have a single variant and just loop.
+/// Playback starts within a second on a small MP4 and streams it (AVPlayer keeps
+/// downloading while it plays). While it plays we read the measured bitrate from
+/// the access log and step up to better variants as soon as the link comfortably
+/// covers them, so the quality climbs instead of waiting for a huge download.
+/// The best level reached is remembered per post, so replaying (or reopening)
+/// starts where it left off instead of dropping back to the lowest.
 @MainActor
 final class VideoPlayback: ObservableObject {
     let player = AVPlayer()
@@ -18,9 +19,12 @@ final class VideoPlayback: ObservableObject {
     @Published private(set) var buffered: Double = 0
     /// True until the first frame is playing (thumbnail + bar are shown).
     @Published private(set) var loading = true
-    /// "SD" / "HD" — shows which variant is playing.
-    @Published private(set) var quality: String = ""
     @Published private(set) var failed: String?
+    @Published private(set) var endedFlag = false
+    /// Playback position / length, for the timestamp under the player.
+    @Published private(set) var position: Double = 0
+    @Published private(set) var duration: Double = 0
+    @Published private(set) var isPlaying = false
 
     private var levels: [XVideoVariant] = []
     private var level = 0
@@ -28,9 +32,15 @@ final class VideoPlayback: ObservableObject {
     private var mediaId: String?
     private var ticker: Task<Void, Never>?
     private var lastUpgrade = Date.distantPast
-    /// Switch up once every few seconds at most, and only with buffer in hand.
-    private static let upgradeCooldown: TimeInterval = 5
-    private static let minimumBufferAhead: Double = 4
+
+    /// Best level reached per post, for this app run.
+    private static var bestLevel: [String: Int] = [:]
+
+    /// Step up quickly: a little measured headroom is enough, and a short
+    /// cooldown lets a fast link climb several levels in the first seconds.
+    private static let upgradeCooldown: TimeInterval = 3
+    private static let upgradeHeadroom = 1.25
+    private static let minimumBufferAhead: Double = 2.5
 
     // MARK: Lifecycle
 
@@ -45,7 +55,8 @@ final class VideoPlayback: ObservableObject {
         loading = true
         buffered = 0
         failed = nil
-        level = 0
+        position = 0
+        duration = 0
         started = false
         lastUpgrade = .distantPast
         levels = media.variants
@@ -55,7 +66,13 @@ final class VideoPlayback: ObservableObject {
             failed = "Video unavailable"
             return
         }
-        load(level: 0)
+        // Never go back down to the worst variant once a better one has played:
+        // on a replay the picture starts where it ended up last time.
+        let remembered = Self.bestLevel[media.id] ?? 0
+        // Prefer a step above the very lowest when the ladder allows it, so even
+        // the first play is not a blurry 240p.
+        let preferred = levels.count >= 3 ? 1 : 0
+        load(level: min(max(remembered, preferred), levels.count - 1))
         player.play()
         startTicker()
     }
@@ -75,8 +92,18 @@ final class VideoPlayback: ObservableObject {
         loading = true
     }
 
+    // MARK: Controls
+
     func setMuted(_ muted: Bool) {
         player.isMuted = muted
+    }
+
+    func togglePlayPause() {
+        if player.timeControlStatus == .playing {
+            player.pause()
+        } else {
+            if endedFlag { replay() } else { player.play() }
+        }
     }
 
     func replay() {
@@ -85,21 +112,34 @@ final class VideoPlayback: ObservableObject {
         player.play()
     }
 
-    /// True once the video played to its end (view shows a replay button).
-    @Published private(set) var endedFlag = false
-
     func markEnded() {
         endedFlag = true
     }
+
+    /// Scrub by a number of seconds (positive = forward), clamped to the video.
+    func scrub(bySeconds seconds: Double) {
+        guard duration > 0 else { return }
+        endedFlag = false
+        let target = min(max(0, position + seconds), max(0, duration - 0.2))
+        let time = CMTime(seconds: target, preferredTimescale: 600)
+        position = target
+        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
+    /// Digital-Crown volume: the player's own gain, since the system volume is
+    /// not reachable from an app on watchOS.
+    func adjustVolume(by delta: Float) {
+        player.volume = min(1, max(0, player.volume + delta))
+    }
+
+    var volume: Float { player.volume }
 
     // MARK: Variant loading
 
     private func load(level index: Int) {
         guard levels.indices.contains(index) else { return }
         level = index
-        quality = Self.qualityLabel(levels[index])
-        let item = AVPlayerItem(url: levels[index].url)
-        player.replaceCurrentItem(with: item)
+        player.replaceCurrentItem(with: AVPlayerItem(url: levels[index].url))
     }
 
     private func upgrade(to index: Int) {
@@ -108,7 +148,7 @@ final class VideoPlayback: ObservableObject {
         let wasPlaying = player.timeControlStatus == .playing
         lastUpgrade = Date()
         level = index
-        quality = Self.qualityLabel(levels[index])
+        if let mediaId { Self.bestLevel[mediaId] = max(Self.bestLevel[mediaId] ?? 0, index) }
         player.replaceCurrentItem(with: AVPlayerItem(url: levels[index].url))
         player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
             guard let self, wasPlaying else { return }
@@ -136,14 +176,14 @@ final class VideoPlayback: ObservableObject {
             return
         }
 
-        let duration = item.duration.seconds
-        let position = player.currentTime().seconds
-        if duration.isFinite, duration > 0 {
-            let ranges = item.loadedTimeRanges.compactMap { $0.timeRangeValue }
-            let end = ranges
-                .map { CMTimeGetSeconds($0.start) + CMTimeGetSeconds($0.duration) }
-                .max() ?? 0
-            buffered = min(1, max(0, end / duration))
+        let length = item.duration.seconds
+        if length.isFinite, length > 0 { duration = length }
+        position = player.currentTime().seconds
+        isPlaying = player.timeControlStatus == .playing
+
+        if length.isFinite, length > 0 {
+            let end = bufferedSeconds(item)
+            buffered = min(1, max(0, end / length))
         }
 
         if player.timeControlStatus == .playing {
@@ -154,16 +194,16 @@ final class VideoPlayback: ObservableObject {
         }
 
         // Measured throughput of the stream (bits/s). Zero until the first
-        // access-log event, or for local files.
+        // access-log event.
         let observed = item.accessLog()?.events.last?.observedBitrate ?? 0
         guard observed > 0, levels.indices.contains(level + 1) else { return }
 
         let next = levels[level + 1]
         let needed = Double(next.bitrate ?? 0)
-        let bufferedAhead = max(0, bufferedSeconds(item) - position)
+        let ahead = max(0, bufferedSeconds(item) - position)
         guard needed > 0,
-              observed > needed * 1.6,
-              bufferedAhead > Self.minimumBufferAhead,
+              observed > needed * Self.upgradeHeadroom,
+              ahead > Self.minimumBufferAhead,
               Date().timeIntervalSince(lastUpgrade) > Self.upgradeCooldown
         else { return }
         upgrade(to: level + 1)
@@ -173,14 +213,5 @@ final class VideoPlayback: ObservableObject {
         item.loadedTimeRanges.compactMap { $0.timeRangeValue }
             .map { CMTimeGetSeconds($0.start) + CMTimeGetSeconds($0.duration) }
             .max() ?? 0
-    }
-
-    private static func qualityLabel(_ variant: XVideoVariant) -> String {
-        guard let bitrate = variant.bitrate, bitrate > 0 else { return "" }
-        switch bitrate {
-        case ..<400_000: return "SD"
-        case ..<1_200_000: return "HD"
-        default: return "FHD"
-        }
     }
 }
