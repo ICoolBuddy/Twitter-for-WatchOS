@@ -41,6 +41,7 @@ jobs:
       - name: XKit unit tests
         working-directory: Packages/XKit
         run: |
+          set +e
           swift test > test.log 2>&1; STATUS=$?
           tail -25 test.log
           echo "--- failures ---"
