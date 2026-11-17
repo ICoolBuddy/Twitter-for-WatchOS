@@ -19,9 +19,24 @@ struct MediaTarget: Identifiable {
 final class MediaPresenter: ObservableObject {
     static let shared = MediaPresenter()
     @Published private(set) var target: MediaTarget?
+    /// Set for a moment before the viewer goes away: its pages give up crown
+    /// focus first. A focused view that is simply removed leaves the crown
+    /// pointing nowhere (it only came back after a finger scroll).
+    @Published private(set) var closing = false
 
-    func show(_ target: MediaTarget) { self.target = target }
-    func close() { target = nil }
+    func show(_ target: MediaTarget) {
+        closing = false
+        self.target = target
+    }
+
+    func close() {
+        guard target != nil, !closing else { return }
+        closing = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            self.target = nil
+            self.closing = false
+        }
+    }
 }
 
 /// Presents the profile sheet and routes media to the root overlay. Each screen

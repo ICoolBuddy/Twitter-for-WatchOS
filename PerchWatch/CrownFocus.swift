@@ -8,6 +8,8 @@ import SwiftUI
 ///   viewer closed, focus did not return to the feed underneath;
 /// - swiping the root pager to another feed left focus on the page that had
 ///   just scrolled off screen.
+/// Apply it directly to the `ScrollView`/`List` (not to a wrapper such as
+/// `.background`), so the binding lands on the focusable view itself.
 /// This binds the scroll view to a `@FocusState` and claims it whenever the
 /// screen becomes the visible one: on appear, when its pager page becomes
 /// active, and when the media viewer closes.
@@ -38,9 +40,12 @@ struct CrownScrollFocus: ViewModifier {
     private func claim() {
         // Wait for the view that held focus (viewer, previous page) to finish
         // leaving; focusing during its removal animation does not stick.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            guard active, visible, presenter.target == nil else { return }
-            focused = true
+        // Twice: the second attempt covers a slow close/page animation.
+        for delay in [0.3, 0.8] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard active, visible, presenter.target == nil else { return }
+                if !focused { focused = true }
+            }
         }
     }
 }

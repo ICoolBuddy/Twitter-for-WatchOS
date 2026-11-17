@@ -233,6 +233,7 @@ private struct MediaPhotoPage: View {
     /// The crown zooms the photo on screen (with several attachments, focus
     /// used to stay on the first page).
     @FocusState private var crownFocused: Bool
+    @ObservedObject private var presenter = MediaPresenter.shared
 
     @State private var zoom: Double = 1
     @State private var offset: CGSize = .zero
@@ -269,6 +270,9 @@ private struct MediaPhotoPage: View {
         .focused($crownFocused)
         .onChange(of: isActive) { _, active in
             if active { DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { crownFocused = true } }
+        }
+        .onChange(of: presenter.closing) { _, closing in
+            if closing { crownFocused = false }
         }
         .digitalCrownRotation($zoom, from: 1, through: 5, by: 0.1,
                               sensitivity: .medium, isContinuous: false,
@@ -352,6 +356,7 @@ private struct MediaVideoPage: View {
 
     @StateObject private var playback = VideoPlayback()
     @FocusState private var crownFocused: Bool
+    @ObservedObject private var presenter = MediaPresenter.shared
     @State private var crown = 0.0
     @State private var lastCrown = 0.0
     @State private var volumeHUD: Double?
@@ -414,6 +419,9 @@ private struct MediaVideoPage: View {
             }
         }
         .onChange(of: controlsVisible) { _, _ in lastDetent = nil }
+        .onChange(of: presenter.closing) { _, closing in
+            if closing { crownFocused = false }
+        }
         .onAppear {
             if isActive {
                 playback.start(media, title: title, caption: caption)

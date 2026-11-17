@@ -93,8 +93,8 @@ struct PostDetailView: View {
             }
             .padding(.horizontal, Metrics.horizontalPadding)
         }
-        .background(Color.black)
         .crownScrollFocus()
+        .background(Color.black)
         .navigationTitle("Post")
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {

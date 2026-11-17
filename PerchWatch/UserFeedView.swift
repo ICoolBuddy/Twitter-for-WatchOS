@@ -48,8 +48,8 @@ struct UserFeedView: View {
             }
             .padding(.horizontal, Metrics.horizontalPadding)
         }
-        .background(Color.black)
         .crownScrollFocus()
+        .background(Color.black)
         .navigationTitle("@" + user.screenName)
         .pullToRefresh(isRefreshing: list.isRefreshing) { await list.refresh() }
         .task(id: taskKey) {

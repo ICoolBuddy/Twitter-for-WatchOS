@@ -56,8 +56,8 @@ struct HomeView: View {
                 }
                 .padding(.horizontal, Metrics.horizontalPadding)
             }
-            .background(Color.black)
             .crownScrollFocus(active: isActive)
+            .background(Color.black)
             // Loading look: a soft glow around the screen edge (Pigeon-style),
             // drawn once by `RootGlow` over the whole pager; this page reports
             // its pull progress and loading state to `FeedActivity`.
