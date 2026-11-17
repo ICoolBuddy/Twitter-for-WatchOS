@@ -1,6 +1,26 @@
+import Foundation
 import SwiftUI
 import WebKit
 import XKit
+
+/// Wipes the app's WKWebView website data (cookies included) so a new login never
+/// picks up the previous account's x.com/twitter.com session. The app's only web
+/// usage is X, so clearing the whole store is safe.
+@MainActor
+enum XLoginCookies {
+    static func clearAll() async {
+        await clear(store: WKWebsiteDataStore.default())
+    }
+
+    static func clear(store: WKWebsiteDataStore) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+                             modifiedSince: Date.distantPast) {
+                continuation.resume(returning: ())
+            }
+        }
+    }
+}
 
 /// Loads x.com/login in a non-persistent WKWebView. When the session cookies
 /// (`auth_token`, `ct0`) appear, they are handed back and the web data is discarded,
@@ -79,6 +99,10 @@ struct LoginWebView: UIViewRepresentable {
                 self.finished = true
                 self.parent.status = "Logged in."
                 self.parent.onCredentials(creds)
+                // Discard the web session now that the cookies are in the Keychain.
+                if let store = self.webView?.configuration.websiteDataStore {
+                    Task { @MainActor in await XLoginCookies.clear(store: store) }
+                }
             }
         }
     }
@@ -86,7 +110,8 @@ struct LoginWebView: UIViewRepresentable {
 
 struct LoginSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var status = "Loading x.com…"
+    @State private var status = "Clearing the previous session…"
+    @State private var preparing = true
     let onDone: (XCredentials) -> Void
 
     var body: some View {
@@ -98,15 +123,32 @@ struct LoginSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal)
                     .padding(.vertical, 6)
-                LoginWebView(onCredentials: { creds in
-                    onDone(creds)
-                    dismiss()
-                }, status: $status)
+                if preparing {
+                    VStack(spacing: 10) {
+                        ProgressView()
+                        Text("Clearing the previous X session…")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    LoginWebView(onCredentials: { creds in
+                        onDone(creds)
+                        dismiss()
+                    }, status: $status)
+                }
             }
             .navigationTitle("Log in to X")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            }
+            .task {
+                // Required before every new web login: never reuse the previous
+                // account's x.com/twitter.com session.
+                await XLoginCookies.clearAll()
+                status = "Loading x.com…"
+                preparing = false
             }
         }
     }
