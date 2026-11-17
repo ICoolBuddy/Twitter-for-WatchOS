@@ -25,13 +25,15 @@ struct WatchSettingsView: View {
                 }
             }
 
-            Section("Feed") {
+            Section {
                 Toggle("Refresh when opening", isOn: $autoRefreshOnOpen)
                 Picker("Text size", selection: $textSizeRaw) {
                     ForEach(PerchTextSize.allCases) { size in
                         Text(size.label).tag(size.rawValue)
                     }
                 }
+            } header: {
+                Text("Feed")
             } footer: {
                 Text("When off, the feed shows cached posts until you pull to refresh.")
             }
