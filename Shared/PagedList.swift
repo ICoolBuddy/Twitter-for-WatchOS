@@ -9,6 +9,8 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
 
     @Published private(set) var items: [Item] = []
     @Published private(set) var isLoading = false
+    /// True only while `refresh()` runs (not while loading further pages).
+    @Published private(set) var isRefreshing = false
     @Published private(set) var reachedEnd = false
     @Published var error: XError?
     @Published private(set) var topCursor: String?
@@ -38,8 +40,9 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
     func refresh() async {
         loadTask?.cancel()
         isLoading = true
+        isRefreshing = true
         error = nil
-        defer { isLoading = false }
+        defer { isLoading = false; isRefreshing = false }
         do {
             let page = try await fetch(nil)
             try Task.checkCancellation()

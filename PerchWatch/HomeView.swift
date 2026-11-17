@@ -13,6 +13,9 @@ struct HomeView: View {
 
     var body: some View {
         List {
+            if list.isRefreshing && !list.isEmpty {
+                PullToRefreshSpinnerRow()
+            }
             kindPicker
             if app.demoMode {
                 VStack(alignment: .leading, spacing: 4) {
@@ -44,28 +47,13 @@ struct HomeView: View {
             }
         }
         .navigationTitle(kind == .forYou ? "For You" : "Following")
-        .refreshable { await list.refresh() }
+        .pullToRefresh(isRefreshing: list.isRefreshing) { await list.refresh() }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 NavigationLink(value: Route.settings) {
                     Image(systemName: "gearshape")
                 }
                 .accessibilityLabel("Settings")
-            }
-            // watchOS draws no pull-to-refresh control for `.refreshable`, so offer a button.
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    Haptics.click()
-                    Task { await list.refresh() }
-                } label: {
-                    if list.isLoading && !list.isEmpty {
-                        ProgressView()
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                }
-                .disabled(list.isLoading)
-                .accessibilityLabel("Refresh")
             }
         }
         .task(id: "\(kindRaw)-\(app.usesLiveClient)") {
