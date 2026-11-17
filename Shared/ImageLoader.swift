@@ -299,6 +299,10 @@ struct RemoteImage: View {
     var placeholderURL: URL? = nil
     var maxPixel: Int = 300
     var contentMode: ContentMode = .fill
+    /// Lower-quality copy of the same picture, already decoded from the feed cache.
+    /// Shown in the first frame and kept until the full image arrives.
+    var fallbackURL: URL? = nil
+    var fallbackMaxPixel: Int = 300
 
     @State private var image: CGImage?
     @State private var placeholder: CGImage?
@@ -306,17 +310,23 @@ struct RemoteImage: View {
 
     private static let placeholderPixels = 200
 
-    init(url: URL?, placeholderURL: URL? = nil, maxPixel: Int = 300, contentMode: ContentMode = .fill) {
+    init(url: URL?, placeholderURL: URL? = nil, maxPixel: Int = 300, contentMode: ContentMode = .fill,
+         fallbackURL: URL? = nil, fallbackMaxPixel: Int = 300) {
         self.url = url
         self.placeholderURL = placeholderURL
         self.maxPixel = maxPixel
         self.contentMode = contentMode
-        _image = State(initialValue: url.flatMap {
-            ImageLoader.shared.cached($0, maxPixel: maxPixel)
-        })
+        self.fallbackURL = fallbackURL
+        self.fallbackMaxPixel = fallbackMaxPixel
+        _image = State(initialValue: Self.cached(url, maxPixel) ?? Self.cached(fallbackURL, fallbackMaxPixel))
         _placeholder = State(initialValue: placeholderURL.flatMap {
             ImageLoader.shared.cached($0, maxPixel: RemoteImage.placeholderPixels)
         })
+    }
+
+    private static func cached(_ url: URL?, _ maxPixel: Int) -> CGImage? {
+        guard let url else { return nil }
+        return ImageLoader.shared.cached(url, maxPixel: maxPixel)
     }
 
     var body: some View {
@@ -351,13 +361,16 @@ struct RemoteImage: View {
             image = nil
             return
         }
-        // The view starts with the cached image (see `init`); never blank it on
-        // appear, only replace it when the cache no longer has this URL/size.
+        // The view starts with a cached image (see `init`: the full one, or the
+        // feed-sized fallback); never blank it, only replace it when the full
+        // image has arrived.
         if let c = ImageLoader.shared.cached(url, maxPixel: maxPixel) {
             image = c
             return
         }
-        image = nil
+        if image == nil, let fallbackURL {
+            image = ImageLoader.shared.cached(fallbackURL, maxPixel: fallbackMaxPixel)
+        }
         do {
             image = try await ImageLoader.shared.load(url, maxPixel: maxPixel)
         } catch {

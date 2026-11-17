@@ -166,38 +166,53 @@ struct FeedPostView: View {
 
     // MARK: Text
 
-    /// Longer than 280 characters or about 8 lines (we cannot measure lines in
+    /// Longer than 500 characters or about 14 lines (we cannot measure lines in
     /// SwiftUI, so estimate from the character count per line).
     private var isLong: Bool {
-        if t.text.count > 280 { return true }
+        if t.text.count > 500 { return true }
         var lines = 0
         for line in t.text.components(separatedBy: "\n") {
-            lines += max(1, (line.count + 23) / 24)
+            lines += max(1, (line.count + 19) / 20)
         }
-        return lines > 8
+        return lines > 14
     }
 
     private var isClamped: Bool { clampLongText && isLong && !expanded }
 
     @ViewBuilder
     private var textBlock: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 4) {
             textView
             if isClamped {
-                Button {
-                    withAnimation(.easeOut(duration: 0.15)) { expanded = true }
-                } label: {
-                    Text("Show more")
-                        .font(.system(size: 13, weight: .semibold))
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity)
-                .foregroundStyle(Color.accentColor)
-                .accessibilityLabel("Show more of this post")
+                showMoreButton
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Small outlined capsule under a clamped post: the plain text button was
+    /// impossible to tell from a link.
+    private var showMoreButton: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.15)) { expanded = true }
+        } label: {
+            HStack(spacing: 3) {
+                Text("Show more")
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .overlay(
+                Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .accessibilityLabel("Show more of this post")
     }
 
     @ViewBuilder
@@ -217,7 +232,7 @@ struct FeedPostView: View {
             .font(bodyFont)
             .foregroundStyle(.primary)
             .multilineTextAlignment(.leading)
-            .lineLimit(isClamped ? 8 : nil)
+            .lineLimit(isClamped ? 14 : nil)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())

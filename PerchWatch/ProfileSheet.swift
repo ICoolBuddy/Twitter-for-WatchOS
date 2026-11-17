@@ -43,6 +43,7 @@ struct ProfileScreen: View {
     var body: some View {
         ProfileContent(target: target)
             .navigationTitle("Profile")
+            .swipeBack()
     }
 }
 

@@ -67,6 +67,7 @@ struct TimelineListView: View {
             await list.loadIfNeeded()
         }
         .postPresentation(profile: $profileTarget, media: $mediaTarget)
+        .swipeBack()
     }
 
     private var emptyText: String {

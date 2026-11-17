@@ -66,11 +66,10 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
         if items.isEmpty || (cursor == nil && !reachedEnd) { await refresh() }
     }
 
-    /// - Parameter shouldApply: asked *after* the page arrives. Return false when
-    ///   the reader has scrolled away meanwhile: the page then only refreshes the
-    ///   disk cache instead of replacing the content under the finger, which read
-    ///   as the feed jumping.
-    func refresh(applyIf shouldApply: @MainActor () -> Bool = { true }) async {
+    /// - Parameter merge: keep the posts already on screen (and their order) and
+    ///   only add the ones above them. Used by the automatic refresh on open so
+    ///   nothing is reordered or removed under a reader who already scrolled.
+    func refresh(merge: Bool = false) async {
         loadTask?.cancel()
         generation += 1
         let gen = generation
@@ -83,18 +82,18 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
             try Task.checkCancellation()
             guard gen == generation else { return }
             let fresh = dedupe(page.items)
-            guard shouldApply() else {
-                // Cache the new posts and count them as seen, but leave the list
-                // on screen untouched.
-                onFirstPage?(fresh, page.top)
-                return
+            if merge, !items.isEmpty {
+                let known = Set(items.map(\.id))
+                let added = fresh.filter { !known.contains($0.id) }
+                if !added.isEmpty { items.insert(contentsOf: added, at: 0) }
+            } else {
+                items = fresh
             }
-            items = fresh
             cursor = page.cursor
             topCursor = page.top
             reachedEnd = page.cursor == nil || page.items.isEmpty
-            onFirstPage?(items, page.top)
-            onPage?(items)
+            onFirstPage?(fresh, page.top)
+            onPage?(fresh)
         } catch is CancellationError {
         } catch {
             let e = XError.from(error)

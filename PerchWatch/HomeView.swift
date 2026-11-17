@@ -2,36 +2,34 @@ import Foundation
 import SwiftUI
 import XKit
 
-/// Home timeline, Parrot style: pure black, no platters, big 19 pt text,
-/// full-width media. Infinite scroll, pull to refresh, opens instantly from the
-/// on-disk cache. The menu lives one page to the right (see `RootPager`), which
-/// also owns the hamburger button.
+/// One home timeline, Parrot style: pure black, no platters, big 19 pt text,
+/// full-width media. Infinite scroll, pull- or crown-to-refresh, opens instantly
+/// from the on-disk cache. `RootPager` shows one of these per timeline (For You,
+/// Following) so swiping between them never reloads anything.
 struct HomeView: View {
+    let kind: HomeKind
+
     @EnvironmentObject private var app: AppModel
     @AppStorage(PerchSettings.autoRefreshOnOpen) private var autoRefreshOnOpen = true
-    @AppStorage(PerchSettings.homeKind) private var kindRaw = HomeKind.following.rawValue
 
     @StateObject private var list = PagedList<TimelineItem>(maxItems: 200, fetch: { _ in ([], nil, nil) })
     @State private var configuredFor: String?
     @State private var startedFor: String?
-    /// False once the reader scrolls away from the top. A refresh that lands
-    /// afterwards must not replace the list under them (that jumped the feed).
-    @State private var atTop = true
+    /// 0…1: how far a pull/crown turn is towards a refresh (drives `FeedStatusBar`).
+    @State private var pullProgress: CGFloat = 0
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
 
-    private var kind: HomeKind { HomeKind(rawValue: kindRaw) ?? .following }
-
     private var taskKey: String {
-        "\(kindRaw)-\(app.isLoggedIn)-\(app.activeAccountId ?? "none")"
+        "\(kind.rawValue)-\(app.isLoggedIn)-\(app.activeAccountId ?? "none")"
     }
 
     var body: some View {
         // `ScrollViewReader` instead of `.scrollPosition(id:)`: that binding is
         // rewritten by the system on every scroll and re-applied on every list
         // update, so the feed jumped back to a stale post after refreshes and
-        // while pages loaded. We only scroll explicitly, once, when a refresh
-        // has brought a new first post.
+        // while pages loaded. We only scroll explicitly, once, when the reader
+        // asks for a refresh.
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -40,12 +38,14 @@ struct HomeView: View {
                 .padding(.horizontal, Metrics.horizontalPadding)
             }
             .background(Color.black)
-            .pullToRefresh(isRefreshing: list.isRefreshing, atTop: $atTop) { await refresh(proxy) }
-            // Fixed height: the status line appears and disappears as pages load,
-            // and a safe-area inset that changes height moves the whole feed.
+            // Fixed height: the bar comes and goes, and a safe-area inset that
+            // changes height would move the whole feed.
             .safeAreaInset(edge: .top, spacing: 0) {
-                LoadingStatusLine(active: (list.isRefreshing || list.isLoading) && !list.isEmpty)
-                    .frame(height: 14)
+                FeedStatusBar(loading: (list.isRefreshing || list.isLoading) && !list.isEmpty,
+                              progress: pullProgress)
+            }
+            .pullToRefresh(isRefreshing: list.isRefreshing, progress: $pullProgress) {
+                await refresh(proxy, merge: false)
             }
             .task(id: taskKey) {
                 configure()
@@ -94,9 +94,10 @@ struct HomeView: View {
                 .foregroundStyle(.secondary)
             Text("No posts yet")
                 .font(.system(size: 15, weight: .semibold))
-            Text("Pull down to refresh.")
+            Text("Pull down or turn the crown to refresh.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 40)
@@ -131,53 +132,115 @@ struct HomeView: View {
         guard startedFor != taskKey else { return }
         startedFor = taskKey
         if list.isEmpty {
-            await refresh(proxy)
+            await refresh(proxy, merge: true)
         } else if autoRefreshOnOpen {
-            await refresh(proxy)
+            // Merge, so posts that are already on screen are never reordered or
+            // dropped: only new ones appear above them.
+            await refresh(proxy, merge: true)
         }
     }
 
-    private func refresh(_ proxy: ScrollViewProxy) async {
-        await list.refresh(applyIf: { atTop })
-        // Only follow the new first post when the reader is still at the top
-        // (pull-to-refresh, or the first load). If they already scrolled, the
-        // list was kept as-is above and there is nothing to move.
-        guard atTop, !list.items.isEmpty else { return }
+    private func refresh(_ proxy: ScrollViewProxy, merge: Bool) async {
+        await list.refresh(merge: merge)
+        // A refresh the reader asked for (pull / crown) brings them to the top;
+        // the silent one on open leaves the scroll position alone.
+        guard !merge, !list.items.isEmpty else { return }
         // The list has to lay out its first row before `scrollTo` can find it.
         try? await Task.sleep(nanoseconds: 60_000_000)
-        guard atTop, !list.items.isEmpty else { return }
+        guard !list.items.isEmpty else { return }
         proxy.scrollTo(list.items[0].id, anchor: .top)
     }
 }
 
-/// Slim "Loading posts · 85 KB/s" line shown while the feed refreshes or loads
-/// more. Polls the shared `TransferMonitor` every half second, only while active.
-struct LoadingStatusLine: View {
-    var active: Bool
+/// Slim status line under the navigation bar. It has a fixed height so showing
+/// and hiding it never moves the feed. Three states:
+/// - idle: invisible (space reserved),
+/// - pulling / turning the crown: a bar that fills towards the refresh,
+/// - loading: an indeterminate bar + the current download rate.
+struct FeedStatusBar: View {
+    let loading: Bool
+    var progress: CGFloat = 0
+
+    private var visible: Bool { loading || progress > 0.02 }
 
     var body: some View {
-        if active {
-            TimelineView(.periodic(from: Date(), by: 0.5)) { _ in
-                HStack(spacing: 5) {
-                    ProgressView()
-                        .scaleEffect(0.5)
-                        .frame(width: 12, height: 12)
-                    Text(label)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+        HStack(spacing: 6) {
+            bar
+            captionView
+        }
+        .frame(height: 14)
+        .opacity(visible ? 1 : 0)
+        .animation(.easeOut(duration: 0.15), value: visible)
+    }
+
+    /// The rate changes while loading, so poll it only then.
+    private var captionView: some View {
+        Group {
+            if loading {
+                TimelineView(.periodic(from: Date(), by: 0.5)) { _ in
+                    captionText
                 }
-                .frame(maxWidth: .infinity)
+            } else {
+                captionText
             }
-            .padding(.vertical, 2)
-            .accessibilityLabel("Loading posts")
         }
     }
 
-    private var label: String {
+    private var captionText: some View {
+        Text(caption)
+            .font(.system(size: 10, weight: .medium))
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .frame(width: 52, alignment: .trailing)
+    }
+
+    @ViewBuilder
+    private var bar: some View {
+        if loading {
+            IndeterminateBar()
+        } else {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.15))
+                    Capsule()
+                        .fill(progress >= 1 ? Color.accentColor : Color.secondary)
+                        .frame(width: geo.size.width * min(1, max(0, progress)))
+                }
+            }
+            .frame(height: 3)
+        }
+    }
+
+    private var caption: String {
+        guard loading else { return progress >= 1 ? "Release" : "" }
         let rate = TransferMonitor.shared.snapshot().bytesPerSecond
-        guard rate >= 512 else { return "Loading posts" }
-        return "Loading posts · " + TransferMonitor.formatRate(rate)
+        if rate >= 512 { return TransferMonitor.formatRate(rate) }
+        return "Loading"
+    }
+}
+
+/// A 3 pt capsule with a highlight sliding left ↔ right: the loading look shared
+/// with the video downloader.
+struct IndeterminateBar: View {
+    @State private var right = false
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.15))
+                Capsule()
+                    .fill(Color.white.opacity(0.9))
+                    .frame(width: max(10, geo.size.width * 0.32))
+                    .offset(x: right ? geo.size.width * 0.68 : 0)
+            }
+            .clipShape(Capsule())
+        }
+        .frame(height: 3)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                right = true
+            }
+        }
     }
 }

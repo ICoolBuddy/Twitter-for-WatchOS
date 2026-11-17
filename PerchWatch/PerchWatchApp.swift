@@ -59,40 +59,67 @@ struct WatchRootView: View {
     }
 }
 
-/// Two pages: the menu (0) and the feed (1). Swiping right on the feed reveals
-/// the menu; the hamburger button animates to it. Both share the root
+/// Three pages: Menu (0) · For You (1) · Following (2), starting on For You.
+/// Swiping right on For You reveals the menu, swiping left reveals Following;
+/// the hamburger button animates to the menu. Every page shares the root
 /// `NavigationStack`, so menu entries push over whichever page is showing.
-/// The toolbar lives here so the feed and the menu never both contribute one.
+/// The toolbar lives here so the pages never contribute one themselves.
 struct RootPager: View {
+    @AppStorage(PerchSettings.homeKind) private var kindRaw = HomeKind.forYou.rawValue
     @State private var page = 1
+    /// The feed page to return to from the menu (1 = For You, 2 = Following).
+    @State private var lastFeed = 1
 
     var body: some View {
         TabView(selection: $page) {
-            MenuView(onShowFeed: { showFeed() })
-                .tag(0)
-            HomeView()
+            MenuView(onPick: { kind in
+                goFeed(kind)
+            })
+            .tag(0)
+            HomeView(kind: .forYou)
                 .tag(1)
+            HomeView(kind: .following)
+                .tag(2)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
         .background(Color.black)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button {
-                    if page == 1 { showMenu() } else { showFeed() }
+                    if page == 0 { go(lastFeed) } else { go(0) }
                 } label: {
-                    Image(systemName: page == 1 ? "line.3.horizontal" : "chevron.left")
+                    Image(systemName: page == 0 ? "chevron.left" : "line.3.horizontal")
                 }
-                .accessibilityLabel(page == 1 ? "Menu" : "Back to feed")
+                .accessibilityLabel(page == 0 ? "Back to feed" : "Menu")
             }
+        }
+        .onAppear {
+            page = kindRaw == HomeKind.following.rawValue ? 2 : 1
+            lastFeed = page
+        }
+        // The page is the source of truth for the swipe; the stored kind follows
+        // it so the menu checkmark, background refresh and account switch agree.
+        .onChange(of: page) { _, value in
+            guard value != 0 else { return }
+            lastFeed = value
+            let kind = value == 2 ? HomeKind.following : HomeKind.forYou
+            if kindRaw != kind.rawValue { kindRaw = kind.rawValue }
+        }
+        // And a kind change from elsewhere (menu row, account switch) moves the pager.
+        .onChange(of: kindRaw) { _, value in
+            guard page != 0 else { return }
+            let target = value == HomeKind.following.rawValue ? 2 : 1
+            if page != target { go(target) }
         }
     }
 
-    private func showFeed() {
-        withAnimation(.easeInOut(duration: 0.2)) { page = 1 }
+    private func goFeed(_ kind: HomeKind) {
+        kindRaw = kind.rawValue
+        go(kind == .following ? 2 : 1)
     }
 
-    private func showMenu() {
-        withAnimation(.easeInOut(duration: 0.2)) { page = 0 }
+    private func go(_ target: Int) {
+        withAnimation(.easeInOut(duration: 0.2)) { page = target }
     }
 }
 
@@ -110,6 +137,8 @@ struct RouteView: View {
             ProfileScreen(target: ProfileTarget(screenName: screenName))
         case .userId(let id):
             ProfileScreen(target: ProfileTarget(userId: id))
+        case .userFeed(let user):
+            UserFeedView(user: user)
         case .profileMe:
             if let id = app.activeAccount?.user?.id ?? app.viewer?.id {
                 ProfileScreen(target: ProfileTarget(userId: id))

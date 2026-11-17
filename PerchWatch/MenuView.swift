@@ -1,16 +1,16 @@
 import SwiftUI
 import XKit
 
-/// The menu page: one page to the right of the feed in the root `TabView`, and
-/// the hamburger button switches to it. It uses the root `NavigationStack`, so
-/// Settings, Likes, Bookmarks and Notifications push over the menu. Choosing a
-/// timeline (or switching account) returns to the feed page.
+/// The menu page, left of the feeds in the root `TabView`; the hamburger button
+/// switches to it and swiping right on a feed reveals it. It uses the root
+/// `NavigationStack`, so Settings, Likes, Bookmarks and Notifications push over
+/// the menu. Choosing a timeline (or switching account) swipes back to its feed.
 struct MenuView: View {
     @EnvironmentObject private var app: AppModel
-    @AppStorage(PerchSettings.homeKind) private var kindRaw = HomeKind.following.rawValue
+    @AppStorage(PerchSettings.homeKind) private var kindRaw = HomeKind.forYou.rawValue
 
-    /// Switches the root pager back to the feed page.
-    var onShowFeed: () -> Void = {}
+    /// Switches the root pager to the feed page for that timeline.
+    var onPick: (HomeKind) -> Void = { _ in }
 
     @State private var showAccounts = false
 
@@ -21,8 +21,8 @@ struct MenuView: View {
             }
 
             Section("Timeline") {
-                kindRow(.following)
                 kindRow(.forYou)
+                kindRow(.following)
             }
 
             Section {
@@ -60,7 +60,8 @@ struct MenuView: View {
         .sheet(isPresented: $showAccounts) {
             AccountPicker(onDone: {
                 showAccounts = false
-                onShowFeed()
+                // A new account always opens on For You (AppModel sets that too).
+                onPick(.forYou)
             })
         }
         .task {
@@ -127,8 +128,10 @@ struct MenuView: View {
 
     private func kindRow(_ kind: HomeKind) -> some View {
         Button {
+            // Set the stored kind here too: the checkmark must follow even if the
+            // pager takes a moment to swipe over.
             kindRaw = kind.rawValue
-            onShowFeed()
+            onPick(kind)
         } label: {
             HStack {
                 Text(kind == .forYou ? "For You" : "Following")

@@ -10,6 +10,8 @@ enum Route: Hashable {
     case post(XTweet)
     case user(String)          // screen name
     case userId(String)
+    /// A user's posts as a feed (notification digests such as "new posts from @x").
+    case userFeed(XUser)
     case notifications
     case search
     case bookmarks
@@ -350,17 +352,21 @@ struct PostActionRow: View {
     }
 
     private func glyph(_ name: String, active: Bool, color: Color, count: Int?) -> some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 4) {
             Image(systemName: name)
+                .font(.system(size: 17))
+                .frame(height: 19)
             if let count, count > 0 {
                 Text(count.compact)
-                    .font(.system(size: 13))
+                    .font(.system(size: 12, weight: .medium))
+                    .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
         }
         .foregroundStyle(active ? color : Color.secondary)
         .frame(maxWidth: .infinity)
+        .frame(height: 32)
         .contentShape(Rectangle())
     }
 

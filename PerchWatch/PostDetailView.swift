@@ -96,6 +96,7 @@ struct PostDetailView: View {
         .navigationTitle("Post")
         .task { if thread == nil { await load() } }
         .postPresentation(profile: $profileTarget, media: $mediaTarget)
+        .swipeBack()
     }
 
     private func load() async {

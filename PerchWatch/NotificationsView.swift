@@ -58,6 +58,7 @@ struct NotificationsView: View {
             await list.loadIfNeeded()
         }
         .postPresentation(profile: $profileTarget, media: $mediaTarget)
+        .swipeBack()
     }
 
     private var taskKey: String {
@@ -143,7 +144,17 @@ struct NotificationRow: View {
                     .accessibilityLabel("Open media")
                 }
             } else {
-                textLabel
+                // Digest notifications ("new post notifications from @user") have
+                // no tweet: open that account's posts as a feed instead.
+                if let user = notification.users.first {
+                    NavigationLink(value: Route.userFeed(user)) {
+                        textLabel
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    textLabel
+                }
             }
         }
         .padding(.vertical, 5)
