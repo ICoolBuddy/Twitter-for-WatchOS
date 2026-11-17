@@ -36,6 +36,10 @@ final class AppModel: ObservableObject {
     private var lastBadgeFetch: Date = .distantPast
     /// Never poll X more often than this in the background.
     static let pollInterval: TimeInterval = 15 * 60
+    #if DEBUG
+    /// Set by `installDebugSession`: the screenshot harness owns the app state.
+    private var hasDebugSession = false
+    #endif
 
     private init() {
         PerchSettings.registerDefaults()
@@ -54,6 +58,9 @@ final class AppModel: ObservableObject {
     var activeAccount: XAccount? { accounts.first { $0.id == activeAccountId } }
 
     func reloadState() async {
+        #if DEBUG
+        if hasDebugSession { return }
+        #endif
         accounts = await store.accounts
         activeAccountId = await store.activeAccountId
         let creds = await store.credentials
@@ -103,6 +110,8 @@ final class AppModel: ObservableObject {
 
     /// Switches the device-local active account. The other device keeps its own.
     func switchAccount(to id: String) async {
+        // A new account always opens on For You (the default timeline).
+        UserDefaults.standard.set(HomeKind.forYou.rawValue, forKey: PerchSettings.homeKind)
         guard id != activeAccountId else { return }
         await store.setActiveAccount(id)
         viewer = nil
@@ -247,6 +256,25 @@ final class AppModel: ObservableObject {
         if let topCursor { try? await client.markNotificationsSeen(topCursor: topCursor) }
     }
 }
+
+#if DEBUG
+extension AppModel {
+    /// Screenshot/CI harness: behave as logged in with `client` and `viewer`, no network.
+    func installDebugSession(client: XClient, viewer: XUser) {
+        hasDebugSession = true
+        let account = XAccount(
+            credentials: XCredentials(authToken: "debug-auth-token", ct0: "debug-ct0", twid: "u=\(viewer.id)"),
+            user: viewer)
+        self.client = client
+        accounts = [account]
+        activeAccountId = account.id
+        isLoggedIn = true
+        self.viewer = viewer
+        badge = XBadgeCounts(notifications: 0, dms: 0)
+        lastStateChange = Date()
+    }
+}
+#endif
 
 /// Shares the unread count with widgets/complications via the app group-less
 /// standard defaults (the widget reads the same suite when an app group exists).
