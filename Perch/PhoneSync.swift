@@ -22,10 +22,10 @@ final class PhoneSync: NSObject, ObservableObject, SyncChannel {
 
     private func payload() async -> SyncPayload {
         let store = AppModel.shared.store
-        let creds = await store.credentials
-        if creds == nil { return SyncPayload(command: .logout) }
-        return SyncPayload(command: .update, credentials: creds, config: await store.config,
-                           material: await store.material,
+        let accounts = await store.accounts
+        if accounts.isEmpty { return SyncPayload(command: .logout) }
+        return SyncPayload(command: .update, credentials: await store.credentials, accounts: accounts,
+                           config: await store.config, material: await store.material,
                            remoteOverrideURL: await store.remoteOverrideURL?.absoluteString)
     }
 

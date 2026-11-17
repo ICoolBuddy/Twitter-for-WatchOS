@@ -61,8 +61,12 @@ final class WatchSync: NSObject, ObservableObject, SyncChannel {
             } else {
                 await p.apply(to: AppModel.shared.store)
                 await AppModel.shared.reloadState()
+                // An `accounts` list that arrives empty means the iPhone logged out.
+                if !AppModel.shared.isLoggedIn {
+                    await AppModel.shared.logout(propagate: false)
+                }
             }
-            Haptics.success()
+            // No haptic: syncing must stay silent.
         }
     }
 }

@@ -22,6 +22,8 @@ final class AppModel: ObservableObject {
 
     @Published private(set) var isLoggedIn = false
     @Published private(set) var client: XClient
+    @Published private(set) var accounts: [XAccount] = []
+    @Published private(set) var activeAccountId: String?
     @Published private(set) var badge = XBadgeCounts(notifications: 0, dms: 0)
     @Published private(set) var viewer: XUser?
     @Published private(set) var endpointsUpdatedAt = ""
@@ -36,6 +38,7 @@ final class AppModel: ObservableObject {
     static let pollInterval: TimeInterval = 15 * 60
 
     private init() {
+        PerchSettings.registerDefaults()
         let store = XSessionStore()
         self.store = store
         client = Self.makeClient(store: store)
@@ -48,7 +51,11 @@ final class AppModel: ObservableObject {
 
     var canBrowse: Bool { isLoggedIn }
 
+    var activeAccount: XAccount? { accounts.first { $0.id == activeAccountId } }
+
     func reloadState() async {
+        accounts = await store.accounts
+        activeAccountId = await store.activeAccountId
         let creds = await store.credentials
         let wasLoggedIn = isLoggedIn
         isLoggedIn = creds != nil
@@ -59,6 +66,7 @@ final class AppModel: ObservableObject {
         } else {
             materialSummary = "none"
         }
+        if viewer == nil { viewer = activeAccount?.user }
         if wasLoggedIn != isLoggedIn { rebuildClient() }
         lastStateChange = Date()
     }
@@ -79,16 +87,52 @@ final class AppModel: ObservableObject {
     // MARK: Account
 
     func login(_ creds: XCredentials) async {
-        await store.setCredentials(creds)
+        let id = await store.upsertAccount(creds, user: nil)
         await reloadState()
+        rebuildClient()
+        // Cache the profile so account pickers show a name and avatar immediately.
+        if let v = try? await client.viewer() {
+            viewer = v
+            await store.updateUser(v, forAccount: id)
+            accounts = await store.accounts
+        }
         sync?.syncNow()
         // Signing material makes some endpoints (search) work; best effort.
         Task { try? await self.refreshMaterial() }
     }
 
+    /// Switches the device-local active account. The other device keeps its own.
+    func switchAccount(to id: String) async {
+        guard id != activeAccountId else { return }
+        await store.setActiveAccount(id)
+        viewer = nil
+        badge = XBadgeCounts(notifications: 0, dms: 0)
+        lastBadgeFetch = .distantPast
+        posts.reset()
+        rebuildClient()
+        await reloadState()
+        await loadViewer()
+    }
+
+    func removeAccount(_ id: String, propagate: Bool = true) async {
+        let wasActive = activeAccountId == id
+        await store.removeAccount(id)
+        clearTimelineCaches(accountID: id)
+        if wasActive {
+            viewer = nil
+            badge = XBadgeCounts(notifications: 0, dms: 0)
+            lastBadgeFetch = .distantPast
+            posts.reset()
+            rebuildClient()
+        }
+        await reloadState()
+        await loadViewer()
+        if propagate { sync?.syncNow() }
+    }
+
     func logout(propagate: Bool = true) async {
         await store.wipe()
-        TimelineDiskCache.clear()
+        clearAllTimelineCaches()
         posts.reset()
         badge = XBadgeCounts(notifications: 0, dms: 0)
         viewer = nil
@@ -97,8 +141,41 @@ final class AppModel: ObservableObject {
     }
 
     func loadViewer() async {
-        guard canBrowse, viewer == nil else { return }
-        viewer = try? await client.viewer()
+        guard canBrowse else { viewer = nil; return }
+        guard viewer == nil else { return }
+        guard let v = try? await client.viewer() else { return }
+        viewer = v
+        if let id = activeAccountId {
+            await store.updateUser(v, forAccount: id)
+            accounts = await store.accounts
+        }
+    }
+
+    /// Disk cache file stem for a timeline of the active account.
+    func timelineCacheName(_ kind: HomeKind) -> String {
+        "home-\(activeAccountId ?? "none")-\(kind.rawValue)"
+    }
+
+    // MARK: Disk cache
+
+    private func clearAllTimelineCaches() {
+        TimelineDiskCache.clear()
+        // TODO(contract): `TimelineDiskCache.clear()` (watch-ui) must clear every
+        // `perch-home-*` file too; AppModel removes them itself for now.
+        clearTimelineFiles(prefix: "perch-home-")
+    }
+
+    private func clearTimelineCaches(accountID: String) {
+        clearTimelineFiles(prefix: "perch-home-\(accountID)-")
+    }
+
+    private func clearTimelineFiles(prefix: String) {
+        guard let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first,
+              let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+        else { return }
+        for f in files where f.lastPathComponent.hasPrefix(prefix) {
+            try? FileManager.default.removeItem(at: f)
+        }
     }
 
     // MARK: Endpoints & signing

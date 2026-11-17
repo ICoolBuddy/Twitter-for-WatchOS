@@ -15,6 +15,7 @@ public enum Operation: String, CaseIterable, Codable, Sendable {
     case createBookmark = "CreateBookmark"
     case deleteBookmark = "DeleteBookmark"
     case bookmarks = "Bookmarks"
+    case likes = "Likes"
     case userByScreenName = "UserByScreenName"
     case userByRestId = "UserByRestId"
     case userTweets = "UserTweets"

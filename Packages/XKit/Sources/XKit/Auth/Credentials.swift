@@ -4,7 +4,7 @@ import Security
 #endif
 
 /// The browser session cookies Perch authenticates with.
-public struct XCredentials: Codable, Sendable, Equatable {
+public struct XCredentials: Codable, Sendable, Hashable {
     public var authToken: String
     public var ct0: String
     public var twid: String?

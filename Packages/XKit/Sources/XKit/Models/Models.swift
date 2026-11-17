@@ -85,6 +85,27 @@ public struct XMedia: Codable, Hashable, Sendable, Identifiable {
 
     public var thumbnailURL: URL { imageURL(size: "small") }
 
+    /// Tiny image (240x240) used as the blurred first pass.
+    public var previewURL: URL { imageURL(size: "240x240") }
+    /// Feed image (680 px).
+    public var feedURL: URL { imageURL(size: "small") }
+    /// Full-resolution image (1200 px).
+    public var fullURL: URL { imageURL(size: "medium") }
+
+    /// Best MP4 at or below `maxBitrate`; otherwise the lowest-bitrate MP4; otherwise HLS.
+    /// Animated GIFs have a single MP4 variant with bitrate 0 and are returned as-is.
+    public func playbackURL(maxBitrate: Int = 900_000) -> URL? {
+        let mp4 = variants.filter { $0.contentType == "video/mp4" }
+        let underCap = mp4.filter { ($0.bitrate ?? 0) <= maxBitrate }
+        if let best = underCap.max(by: { ($0.bitrate ?? 0) < ($1.bitrate ?? 0) }) {
+            return best.url
+        }
+        if let lowest = mp4.min(by: { ($0.bitrate ?? .max) < ($1.bitrate ?? .max) }) {
+            return lowest.url
+        }
+        return variants.first { $0.contentType == "application/x-mpegURL" }?.url
+    }
+
     /// The lowest bitrate MP4 variant, best suited to the Watch.
     public var lowestBitrateMP4: URL? {
         variants.filter { $0.contentType == "video/mp4" }

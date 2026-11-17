@@ -77,8 +77,8 @@ public struct EndpointDiscovery: Sendable {
     static let shellURL = URL(string: "https://x.com/i/embed")!
     static let opPattern =
         #"queryId:"([^"]+)",operationName:"([^"]+)",operationType:"([a-z]+)",metadata:\{featureSwitches:\[([^\]]*)\],fieldToggles:\[([^\]]*)\]"#
-    /// Chunk names likely to hold ops not in main.js (Home, Notifications, Bookmarks).
-    static let priorityHints = ["Notifications", "Bookmarks", "AudioSpacePeek", "ComposeMedia", "Home"]
+    /// Chunk names likely to hold ops not in main.js (Home, Notifications, Bookmarks, Likes).
+    static let priorityHints = ["Notifications", "Bookmarks", "Likes", "AudioSpacePeek", "ComposeMedia", "Home"]
 
     public func discover(base: EndpointConfig) async throws -> EndpointConfig {
         let html = try await fetcher.text(Self.shellURL)

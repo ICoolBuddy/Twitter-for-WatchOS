@@ -13,15 +13,19 @@ public struct SyncPayload: Codable, Sendable, Equatable {
 
     public var command: Command
     public var credentials: XCredentials?
+    /// All accounts known to the iPhone. `nil` in payloads from older builds.
+    public var accounts: [XAccount]?
     public var config: EndpointConfig?
     public var material: TransactionMaterial?
     public var remoteOverrideURL: String?
     public var sentAt: Date
 
-    public init(command: Command, credentials: XCredentials? = nil, config: EndpointConfig? = nil,
-                material: TransactionMaterial? = nil, remoteOverrideURL: String? = nil, sentAt: Date = Date()) {
-        self.command = command; self.credentials = credentials; self.config = config
-        self.material = material; self.remoteOverrideURL = remoteOverrideURL; self.sentAt = sentAt
+    public init(command: Command, credentials: XCredentials? = nil, accounts: [XAccount]? = nil,
+                config: EndpointConfig? = nil, material: TransactionMaterial? = nil,
+                remoteOverrideURL: String? = nil, sentAt: Date = Date()) {
+        self.command = command; self.credentials = credentials; self.accounts = accounts
+        self.config = config; self.material = material
+        self.remoteOverrideURL = remoteOverrideURL; self.sentAt = sentAt
     }
 
     public func encoded() throws -> Data { try JSONEncoder.iso.encode(self) }
@@ -44,7 +48,12 @@ public struct SyncPayload: Codable, Sendable, Equatable {
         case .logout:
             await store.wipe()
         case .update:
-            if let credentials { await store.setCredentials(credentials) }
+            if let accounts {
+                await store.replaceAccounts(accounts)
+            } else if let credentials {
+                // Payload from an older iPhone build: a single account.
+                _ = await store.upsertAccount(credentials, user: nil)
+            }
             if let config { await store.mergeConfig(config) }
             if let material { await store.setMaterial(material) }
             if let remoteOverrideURL { await store.setRemoteOverrideURL(URL(string: remoteOverrideURL)) }

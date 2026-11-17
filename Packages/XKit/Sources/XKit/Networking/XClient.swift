@@ -35,6 +35,7 @@ public protocol XClient: Sendable {
     func setFollowing(_ follow: Bool, userId: String) async throws
     func search(_ query: String, product: SearchProduct, cursor: String?) async throws -> TimelinePage
     func bookmarks(cursor: String?) async throws -> TimelinePage
+    func likes(userId: String, cursor: String?) async throws -> TimelinePage
     func dmInbox() async throws -> [DMConversation]
     func dmMessages(conversationId: String) async throws -> (messages: [DMMessage], users: [String: XUser])
     func sendDM(conversationId: String, text: String) async throws
@@ -222,6 +223,20 @@ public actor LiveXClient: XClient {
         var v: [String: JSON] = ["count": .number(Double(Self.pageSize)), "includePromotedContent": false]
         if let cursor { v["cursor"] = .string(cursor) }
         let json = try await graphQL(.bookmarks, variables: .object(v))
+        return XParser.timeline(json)
+    }
+
+    public func likes(userId: String, cursor: String?) async throws -> TimelinePage {
+        var v: [String: JSON] = [
+            "userId": .string(userId),
+            "count": .number(Double(Self.pageSize)),
+            "includePromotedContent": false,
+            "withClientEventToken": false,
+            "withBirdwatchNotes": false,
+            "withVoice": true,
+        ]
+        if let cursor { v["cursor"] = .string(cursor) }
+        let json = try await graphQL(.likes, variables: .object(v))
         return XParser.timeline(json)
     }
 

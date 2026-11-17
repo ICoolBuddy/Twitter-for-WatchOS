@@ -30,7 +30,7 @@ BEARER = ("AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D"
 OPERATIONS = [
     "HomeTimeline", "HomeLatestTimeline", "TweetDetail", "TweetResultByRestId",
     "CreateTweet", "DeleteTweet", "FavoriteTweet", "UnfavoriteTweet",
-    "CreateRetweet", "DeleteRetweet", "CreateBookmark", "DeleteBookmark", "Bookmarks",
+    "CreateRetweet", "DeleteRetweet", "CreateBookmark", "DeleteBookmark", "Bookmarks", "Likes",
     "UserByScreenName", "UserByRestId", "UserTweets", "UserTweetsAndReplies",
     "SearchTimeline", "NotificationsTimeline", "Viewer", "ViewerBadgeCounts",
 ]
