@@ -40,7 +40,12 @@ jobs:
 
       - name: XKit unit tests
         working-directory: Packages/XKit
-        run: swift test 2>&1 | tail -40; exit ${PIPESTATUS[0]}
+        run: |
+          swift test > test.log 2>&1; STATUS=$?
+          tail -25 test.log
+          echo "--- failures ---"
+          grep -E ': error:|failed|XCTAssert' test.log | grep -v "^Test Suite" | head -40 || true
+          exit $STATUS
 
       - name: Archive (unsigned)
         run: |
