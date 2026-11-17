@@ -54,6 +54,21 @@ struct TweetHeader: View {
     var avatarSize: CGFloat = Metrics.avatar
     var nameFont: Font = Metrics.nameFont
     var metaFont: Font = Metrics.metaFont
+    #if os(watchOS)
+    @AppStorage(PerchSettings.textSize) private var textSizeRaw = PerchTextSize.medium.rawValue
+
+    private var textScale: CGFloat {
+        (PerchTextSize(rawValue: textSizeRaw) ?? .medium).scale
+    }
+
+    private var watchNameFont: Font {
+        .system(size: 17 * textScale, weight: .bold)
+    }
+
+    private var watchMetaFont: Font {
+        .system(size: 15 * textScale)
+    }
+    #endif
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
@@ -61,7 +76,7 @@ struct TweetHeader: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 3) {
                     Text(tweet.author.name)
-                        .font(nameFont)
+                        .font(headerNameFont)
                         .lineLimit(1)
                     if tweet.author.isVerified {
                         Image(systemName: "checkmark.seal.fill")
@@ -77,11 +92,27 @@ struct TweetHeader: View {
                         Text(RelativeTime.short(d))
                     }
                 }
-                .font(metaFont)
+                .font(headerMetaFont)
                 .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
         }
+    }
+
+    private var headerNameFont: Font {
+        #if os(watchOS)
+        return watchNameFont
+        #else
+        return nameFont
+        #endif
+    }
+
+    private var headerMetaFont: Font {
+        #if os(watchOS)
+        return watchMetaFont
+        #else
+        return metaFont
+        #endif
     }
 }
 
@@ -357,11 +388,14 @@ struct PostActionRow: View {
                 .font(.system(size: 17))
                 .frame(height: 19)
             if let count, count > 0 {
+                // Bounded and shrinkable: long counts ("999K", "1.2M") used to
+                // push past their quarter and overlap the neighbouring action.
                 Text(count.compact)
                     .font(.system(size: 12, weight: .medium))
                     .monospacedDigit()
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(0.5)
+                    .frame(maxWidth: 30, alignment: .leading)
             }
         }
         .foregroundStyle(active ? color : Color.secondary)

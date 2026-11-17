@@ -7,7 +7,7 @@ import SwiftUI
 /// points per detent, so those small increases are accumulated too — rotating
 /// the crown a lot refreshes as well.
 ///
-/// The visible bar lives in `FeedStatusBar` (HomeView); this only reports
+/// The visible glow lives in `EdgeGlow` (HomeView); this only reports
 /// progress and triggers the action. No haptics (refreshing must be silent).
 struct PullToRefresh: ViewModifier {
     let isRefreshing: Bool

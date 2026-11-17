@@ -15,7 +15,7 @@ struct HomeView: View {
     @StateObject private var list = PagedList<TimelineItem>(maxItems: 200, fetch: { _ in ([], nil, nil) })
     @State private var configuredFor: String?
     @State private var startedFor: String?
-    /// 0…1: how far a pull/crown turn is towards a refresh (drives `FeedStatusBar`).
+    /// 0…1: how far a pull/crown turn is towards a refresh (drives the edge glow).
     @State private var pullProgress: CGFloat = 0
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
@@ -39,11 +39,12 @@ struct HomeView: View {
                 .padding(.horizontal, Metrics.horizontalPadding)
             }
             .background(Color.black)
-            // Fixed height: the bar comes and goes, and a safe-area inset that
-            // changes height would move the whole feed.
-            .safeAreaInset(edge: .top, spacing: 0) {
-                FeedStatusBar(loading: (list.isRefreshing || list.isLoading) && !list.isEmpty,
-                              progress: pullProgress)
+            // Loading look: a soft glow around the screen edge (Pigeon-style)
+            // instead of a bar with numbers inside the feed.
+            .overlay {
+                EdgeGlow(progress: pullProgress,
+                         loading: (list.isRefreshing || list.isLoading) && !list.isEmpty)
+                    .allowsHitTesting(false)
             }
             .pullToRefresh(isRefreshing: list.isRefreshing, progress: $pullProgress) {
                 await refresh(proxy, merge: false)
@@ -166,95 +167,41 @@ struct HomeView: View {
     }
 }
 
-/// Slim status line under the navigation bar. It has a fixed height so showing
-/// and hiding it never moves the feed. Three states:
-/// - idle: invisible (space reserved),
-/// - pulling / turning the crown: a bar that fills towards the refresh,
-/// - loading: an indeterminate bar + the current download rate.
-struct FeedStatusBar: View {
-    let loading: Bool
+/// Loading look: a soft bar glowing around the screen edge (like Pigeon for
+/// Telegram). It brightens as a pull/crown turn fills up, then pulses while the
+/// feed loads; there is no progress text.
+struct EdgeGlow: View {
     var progress: CGFloat = 0
+    var loading: Bool = false
 
-    private var visible: Bool { loading || progress > 0.02 }
+    @State private var pulse = false
 
-    var body: some View {
-        HStack(spacing: 6) {
-            bar
-            captionView
-        }
-        .frame(height: 14)
-        .opacity(visible ? 1 : 0)
-        .animation(.easeOut(duration: 0.15), value: visible)
-    }
-
-    /// The rate changes while loading, so poll it only then.
-    private var captionView: some View {
-        Group {
-            if loading {
-                TimelineView(.periodic(from: Date(), by: 0.5)) { _ in
-                    captionText
-                }
-            } else {
-                captionText
-            }
-        }
-    }
-
-    private var captionText: some View {
-        Text(caption)
-            .font(.system(size: 10, weight: .medium))
-            .monospacedDigit()
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .frame(width: 52, alignment: .trailing)
-    }
-
-    @ViewBuilder
-    private var bar: some View {
-        if loading {
-            IndeterminateBar()
-        } else {
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.15))
-                    Capsule()
-                        .fill(progress >= 1 ? Color.accentColor : Color.secondary)
-                        .frame(width: geo.size.width * min(1, max(0, progress)))
-                }
-            }
-            .frame(height: 3)
-        }
-    }
-
-    private var caption: String {
-        guard loading else { return progress >= 1 ? "Release" : "" }
-        let rate = TransferMonitor.shared.snapshot().bytesPerSecond
-        if rate >= 512 { return TransferMonitor.formatRate(rate) }
-        return "Loading"
-    }
-}
-
-/// A 3 pt capsule with a highlight sliding left ↔ right: the loading look shared
-/// with the video downloader.
-struct IndeterminateBar: View {
-    @State private var right = false
+    private var visible: Bool { loading || progress > 0.03 }
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.15))
-                Capsule()
-                    .fill(Color.white.opacity(0.9))
-                    .frame(width: max(10, geo.size.width * 0.32))
-                    .offset(x: right ? geo.size.width * 0.68 : 0)
-            }
-            .clipShape(Capsule())
-        }
-        .frame(height: 3)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
-                right = true
-            }
+        RoundedRectangle(cornerRadius: 28, style: .continuous)
+            .strokeBorder(Color.white, lineWidth: 2)
+            .blur(radius: 3)
+            .padding(2)
+            .opacity(opacity)
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+            .animation(.easeOut(duration: 0.2), value: visible)
+            .onAppear { startPulse() }
+            .onChange(of: loading) { _, _ in startPulse() }
+    }
+
+    private var opacity: Double {
+        guard visible else { return 0 }
+        if loading { return pulse ? 0.8 : 0.28 }
+        return 0.2 + 0.55 * Double(min(1, max(0, progress)))
+    }
+
+    private func startPulse() {
+        pulse = false
+        guard loading else { return }
+        withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+            pulse = true
         }
     }
 }

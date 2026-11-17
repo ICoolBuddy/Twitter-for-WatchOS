@@ -67,15 +67,23 @@ struct FeedPostView: View {
     var onMedia: ((MediaTarget) -> Void)? = nil
 
     @State private var expanded = false
+    @AppStorage(PerchSettings.textSize) private var textSizeRaw = PerchTextSize.medium.rawValue
+
+    /// Settings → Text size, as a multiplier of the Parrot 19 pt body.
+    private var textScale: CGFloat {
+        (PerchTextSize(rawValue: textSizeRaw) ?? .medium).scale
+    }
 
     private var t: XTweet { tweet.displayed }
 
     // Compact ancestors use smaller type; the feed itself uses the Parrot sizes.
     private var nameFont: Font { compact ? Font.system(size: 15, weight: .semibold) : Metrics.nameFont }
     private var metaFont: Font { compact ? Font.system(size: 12) : Metrics.metaFont }
-    private var bodyFont: Font { compact ? Font.system(size: 15) : Metrics.bodyFont }
+    private var bodyFont: Font {
+        compact ? .system(size: 15) : .system(size: 19 * textScale)
+    }
     private var bannerFont: CGFloat { compact ? 12 : 13 }
-    private var lineFont: CGFloat { compact ? 12 : 13 }
+    private var lineFont: CGFloat { (compact ? 12 : 13) * textScale }
 
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 3 : 5) {

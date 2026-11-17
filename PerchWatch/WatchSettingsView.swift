@@ -5,6 +5,7 @@ struct WatchSettingsView: View {
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var sync: WatchSync
     @AppStorage(PerchSettings.autoRefreshOnOpen) private var autoRefreshOnOpen = true
+    @AppStorage(PerchSettings.textSize) private var textSizeRaw = PerchTextSize.medium.rawValue
 
     @State private var message: String?
     @State private var working = false
@@ -24,8 +25,13 @@ struct WatchSettingsView: View {
                 }
             }
 
-            Section {
+            Section("Feed") {
                 Toggle("Refresh when opening", isOn: $autoRefreshOnOpen)
+                Picker("Text size", selection: $textSizeRaw) {
+                    ForEach(PerchTextSize.allCases) { size in
+                        Text(size.label).tag(size.rawValue)
+                    }
+                }
             } footer: {
                 Text("When off, the feed shows cached posts until you pull to refresh.")
             }
