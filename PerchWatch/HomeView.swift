@@ -192,8 +192,8 @@ struct HomeView: View {
                 // impressions come from real row frames. (onScrollTargetVisibilityChange
                 // reported rows ~1000 pt above the viewport here: measured 2026-11-18.)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .scrollView) } action: { frame in
-                    guard visibility.isActive else { return }
-                    place.rowMoved(item, frame: frame, isFirst: item.id == list.items.first?.id)
+                    place.rowMoved(item, frame: frame, isFirst: item.id == list.items.first?.id,
+                                   active: visibility.isActive)
                 }
             }
             PagingFooter(list: list)
@@ -202,16 +202,18 @@ struct HomeView: View {
 
     /// Scrolls a new scroll view back to the post that was on top when the reader
     /// left this feed. Nothing to do on the very first appearance (no saved place).
+    /// Puts a new scroll view back at the reader's exact place: first the saved row
+    /// to the top, then `FeedPlace` corrects by measuring where the row really landed
+    /// (the new list has not measured the rows above it, so one scroll is not exact).
     private func restore(_ proxy: ScrollViewProxy) {
         guard let id = place.savedTopID, list.items.contains(where: { $0.id == id }) else { return }
-        let anchor = place.savedAnchor
-        DispatchQueue.main.async { proxy.scrollTo(id, anchor: anchor) }
+        place.beginRestore { id, anchor in proxy.scrollTo(id, anchor: anchor) }
     }
 
     #if DEBUG
     /// Restore evidence for the place tests (refreshed on each body pass).
     private var placeDebug: String {
-        "saved=\(place.savedTopID ?? "-") live=\(place.liveTopID ?? "-") anchor=\(String(format: "%.2f", place.savedAnchor.y)) inset=\(Int(place.topInset)) vh=\(Int(place.viewportHeight))"
+        "saved=\(place.savedTopID ?? "-") live=\(place.liveTopID ?? "-") d=\(Int(place.savedDepth)) inset=\(Int(place.topInset)) vh=\(Int(place.viewportHeight))"
     }
     #endif
 
@@ -293,10 +295,13 @@ final class FeedPlace {
     /// `liveTopID` at the moment the reader left the feed: what a rebuilt scroll
     /// view returns to.
     var savedTopID: String?
-    /// Where inside the top row the viewport started (0 = its top), live and saved.
-    var liveFraction: CGFloat = 0
-    var liveHeight: CGFloat = 0
-    var savedAnchor: UnitPoint = .top
+    /// How far (points) the viewport top was inside the top row, live and saved.
+    var liveDepth: CGFloat = 0
+    var savedDepth: CGFloat = 0
+    /// An exact restore in flight (see `beginRestore`).
+    private var restoring: (id: String, tries: Int, a0: CGFloat, top0: CGFloat?, a: CGFloat,
+                            lastTop: CGFloat?)?
+    private var scrollToRow: ((String, UnitPoint) -> Void)?
     /// The scroll view's visible height (what "on screen" means for a row frame).
     var viewportHeight: CGFloat = 0
     /// The scroll view's top inset (under the toolbar): where reading starts.
@@ -305,16 +310,20 @@ final class FeedPlace {
     let seen = FeedSeen()
 
     /// One row's frame in the scroll view's visible coordinates changed.
-    func rowMoved(_ item: TimelineItem, frame: CGRect, isFirst: Bool) {
+    func rowMoved(_ item: TimelineItem, frame: CGRect, isFirst: Bool, active: Bool) {
+        let top = topInset
+        if let r = restoring, r.id == item.id {
+            correct(frame: frame)
+            return
+        }
+        guard active, restoring == nil else { return }
         let height = viewportHeight > 0 ? viewportHeight : 150
         // On screen at all: an impression (sent with the next home request).
-        let top = topInset
         if frame.maxY > top + 8, frame.minY < height - 8 { seen.mark(item) }
         if frame.minY <= top + 0.5, frame.maxY > top + 0.5 {
             // This row covers the top edge of the viewport: it is the reading place.
             liveTopID = item.id
-            liveFraction = frame.height > 0 ? (top - frame.minY) / frame.height : 0
-            liveHeight = frame.height
+            liveDepth = top - frame.minY
         } else if isFirst, frame.minY > top + 0.5 {
             liveTopID = nil          // the top of the feed (label/anchor) is showing
         }
@@ -322,17 +331,63 @@ final class FeedPlace {
 
     /// The reader leaves the feed: remember the row on top and how far into it.
     func save() {
+        guard restoring == nil else { return }
         savedTopID = liveTopID
-        // `scrollTo(id, anchor: a)` puts the row's point at `a` onto the viewport's
-        // point at `a`. The row top was `d` above the viewport top, so solve
-        // a·H − a·V = d for a (row taller than the screen); a short row goes to the top.
-        let v = viewportHeight > 0 ? viewportHeight : 150
-        let d = liveFraction * liveHeight
-        if liveHeight > v + 1 {
-            savedAnchor = UnitPoint(x: 0.5, y: min(1, max(0, d / (liveHeight - v))))
-        } else {
-            savedAnchor = .top
+        savedDepth = liveDepth
+    }
+
+    /// Starts an exact restore: the saved row is scrolled to anchor 0 (its top at
+    /// the viewport top), then `correct` measures and re-aims.
+    func beginRestore(_ scroll: @escaping (String, UnitPoint) -> Void) {
+        guard let id = savedTopID else { return }
+        scrollToRow = scroll
+        restoring = (id, 0, 0, nil, 0, nil)
+        liveTopID = id
+        liveDepth = savedDepth
+        DispatchQueue.main.async { scroll(id, UnitPoint(x: 0.5, y: 0)) }
+        // Belt: a row that never reports a frame must not freeze place tracking.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            if self?.restoring?.id == id { self?.restoring = nil }
         }
+    }
+
+    /// Where the restored row landed vs. where it was (`savedDepth` into it).
+    /// `scrollTo(id, anchor: a)` moves the row top linearly with `a`; two
+    /// measurements give the slope (secant step), so it converges in a step or two
+    /// without assuming how watchOS measures the viewport.
+    private func correct(frame: CGRect) {
+        guard var r = restoring, let scroll = scrollToRow else { return }
+        let rowTop = frame.minY
+        if let last = r.lastTop, abs(last - rowTop) < 0.25 { return }   // same frame again
+        r.lastTop = rowTop
+        let desired = topInset - savedDepth
+        let error = rowTop - desired
+        if abs(error) <= 1.5 || r.tries >= 4 {
+            restoring = nil
+            liveDepth = topInset - rowTop
+            return
+        }
+        let next: CGFloat
+        if let top0 = r.top0, abs(r.a - r.a0) > 0.0001, abs(rowTop - top0) > 0.5 {
+            let slope = (rowTop - top0) / (r.a - r.a0)
+            next = r.a - error / slope
+            r.a0 = r.a
+            r.top0 = rowTop
+        } else {
+            // First measurement: guess the slope from the sizes (row taller than the
+            // viewport moves up as `a` grows), then refine with the secant.
+            let v = viewportHeight > 0 ? viewportHeight : 150
+            let h = max(frame.height, 1)
+            let slope = (v - h) == 0 ? -1 : (v - h)
+            next = r.a - error / slope
+            r.a0 = r.a
+            r.top0 = rowTop
+        }
+        r.a = next
+        r.tries += 1
+        restoring = r
+        let id = r.id
+        DispatchQueue.main.async { scroll(id, UnitPoint(x: 0.5, y: next)) }
     }
     /// The account/login the shared list was configured for (`HomeView.taskKey`).
     var configuredFor: String?

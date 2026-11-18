@@ -356,15 +356,21 @@ private struct MediaVideoPage: View {
     let closing: Bool
 
     @StateObject private var playback = VideoPlayback()
+    @State private var volumeHUD: Double?
+    @State private var volumeTask: Task<Void, Never>?
 
     var body: some View {
         ZStack {
             Color.black
-            VideoPlayer(player: playback.player)
-                // Only the page on screen may take the crown (several attachments),
-                // and none once the viewer is closing.
-                .disabled(!isActive || closing)
-                .ignoresSafeArea()
+            // Gone the moment the viewer starts closing: a player (and the volume
+            // control) still in the tree held the crown through the close animation,
+            // so the feed did not scroll for about a second after closing a video.
+            if !closing {
+                VideoPlayer(player: playback.player)
+                    // Only the page on screen may take the crown (several attachments).
+                    .disabled(!isActive)
+                    .ignoresSafeArea()
+            }
 
             // Poster until the first frame is really on screen (no black flash),
             // and behind an error. Never hit-testable: taps reach the player.
@@ -376,11 +382,34 @@ private struct MediaVideoPage: View {
             } else if playback.loading {
                 loadingBar
             }
+
+            if let volume = volumeHUD { volumeOverlay(volume) }
+
+            // The crown = the Watch's volume while a video plays (owner, 2026-11-18),
+            // through WatchKit's system volume control (SwiftUI has none). Videos
+            // only: a GIF is silent.
+            if media.type == .video, isActive, !closing {
+                SystemVolumeControl(focused: true)
+                    .frame(width: 40, height: 40)
+                    .opacity(0.02)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+        .onChange(of: playback.systemVolume) { _, value in
+            if isActive, !closing { showVolume(value) }
+        }
+        .onChange(of: closing) { _, closing in
+            if closing { playback.stop() }
         }
         .onAppear {
             if isActive { playback.start(media, title: title, caption: caption) }
         }
-        .onDisappear { playback.teardown() }
+        .onDisappear {
+            playback.teardown()
+            volumeTask?.cancel()
+        }
         .onChange(of: isActive) { _, active in
             if active {
                 playback.start(media, title: title, caption: caption)
@@ -396,6 +425,46 @@ private struct MediaVideoPage: View {
             if media.type == .gif { playback.replay() } else { playback.markEnded() }
         }
         .accessibilityLabel(media.altText ?? (media.type == .gif ? "GIF" : "Video"))
+    }
+
+    /// Small transient speaker bar while the crown changes the volume. The icon has
+    /// a fixed frame, so muted and unmuted are the same capsule (the slashed speaker
+    /// is narrower and the pill used to resize).
+    private func volumeOverlay(_ value: Double) -> some View {
+        VStack {
+            Spacer(minLength: 0)
+            HStack(spacing: 6) {
+                Image(systemName: value <= 0.001 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .frame(width: 16, alignment: .center)
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.25))
+                        Capsule()
+                            .fill(Color.white)
+                            .frame(width: geo.size.width * CGFloat(min(1, max(0, value))))
+                    }
+                }
+                .frame(width: 70, height: 3)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 9)
+            .frame(height: 22)
+            .background(Color.black.opacity(0.6), in: Capsule())
+            .padding(.bottom, 34)
+        }
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+
+    private func showVolume(_ value: Float) {
+        volumeTask?.cancel()
+        volumeHUD = Double(value)
+        volumeTask = Task {
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.2)) { volumeHUD = nil }
+        }
     }
 
     private var poster: some View {
@@ -482,5 +551,40 @@ enum LinkSpeed {
         // Within ~3 s on the measured link; with no measurement yet, the feed copy
         // (it was "fetch the 1200 px one" before, i.e. unknown counted as fast).
         return !LinkBudget.isTooSlow(bytes: Double(pixels) * LinkBudget.bytesPerPixel, seconds: 3)
+    }
+}
+
+/// WatchKit's system volume control, which SwiftUI has no equivalent of. When
+/// focused it takes the Digital Crown and changes the Watch's own output volume
+/// (with the system's haptics), starting from the current level.
+struct SystemVolumeControl: WKInterfaceObjectRepresentable {
+    var focused: Bool
+
+    final class Coordinator {
+        /// What the control was last told. `nil` = never.
+        var applied: Bool?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeWKInterfaceObject(context: Context) -> WKInterfaceVolumeControl {
+        let control = WKInterfaceVolumeControl(origin: .local)
+        control.setTintColor(.white)
+        return control
+    }
+
+    func updateWKInterfaceObject(_ control: WKInterfaceVolumeControl, context: Context) {
+        // Runs on every body pass: only talk to the control when the answer changed
+        // (re-asserting focus mid-rotation fights the crown).
+        guard context.coordinator.applied != focused else { return }
+        context.coordinator.applied = focused
+        if focused { control.focus() } else { control.resignFocus() }
+    }
+
+    static func dismantleWKInterfaceObject(_ control: WKInterfaceVolumeControl,
+                                           coordinator: Coordinator) {
+        // A focused volume control that is simply removed leaves the crown
+        // pointing nowhere until something is touched.
+        control.resignFocus()
     }
 }

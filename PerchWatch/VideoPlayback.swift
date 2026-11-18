@@ -19,6 +19,10 @@ final class VideoPlayback: ObservableObject {
     /// True until the first frame has really been shown (poster + bar on top).
     @Published private(set) var loading = true
     @Published private(set) var failed: String?
+    /// The Watch's output volume 0…1 (the crown changes it through
+    /// `SystemVolumeControl`); the player itself always plays at full gain.
+    @Published private(set) var systemVolume: Float = AVAudioSession.sharedInstance().outputVolume
+    private var volumeObservation: NSKeyValueObservation?
     // Not published: the page draws none of these (the system player has its own
     // controls); they feed Now Playing and the remote commands only.
     private(set) var endedFlag = false
@@ -85,6 +89,7 @@ final class VideoPlayback: ObservableObject {
         Self.chosenLevel[media.id] = level
         player.replaceCurrentItem(with: AVPlayerItem(url: levels[level].url))
         player.volume = 1
+        observeSystemVolume()
         // GIFs loop (the page seeks back on the end notification): never pausing at
         // the end keeps the system player's end-of-video controls from popping up.
         player.actionAtItemEnd = media.type == .gif ? .none : .pause
@@ -171,6 +176,8 @@ final class VideoPlayback: ObservableObject {
         player.replaceCurrentItem(with: nil)
         mediaId = nil
         loading = true
+        volumeObservation?.invalidate()
+        volumeObservation = nil
         clearNowPlaying()
         if backgroundSession {
             backgroundSession = false
@@ -276,6 +283,15 @@ final class VideoPlayback: ObservableObject {
             }
         }
         return target
+    }
+
+    private func observeSystemVolume() {
+        guard volumeObservation == nil else { return }
+        systemVolume = AVAudioSession.sharedInstance().outputVolume
+        volumeObservation = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { [weak self] session, _ in
+            let value = session.outputVolume
+            Task { @MainActor in self?.systemVolume = value }
+        }
     }
 
     // MARK: Progress
