@@ -32,7 +32,7 @@ final class MediaPresenter: ObservableObject {
         // A finger lifted over an image at the end of a page swipe.
         guard !SwipeGuard.isActive else { return }
         guard self.target == nil else { return }
-        isTransitioning = true
+        beginTransition()
         withAnimation(.easeInOut(duration: 0.18), completionCriteria: .logicallyComplete) {
             self.target = target
         } completion: {
@@ -42,13 +42,28 @@ final class MediaPresenter: ObservableObject {
 
     func close() {
         guard target != nil, !isTransitioning else { return }
-        isTransitioning = true
+        beginTransition()
         withAnimation(.easeInOut(duration: 0.18), completionCriteria: .logicallyComplete) {
             self.target = nil
         } completion: {
             self.isTransitioning = false
         }
     }
+
+    /// Screens hold the crown while a transition runs, so a completion that never
+    /// arrives would leave the crown dead. The animation is 0.18 s; this is the
+    /// belt to its braces.
+    private func beginTransition() {
+        isTransitioning = true
+        transitionSafety?.cancel()
+        transitionSafety = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            guard !Task.isCancelled else { return }
+            self?.isTransitioning = false
+        }
+    }
+
+    private var transitionSafety: Task<Void, Never>?
 
     func sheetOpened() { sheetDepth += 1 }
     func sheetClosed() { sheetDepth = max(0, sheetDepth - 1) }

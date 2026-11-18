@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// "A presentation that owned the crown has finished going away." One signal for
-/// the media viewer (root overlay **and** a cover), the profile sheet and the
-/// account picker, so the screen behind them can reclaim the crown the same
+/// the media viewer (root host, sheet host and cover), the profile sheet and the
+/// account picker, so the screen behind them can take the crown back the same
 /// way. An event counter, not state: nothing derives UI from it.
 @MainActor
 final class CrownFocusMark: ObservableObject {
@@ -50,80 +50,101 @@ extension EnvironmentValues {
     }
 }
 
-/// Gives the Digital Crown back to this screen's scroll view — declaratively.
+/// Gives the Digital Crown back to this screen's scroll view.
 ///
-/// The crown goes to the focused view, and SwiftUI hands a `ScrollView`/`List`
-/// the crown by itself once it is the target; a touch is what normally makes it
-/// the target. What the system does *not* do is re-run that decision when a
-/// screen comes back from a pushed screen, when the media viewer goes away or
-/// when a pager page slides in: Apple documents that default focus is evaluated
+/// watchOS sends the crown to the focused view, and a touch is what normally
+/// makes the scroll view the target. What the system does *not* do is re-run that
+/// decision when a screen comes back from a pushed screen, when the media viewer
+/// goes away or when a pager page slides in (Apple: default focus is evaluated
 /// "when the window first appears, and when a focus state binding update moves
 /// focus automatically, but not when responding to user-driven navigation
-/// commands" (`defaultFocus(_:_:priority:)`).
+/// commands"), so without this the crown does nothing until the screen is
+/// touched.
 ///
-/// So this does not assign focus from a timer. It declares the scroll view as
-/// the default-focus candidate of a focus scope that belongs to *this* screen,
-/// and asks the focus system to re-evaluate that scope when the screen becomes
-/// the visible one. `resetFocus(in:)` is documented for exactly that, it is
-/// scoped (a screen underneath a pushed one cannot win it), and it is
-/// synchronous — no delay, and no Boolean that can go stale.
-struct CrownScrollFocus<Content: View>: View {
+/// The *ownership* half is a value, not a guess: only the visible screen (`active`),
+/// on top of the stack (`screenIsTop`), with no viewer over it, may ask. The
+/// *request* half still has to be an explicit focus assignment — a focus scope
+/// with `prefersDefaultFocus` + `resetFocus(in:)` is documented, but on
+/// watchOS 27 it does not give a scroll view the crown (tried and failed on the
+/// Series 10: cold start and after the pager's own buttons).
+struct CrownScrollFocus: ViewModifier {
     /// False for a pager page that is off screen.
-    var active: Bool
-    private let content: Content
+    var active: Bool = true
 
-    @Namespace private var scope
-    @Environment(\.resetFocus) private var resetFocus
-    /// False while a pushed screen covers this one (`RouteView` sets it).
     @Environment(\.screenIsTop) private var screenIsTop
-    /// This screen is on screen. Pushed screens and sheet content report this
-    /// through `onAppear`/`onDisappear`, so a screen underneath a pushed one
-    /// does not reset its own scope when a presentation ends somewhere above it.
+    @FocusState private var focused: Bool
+    @ObservedObject private var presenter = MediaPresenter.shared
     @State private var visible = false
+    /// Live values for the asynchronous requests: this is a value type, so a
+    /// delayed closure would otherwise read the flags it was created with — the
+    /// stale `active` that made an off-screen page steal the crown.
+    @State private var claim = CrownClaim()
 
-    init(active: Bool = true, @ViewBuilder content: () -> Content) {
-        self.active = active
-        self.content = content()
+    private var ownsCrown: Bool {
+        active && screenIsTop && visible
+            && presenter.target == nil && !presenter.isTransitioning
     }
 
-    /// The one rule: the visible screen, on the top page, not covered by a push.
-    private var mayOwnCrown: Bool { active && screenIsTop }
-
-    var body: some View {
-        content
-            // The preference has to sit on the focusable view itself (the
-            // scroll view), not on a wrapper around it.
-            .prefersDefaultFocus(mayOwnCrown, in: scope)
-            .focusScope(scope)
-            // Coming back from a pushed screen: this screen is visible again, but
-            // nothing told the focus system (Apple: "not when responding to
-            // user-driven navigation commands").
+    func body(content: Content) -> some View {
+        // Read on every pass, so a delayed request sees the truth.
+        claim.allowed = ownsCrown
+        return content
+            .focused($focused)
             .onAppear {
                 visible = true
-                reevaluate()
+                apply()
             }
-            .onDisappear { visible = false }
-            .onChange(of: active) { _, _ in reevaluate() }
-            // The deterministic half: `RouteView` says the screen above went away.
-            .onChange(of: screenIsTop) { _, isTop in
-                if isTop { reevaluate() }
+            .onDisappear {
+                visible = false
+                focused = false
             }
-            .background { CrownFocusReclaim(scope: scope, enabled: mayOwnCrown && visible) }
+            .onChange(of: ownsCrown) { _, _ in apply() }
+            // A sheet just closed over this screen: same ownership, but the
+            // system moved focus to the sheet and did not bring it back.
+            .background { CrownFocusReclaim(enabled: true) { apply() } }
     }
 
-    private func reevaluate() {
-        guard mayOwnCrown, visible else { return }
-        resetFocus(in: scope)
+    private func apply() {
+        guard ownsCrown else {
+            focused = false
+            return
+        }
+        request(attempt: 0)
+    }
+
+    /// Release, then request: after another screen owned the crown this binding
+    /// can still read `true` while the engine's focus is gone (fd4cbc3), so
+    /// assigning `true` again would not be a change. The retries cover the
+    /// system's own animations (a pop, the viewer's removal), which we cannot
+    /// observe; every one of them is skipped the moment this screen stops owning
+    /// the crown, so they can never steal it from a screen opened in between.
+    private func request(attempt: Int) {
+        guard claim.allowed else { return }
+        focused = false
+        DispatchQueue.main.async {
+            guard claim.allowed else { return }
+            focused = true
+            let waits: [Double] = [0.3, 0.9]
+            guard attempt < waits.count else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + waits[attempt]) {
+                guard claim.allowed else { return }
+                request(attempt: attempt + 1)
+            }
+        }
     }
 }
 
-/// Reclaims the crown after the viewer / a sheet / a cover goes away. Its own
-/// view so observing the signal never re-renders the screen's content.
-private struct CrownFocusReclaim: View {
-    let scope: Namespace.ID
-    let enabled: Bool
+/// Mutable box for the ownership flag (never part of the view's state).
+private final class CrownClaim {
+    var allowed = false
+}
 
-    @Environment(\.resetFocus) private var resetFocus
+/// Takes the crown back after a presentation goes away. Its own view so observing
+/// the signal never re-renders the screen's content.
+private struct CrownFocusReclaim: View {
+    let enabled: Bool
+    let action: () -> Void
+
     @ObservedObject private var mark = CrownFocusMark.shared
 
     var body: some View {
@@ -131,13 +152,13 @@ private struct CrownFocusReclaim: View {
             .frame(width: 0, height: 0)
             .accessibilityHidden(true)
             .onChange(of: mark.generation) { _, _ in
-                if enabled { resetFocus(in: scope) }
+                if enabled { action() }
             }
     }
 }
 
 extension View {
     func crownScrollFocus(active: Bool = true) -> some View {
-        CrownScrollFocus(active: active) { self }
+        modifier(CrownScrollFocus(active: active))
     }
 }

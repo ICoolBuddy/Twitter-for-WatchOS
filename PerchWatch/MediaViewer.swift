@@ -26,10 +26,6 @@ struct MediaViewer: View {
     /// ignored. Local, so the root host, a sheet's host and a cover behave the
     /// same. Never cleared: this instance is on its way out.
     @State private var closing = false
-    /// One focus scope for the viewer: exactly one page is the crown's default
-    /// target at a time.
-    @Namespace private var crownScope
-    @Environment(\.resetFocus) private var resetFocus
     @State private var selection: Int
     /// The visible photo is zoomed: a downward drag pans instead of closing.
     @State private var zoomed = false
@@ -66,11 +62,7 @@ struct MediaViewer: View {
         }
         .background(Color.black)
         .simultaneousGesture(dismissDrag)
-        .focusScope(crownScope)
-        .onAppear {
-            showControls()
-            resetFocus(in: crownScope)
-        }
+        .onAppear { showControls() }
         .onChange(of: selection, initial: true) { _, index in
             // `zoomed` decides whether a downward drag pans or closes, and only the
             // visible page can write it: paging away from a zoomed photo used to leave
@@ -78,12 +70,7 @@ struct MediaViewer: View {
             zoomed = false
             dragDown = 0
             prefetchNeighbours(around: index)
-            // The crown's owner changes with the page.
-            resetFocus(in: crownScope)
         }
-        // Photo: zoom. Video: scrub while the chrome is visible, the Watch's
-        // volume otherwise. Re-evaluate instead of assigning focus from a timer.
-        .onChange(of: controlsVisible) { _, _ in resetFocus(in: crownScope) }
         .onDisappear { neighbourPrefetch?.cancel() }
         .onDisappear { hideTask?.cancel() }
         .onDisappear {
@@ -98,7 +85,7 @@ struct MediaViewer: View {
         if media.count == 1 {
             // One attachment is not a pager: no sideways swipe at all.
             MediaPage(media: media[0], title: title, caption: caption, isActive: true,
-                      scope: crownScope, closing: closing,
+                      closing: closing,
                       zoomed: $zoomed,
                       controlsVisible: $controlsVisible,
                       touch: showControls, toggleControls: toggleControls)
@@ -108,7 +95,6 @@ struct MediaViewer: View {
                 ForEach(media.indices, id: \.self) { index in
                     MediaPage(media: media[index], title: title, caption: caption,
                               isActive: selection == index,
-                              scope: crownScope,
                               closing: closing,
                               zoomed: selection == index ? $zoomed : .constant(false),
                               controlsVisible: $controlsVisible,
@@ -259,8 +245,6 @@ private struct MediaPage: View {
     var title: String?
     var caption: String?
     let isActive: Bool
-    /// The viewer's one focus scope: exactly one page is the crown's target.
-    let scope: Namespace.ID
     /// The viewer is closing: no page may hold the crown any more.
     let closing: Bool
     @Binding var zoomed: Bool
@@ -271,11 +255,11 @@ private struct MediaPage: View {
     var body: some View {
         switch media.type {
         case .photo:
-            MediaPhotoPage(media: media, isActive: isActive, scope: scope, closing: closing,
+            MediaPhotoPage(media: media, isActive: isActive, closing: closing,
                            zoomed: $zoomed, touch: touch)
         case .video, .gif:
             MediaVideoPage(media: media, title: title, caption: caption, isActive: isActive,
-                           scope: scope, closing: closing,
+                           closing: closing,
                            controlsVisible: $controlsVisible,
                            touch: touch, toggleControls: toggleControls)
         }
@@ -288,10 +272,13 @@ private struct MediaPage: View {
 private struct MediaPhotoPage: View {
     let media: XMedia
     let isActive: Bool
-    let scope: Namespace.ID
     let closing: Bool
     @Binding var zoomed: Bool
     let touch: () -> Void
+
+    /// The crown zooms the photo on screen (with several attachments, focus
+    /// used to stay on the first page).
+    @FocusState private var crownFocused: Bool
 
     @State private var zoom: Double = 1
     @State private var offset: CGSize = .zero
@@ -328,14 +315,20 @@ private struct MediaPhotoPage: View {
         // has started closing: an off-screen page must not swallow it, and the
         // crown has to be free again while the viewer fades out.
         .focusable(isActive && !closing)
-        .prefersDefaultFocus(isActive && !closing, in: scope)
+        .focused($crownFocused)
         .onChange(of: isActive) { _, active in
             if active {
                 // While off screen this page could not write `zoomed`: re-publish its zoom.
                 zoomed = zoom > 1.05
                 // The full-size copy is for the page on screen.
                 if !wantsFull { wantsFull = LinkSpeed.prefersFullPhoto(media) }
+                claimCrown()
+            } else {
+                crownFocused = false
             }
+        }
+        .onChange(of: closing) { _, closing in
+            if closing { crownFocused = false }
         }
         .digitalCrownRotation($zoom, from: 1, through: 5, by: 0.1,
                               sensitivity: .medium, isContinuous: false,
@@ -361,11 +354,19 @@ private struct MediaPhotoPage: View {
             if isActive {
                 zoomed = zoom > 1.05
                 wantsFull = LinkSpeed.prefersFullPhoto(media)
+                claimCrown()
             }
         }
         .onDisappear { zoomed = false }
         .ignoresSafeArea()
         .accessibilityLabel(media.altText ?? "Image")
+    }
+
+    /// After the viewer's open animation; focusing during it does not stick.
+    private func claimCrown() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            if isActive, !closing { crownFocused = true }
+        }
     }
 
     /// Largest offset that still keeps the scaled image covering the frame in
@@ -418,13 +419,13 @@ private struct MediaVideoPage: View {
     var title: String?
     var caption: String?
     let isActive: Bool
-    let scope: Namespace.ID
     let closing: Bool
     @Binding var controlsVisible: Bool
     let touch: () -> Void
     let toggleControls: () -> Void
 
     @StateObject private var playback = VideoPlayback()
+    @FocusState private var crownFocused: Bool
     @State private var crown = 0.0
     @State private var lastCrown = 0.0
     @State private var volumeHUD: Double?
@@ -460,6 +461,7 @@ private struct MediaVideoPage: View {
                 .contentShape(Rectangle())
                 .onTapGesture {
                     toggleControls()
+                    claimCrown()
                 }
 
             if controlsVisible { controls }
@@ -477,7 +479,7 @@ private struct MediaVideoPage: View {
         // Chrome visible: this page owns the crown (scrub). Hidden: it is not
         // focusable at all, so the system volume control below gets it.
         .focusable(isActive && controlsVisible && !closing)
-        .prefersDefaultFocus(isActive && controlsVisible && !closing, in: scope)
+        .focused($crownFocused)
         .digitalCrownRotation($crown, from: -100_000, through: 100_000, by: 1,
                               sensitivity: .low, isContinuous: false,
                               isHapticFeedbackEnabled: false)
@@ -491,18 +493,23 @@ private struct MediaVideoPage: View {
             detent(Int(target.rounded(.down)))
             touch()
         }
-        .onChange(of: controlsVisible) { _, _ in
-            // The viewer re-evaluates its focus scope on this change; only the
-            // haptic detent baseline is left here.
+        .onChange(of: controlsVisible) { _, visible in
             lastDetent = nil
+            // Chrome visible: our page takes the crown (scrub). Hidden: hand it
+            // to the system volume control.
+            crownFocused = visible && isActive && !closing
         }
         // The Watch's volume changed (crown, or the Now Playing app): show it.
         .onChange(of: playback.systemVolume) { _, value in
             if isActive, !controlsVisible { showVolume(value) }
         }
+        .onChange(of: closing) { _, closing in
+            if closing { crownFocused = false }
+        }
         .onAppear {
             if isActive {
                 playback.start(media, title: title, caption: caption)
+                claimCrown()
             }
         }
         .onDisappear {
@@ -512,7 +519,9 @@ private struct MediaVideoPage: View {
         .onChange(of: isActive) { _, active in
             if active {
                 playback.start(media, title: title, caption: caption)
+                claimCrown()
             } else {
+                crownFocused = false
                 playback.stop()
             }
         }
@@ -527,6 +536,14 @@ private struct MediaVideoPage: View {
             }
         }
         .accessibilityLabel(media.altText ?? (media.type == .gif ? "GIF" : "Video"))
+    }
+
+    private func claimCrown() {
+        // After the viewer's open animation; focusing during it does not stick.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            // Scrubbing needs our focus; volume belongs to the system control.
+            if isActive, !closing { crownFocused = controlsVisible }
+        }
     }
 
     /// A click each time the crown crosses a detent (rate-limited so a fast
@@ -590,6 +607,7 @@ private struct MediaVideoPage: View {
             Button {
                 playback.togglePlayPause()
                 touch()
+                claimCrown()
             } label: {
                 Image(systemName: controlIcon)
                     .font(.system(size: 22, weight: .semibold))

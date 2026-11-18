@@ -10,7 +10,7 @@ struct PagedListStatus<Item: Identifiable & Hashable>: View {
     var emptyText: String
     /// Extra line under the title (the feeds' "pull to refresh" hint).
     var emptyHint: String? = nil
-    var loading: Loading = .spinner
+    var loading: Loading = .postSkeletons
 
     enum Loading { case spinner, postSkeletons }
 
@@ -24,7 +24,14 @@ struct PagedListStatus<Item: Identifiable & Hashable>: View {
         case .empty:
             emptyState
         case .content, .paging:
-            EmptyView()
+            // A refresh over posts already on screen: one placeholder at the top
+            // shows where the new posts will land (the edge glow / pull indicator
+            // shows the fetch itself).
+            if list.isRefreshing {
+                PostSkeleton(mediaHeight: 90)
+                    .transition(.opacity)
+                    .padding(.vertical, 4)
+            }
         }
     }
 

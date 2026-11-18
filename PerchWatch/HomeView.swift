@@ -112,13 +112,6 @@ struct HomeView: View {
                         loading: .postSkeletons)
             .padding(.vertical, list.phase == .empty ? 10 : 0)
         if !list.isEmpty {
-            // A refresh over posts already on screen: a placeholder post at the top
-            // shows where the new posts will appear (with the edge glow).
-            if list.isRefreshing && list.hasLoadedFirstPage {
-                PostSkeleton(mediaHeight: 90)
-                    .transition(.opacity)
-                PostSeparator()
-            }
             ForEach(list.items) { item in
                 VStack(alignment: .leading, spacing: 0) {
                     TimelineItemRows(item: item,
