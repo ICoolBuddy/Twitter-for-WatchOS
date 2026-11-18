@@ -54,7 +54,29 @@ fixed in round 2 by trying the other direction. F and S were cancelled once T st
 Reading: the three side-by-side live scroll views are the cause. P (one live page) fixes most
 of it; the system pager fixes all of it, including the toolbar-button cases.
 
-## Round 2
+## Round 2 — run 44299883015 (2 cold launches each)
 
-Matrix A / T / TM / TR with the harness fixes and S23 (Bookmarks popped by a swipe — the case
-where a page-style TabView once showed a black screen). Results: _pending_.
+Harness fixes (probe existence, other crown direction at a list end, media posts first) plus
+S23 = Bookmarks popped by a swipe — the case where a page-style TabView once showed a black
+screen. R = rebuild the visible feed's scroll view (new identity) after a page change, pop,
+sheet close or viewer close.
+
+| Scenario | A (shipped) | TR |
+|---|---|---|
+| S1 cold launch | ✅ | ✅ |
+| S2 / S3 swipes | ❌ | ✅ / ✅ |
+| S4 / S6 to the menu | ✅ | ✅ |
+| S5 menu → toolbar → feed | ❌ | ✅ |
+| S10 / S11 post → back | ❌ | ✅ / ✅ |
+| S12 photo viewer → close | ❌ 0/2 | ✅ (1 measured) |
+| S16 sheet → Close | ❌ | ✅ |
+| S18 Bookmarks push | ✅ | ✅ |
+| S19 Bookmarks → Back → menu | ✅ | ✅ |
+| S22 post → Back → hamburger | ✅ (1) | ✅ (1) |
+| S23 Bookmarks → swipe pop → menu | ✅ | ✅ (menu on screen: no black screen) |
+
+T and TM ran out of the 45-minute job budget before the media scenarios. The menu `List`
+recovers after pops even on A; only the feed `ScrollView`s lose the crown.
+
+R works but resets the feed to the top after every pop/swipe (new scroll view identity), so
+plain T has to be measured on the media scenarios before choosing (round 3).
