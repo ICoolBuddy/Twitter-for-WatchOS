@@ -4,15 +4,8 @@ name: Crown matrix
 # each running the crown routing UI tests against the DEBUG fixture session with
 # `-crownVariant <letters>`, then one table: scenarios x variants, k/n = how many cold
 # launches the crown scrolled the list on screen with no touch after the last step.
+# Manual only: each job is a macOS runner for up to an hour (10x billed minutes).
 on:
-  push:
-    branches: [crown-lab, claude/perch-apple-watch-x-client-jl9lf5]
-    paths:
-      - "PerchWatch/**"
-      - "PerchWatchUITests/**"
-      - "Shared/**"
-      - "project.yml"
-      - ".github/workflows/crown.yml"
   workflow_dispatch:
     inputs:
       variants:

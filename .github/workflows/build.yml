@@ -2,6 +2,10 @@ name: Build
 
 on:
   push:
+    # Docs-only pushes do not need a macOS build.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   workflow_dispatch:
     inputs:
       bundle_id:
