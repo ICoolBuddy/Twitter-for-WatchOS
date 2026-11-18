@@ -20,6 +20,8 @@ struct MediaViewer: View {
     var caption: String? = nil
     /// Dismiss handler for the root overlay presentation (`nil` inside a cover).
     var onClose: (() -> Void)? = nil
+    /// False inside a `fullScreenCover`, which already has watchOS' close button.
+    var showsCloseButton = true
 
     @Environment(\.dismiss) private var dismiss
     /// The viewer is going away: pages drop crown focus and close actions are
@@ -36,11 +38,12 @@ struct MediaViewer: View {
     @State private var hideTask: Task<Void, Never>?
 
     init(media: [XMedia], startIndex: Int, title: String? = nil, caption: String? = nil,
-         onClose: (() -> Void)? = nil) {
+         onClose: (() -> Void)? = nil, showsCloseButton: Bool = true) {
         self.media = media
         self.title = title
         self.caption = caption
         self.onClose = onClose
+        self.showsCloseButton = showsCloseButton
         let start = media.isEmpty ? 0 : min(max(startIndex, 0), media.count - 1)
         _selection = State(initialValue: start)
     }
@@ -57,8 +60,17 @@ struct MediaViewer: View {
                 if media.count > 1 { counter }
             }
 
-            closeButton
+            if showsCloseButton { closeButton }
             closeGesture
+            #if DEBUG
+            // Crown routing tests: "the viewer is open", whichever close button it has.
+            Text(verbatim: "viewer")
+                .font(.system(size: 1))
+                .foregroundStyle(.clear)
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+                .accessibilityIdentifier("media.viewer")
+            #endif
         }
         .background(Color.black)
         .simultaneousGesture(dismissDrag)

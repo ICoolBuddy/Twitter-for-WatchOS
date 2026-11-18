@@ -14,8 +14,6 @@ struct HomeView: View {
 
     @EnvironmentObject private var app: AppModel
     @AppStorage(PerchSettings.autoRefreshOnOpen) private var autoRefreshOnOpen = true
-    /// crown-lab `R` (see `CrownLab`).
-    @Environment(\.crownGeneration) private var crownGeneration
 
     /// Owned by `RootPager`, which also draws the edge glow from it.
     @ObservedObject var list: PagedList<TimelineItem>
@@ -53,8 +51,6 @@ struct HomeView: View {
                 .padding(.horizontal, Metrics.horizontalPadding)
             }
             .background(Color.black)
-            // crown-lab `R`: a new scroll view identity when the pager asks for one.
-            .modifier(CrownLabRebuild(generation: crownGeneration))
             // The edge glow is drawn by `RootGlow` straight from the lists; pulling
             // or turning the crown only triggers the refresh.
             .pullToRefresh(isRefreshing: list.isRefreshing, failed: list.error != nil) {

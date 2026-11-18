@@ -279,7 +279,7 @@ final class CrownRoutingTests: XCTestCase {
                 return .blocked("the viewer's close button was not tappable")
             }
             self.settle()
-            guard !self.app.buttons["media.close"].exists else {
+            guard !self.element("media.viewer").exists else {
                 return .blocked("the viewer did not close")
             }
             return .ready("photo viewer opened (crown there zooms, not measured), closed")
@@ -306,7 +306,7 @@ final class CrownRoutingTests: XCTestCase {
                 return .blocked("the viewer's close button was not tappable")
             }
             self.settle()
-            guard !self.app.buttons["media.close"].exists else {
+            guard !self.element("media.viewer").exists else {
                 return .blocked("the viewer did not close")
             }
             return .ready("video viewer opened (crown there is the volume control / scrub), closed")
@@ -450,7 +450,7 @@ final class CrownRoutingTests: XCTestCase {
                 return .blocked("the viewer's close button was not tappable")
             }
             self.settle()
-            guard !self.app.buttons["media.close"].exists else {
+            guard !self.element("media.viewer").exists else {
                 return .blocked("the viewer did not close")
             }
             return .ready("GIF viewer opened, closed")
@@ -772,7 +772,7 @@ final class CrownRoutingTests: XCTestCase {
         } else {
             guard tap(tile) else { return false }
         }
-        return app.buttons["media.close"].waitForExistence(timeout: 10)
+        return element("media.viewer").waitForExistence(timeout: 10)
     }
 
     /// The viewer hides its chrome after 1.2 s (`MediaViewer.showControls`); a tap
@@ -784,34 +784,31 @@ final class CrownRoutingTests: XCTestCase {
     /// media when it is hidden, and tap the button only while it is visible. Verified
     /// by the button going away.
     private func closeViewer() -> Bool {
+        let viewer = element("media.viewer")
         let close = app.buttons["media.close"]
         for _ in 0..<5 {
-            guard close.exists else { return true }
-            if (close.value as? String) != "visible" {
-                app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)).tap()
-                Thread.sleep(forTimeInterval: 0.3)
-            }
-            // The video page's own controls overlay the corner, so XCUITest calls the
-            // button "not hittable" even while it is visible: tap its coordinates.
-            if (close.value as? String) == "visible" {
-                // Inside a fullScreenCover (crown-lab M) XCUITest can report an infinite
-                // frame: a coordinate tap there throws, so use the element tap instead.
+            guard viewer.exists else { return true }
+            if close.exists {
+                // Overlay viewer (inside a sheet): its own close button.
+                if (close.value as? String) != "visible" {
+                    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)).tap()
+                    Thread.sleep(forTimeInterval: 0.3)
+                }
                 let f = close.frame
-                if f.minX.isFinite, f.minY.isFinite, f.width.isFinite, f.width > 0 {
-                    // An absolute screen point: the element is not resolved again at tap
-                    // time (the video chrome can hide in between, which threw INFINITY).
+                if (close.value as? String) == "visible", f.minX.isFinite, f.minY.isFinite, f.width > 0 {
                     app.coordinate(withNormalizedOffset: .zero)
                         .withOffset(CGVector(dx: f.midX, dy: f.midY)).tap()
-                } else if close.isHittable {
-                    close.tap()
-                } else if let system = systemCoverClose() {
-                    system.tap()
                 }
-                Thread.sleep(forTimeInterval: 0.6)
-                if !close.exists { return true }
+            } else if let system = systemCoverClose() {
+                // Root viewer (fullScreenCover): watchOS' close button.
+                system.tap()
+            } else {
+                // Where watchOS draws the cover's X (top left), if it is not exposed.
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.16, dy: 0.14)).tap()
             }
+            Thread.sleep(forTimeInterval: 0.8)
         }
-        return !close.exists
+        return !viewer.exists
     }
 
     /// The close (X) button watchOS draws on a `fullScreenCover`, if any.

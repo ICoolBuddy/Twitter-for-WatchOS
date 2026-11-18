@@ -95,8 +95,8 @@ workflows:
     environment:
       xcode: latest
       vars:
-        # Letters from PerchWatch/CrownLab.swift ("A" = shipped code, "T" = system pager).
-        CROWN_VARIANT: "T"
+        # "A" = the shipped code (the crown experiments were removed after the fix).
+        CROWN_VARIANT: "A"
         # Scenario ids from PerchWatchUITests/CrownRoutingTests.swift ("" = all).
         CROWN_ONLY: "S2,S5,S7,S8,S10,S12,S14,S16,S20,S21,S23"
         CROWN_ITERATIONS: "2"

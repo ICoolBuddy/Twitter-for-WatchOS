@@ -100,18 +100,17 @@ struct WatchRootView: View {
                 NavigationStack { OnboardingView() }
             }
 
-            // Full-screen media lives above the whole app: no system close
-            // button, and the clock can be hidden while it is open.
-            // (crown-lab `M` presents it with a fullScreenCover instead.)
-            if !CrownLab.mediaCover {
-                MediaHost(root: true)
-            }
         }
+        // Full-screen media is a real presentation (crown fix, 2026-11-18): when an
+        // overlay viewer went away, watchOS did not hand the crown back to the feed;
+        // dismissing a presentation is a moment it re-picks the crown's scroll view.
+        // The cover brings watchOS' own close (X) button, so the viewer drops its own.
         .fullScreenCover(isPresented: mediaCoverPresented) {
             if let target = presenter.target {
                 MediaViewer(media: target.media, startIndex: target.startIndex,
                             title: target.title, caption: target.caption,
-                            onClose: { presenter.close() })
+                            onClose: { presenter.close() }, showsCloseButton: false)
+                    ._statusBarHidden(true)
             }
         }
         // One app-wide notice for a dead session (X answered 401) instead of an error
@@ -123,7 +122,6 @@ struct WatchRootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: app.sessionExpired)
-        ._statusBarHidden(presenter.target != nil)
         // Logout: do not restore the old stack when the next session appears.
         .onChange(of: app.canBrowse) { _, canBrowse in
             if !canBrowse { nav.path = [] }
@@ -132,11 +130,11 @@ struct WatchRootView: View {
 }
 
 extension WatchRootView {
-    /// crown-lab `M`: the root media viewer as a real presentation, so closing it is a
-    /// presentation change (the system re-picks the crown target on those).
+    /// The root media viewer is presented while there is a target and no sheet is up
+    /// (a sheet draws its own `MediaHost`).
     var mediaCoverPresented: Binding<Bool> {
         Binding(
-            get: { CrownLab.mediaCover && presenter.target != nil && presenter.sheetDepth == 0 },
+            get: { presenter.target != nil && presenter.sheetDepth == 0 },
             set: { presented in if !presented { presenter.close() } }
         )
     }
@@ -188,8 +186,17 @@ struct SessionExpiredBanner: View {
 /// the hamburger button animates to the menu. Every page shares the root
 /// `NavigationStack`, so menu entries push over whichever page is showing.
 /// The toolbar lives here so the pages never contribute one themselves.
+///
+/// The pager is the system's `TabView(.page)` (crown fix, 2026-11-18). The hand-rolled
+/// offset pager it replaces kept three live scroll views side by side with the
+/// off-screen two `.disabled`; watchOS then routed the Digital Crown nowhere every
+/// time a feed became the visible list again (page swipe, toolbar button, pop, sheet
+/// dismissal) until a finger touched it. Measured in the simulator by
+/// `PerchWatchUITests/CrownRoutingTests.swift`; see `docs/crown/PHASE2-REPORT.md`.
+/// The system pager hands the crown to the page on screen by itself, so there is no
+/// focus code here (explicit focus on a scroll view suppresses that routing).
 struct RootPager: View {
-    /// False while a detail screen is pushed: the crown belongs to that screen.
+    /// False while a detail screen is pushed.
     var rootActive = true
     @AppStorage(PerchSettings.homeKind) private var kindRaw = HomeKind.forYou.rawValue
     @State private var page = 1
@@ -200,45 +207,17 @@ struct RootPager: View {
     /// The feed page to return to from the menu (1 = For You, 2 = Following).
     @State private var lastFeed = 1
     @State private var didStart = false
-    /// Live horizontal finger offset while swiping between pages.
-    @State private var dragX: CGFloat = 0
-    /// The axis this drag was decided as (see `PagerSwipe`); nil before it is known.
-    @State private var dragAxis: PagerSwipe.Axis?
-    /// True while the drag gesture is live; SwiftUI resets it when the gesture ends
-    /// *or is cancelled*, which is how a lost `onEnded` is noticed.
-    @GestureState private var dragLive = false
-
-    // A hand-rolled pager instead of `TabView(.page)`: a page-style TabView
-    // inside the root NavigationStack rendered a black screen after a pushed
-    // screen (Bookmarks, Notifications…) was popped with a swipe. Three pages
-    // side by side, moved by offset; vertical scrolling inside them is left
-    // alone (only clearly horizontal drags page).
-    // (crown-lab: `CrownLab.pagerTabView` brings the TabView back to measure it.)
-    /// crown-lab `P`: true while a swipe or a page animation needs the neighbours drawn.
-    @State private var pagesInMotion = false
-    /// crown-lab `R`: bumped when a feed becomes the visible scroll view again.
-    @State private var crownGeneration = 0
-    @ObservedObject private var presenter = MediaPresenter.shared
 
     var body: some View {
-        pager
-        .environment(\.crownGeneration, crownGeneration)
-        // crown-lab `R`: the moments the crown was measured lost (baseline S2/S3/S5,
-        // S10/S11, S16, media): a page change settling, a pop to the root, a sheet
-        // closing, the media viewer closing.
-        .onChange(of: pagesInMotion) { _, moving in if !moving { rebuildVisibleFeed() } }
-        // (The TabView pages without `animatePages` for a swipe.)
-        .onChange(of: page) { _, _ in if CrownLab.pagerTabView { rebuildVisibleFeed() } }
-        .onChange(of: rootActive) { _, active in if active { rebuildVisibleFeed() } }
-        .onChange(of: presenter.sheetDepth) { _, depth in if depth == 0 { rebuildVisibleFeed() } }
-        .onChange(of: presenter.target == nil) { _, closed in if closed { rebuildVisibleFeed() } }
-        // No `.clipped()` and no `.ignoresSafeArea()` here (measured with the
-        // layout probe in the CI screenshots): the pager's frame is the safe
-        // area (y62 h150 on a 46 mm watch) while each page's scroll view extends
-        // to the full 248 pt screen, so clipping cut the feed into black bars
-        // at the top and bottom, and ignoring the safe area removed the
-        // scroll view's insets (first post under the clock). The neighbouring
-        // pages sit outside the display anyway, so nothing needs clipping.
+        TabView(selection: $page) {
+            MenuView(onPick: { kind in goFeed(kind) })
+                .tag(0)
+            HomeView(kind: .forYou, isActive: rootActive && page == 1, list: forYou)
+                .tag(1)
+            HomeView(kind: .following, isActive: rootActive && page == 2, list: following)
+                .tag(2)
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
         .background(Color.black)
         // One glow for the whole pager (not per page), so a refresh that is
         // still running stays visible after swiping to the other feed or the menu.
@@ -251,15 +230,13 @@ struct RootPager: View {
                     Image(systemName: page == 0 ? "chevron.left" : "line.3.horizontal")
                 }
                 .accessibilityLabel(page == 0 ? "Back to feed" : "Menu")
-                // crown-lab: the one chrome button the routing tests press.
+                // The crown routing tests press this one.
                 .accessibilityIdentifier("chrome.menuToggle")
-                // crown-lab `F`: can a tapped toolbar button keep the crown?
-                .modifier(CrownLabUnfocusable(active: CrownLab.chromeUnfocusable))
             }
         }
         .onAppear {
             // Only once: re-assigning the page every time the root comes back
-            // from a pushed screen made the pager flash black while it settled.
+            // from a pushed screen made the pager flash while it settled.
             guard !didStart else { return }
             didStart = true
             page = kindRaw == HomeKind.following.rawValue ? 2 : 1
@@ -281,141 +258,13 @@ struct RootPager: View {
         }
     }
 
-    @ViewBuilder
-    private var pager: some View {
-        if CrownLab.pagerTabView {
-            // crown-lab `T`: the system pager, so paging and the crown hand-off are the
-            // system's. Same three pages, same order, starting on the same page.
-            TabView(selection: $page) {
-                menuPage.tag(0)
-                HomeView(kind: .forYou, isActive: rootActive && page == 1, list: forYou).tag(1)
-                HomeView(kind: .following, isActive: rootActive && page == 2, list: following).tag(2)
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-        } else {
-            GeometryReader { geo in
-                let w = geo.size.width
-                HStack(spacing: 0) {
-                    // Off-screen pages are disabled: a disabled view cannot take
-                    // focus, so the Digital Crown can only ever land on the page
-                    // that is on screen. (All three pages stay alive; an enabled
-                    // off-screen list was taking the crown on launch and after the
-                    // media viewer closed, which is why it needed a touch first.)
-                    pageSlot(0, width: w) { menuPage }
-                    pageSlot(1, width: w) {
-                        HomeView(kind: .forYou, isActive: rootActive && page == 1, list: forYou)
-                    }
-                    pageSlot(2, width: w) {
-                        HomeView(kind: .following, isActive: rootActive && page == 2, list: following)
-                    }
-                }
-                .frame(width: w, alignment: .leading)
-                .offset(x: -CGFloat(page) * w + dragX)
-                .simultaneousGesture(pagerDrag(width: w))
-                .onChange(of: dragLive) { _, live in
-                    guard !live else { return }
-                    // `onEnded` and this reset arrive at the same lift in either order; after
-                    // one runloop hop a still-set axis means the gesture was cancelled (wrist
-                    // down, a sheet appeared) without `onEnded`: settle back, release taps.
-                    DispatchQueue.main.async {
-                        guard dragAxis != nil else { return }
-                        dragAxis = nil
-                        SwipeGuard.end()
-                        animatePages(.spring(response: 0.28, dampingFraction: 0.9)) { dragX = 0 }
-                    }
-                }
-            }
-        }
-    }
-
-    private var menuPage: some View {
-        MenuView(onPick: { kind in
-            goFeed(kind)
-        })
-    }
-
-    /// One page of the hand-rolled pager. crown-lab `P` leaves an off-screen page out of
-    /// the view tree while the pager is at rest; `S` scroll-disables it instead of
-    /// disabling it; the shipped code disables it.
-    @ViewBuilder
-    private func pageSlot<Content: View>(_ n: Int, width w: CGFloat,
-                                         @ViewBuilder content: () -> Content) -> some View {
-        let onScreen = page == n
-        if CrownLab.pagerOnlyVisible && !onScreen && !pagesInMotion && dragAxis != .horizontal {
-            Color.black.frame(width: w)
-        } else if CrownLab.pagerScrollDisabled {
-            content()
-                .frame(width: w)
-                .scrollDisabled(!onScreen)
-        } else {
-            content()
-                .frame(width: w)
-                .disabled(!onScreen)
-        }
-    }
-
-    /// crown-lab `R`: after the transition has finished drawing.
-    private func rebuildVisibleFeed() {
-        guard CrownLab.rebuildOnReturn else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { crownGeneration += 1 }
-    }
-
-    /// Animates a page change and tells `P` when the neighbours may go away again.
-    private func animatePages(_ animation: Animation, _ change: () -> Void) {
-        pagesInMotion = true
-        withAnimation(animation, completionCriteria: .logicallyComplete) {
-            change()
-        } completion: {
-            pagesInMotion = false
-        }
-    }
-
     private func goFeed(_ kind: HomeKind) {
         kindRaw = kind.rawValue
         go(kind == .following ? 2 : 1)
     }
 
-    /// Pages only for a deliberate sideways swipe (`PagerSwipe` has the rule and its
-    /// numbers): the axis is decided early and revoked if the drag turns out vertical,
-    /// and the commit needs real horizontal travel, so a vertical scroll with a thumb arc
-    /// no longer opens the menu.
-    private func pagerDrag(width w: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 15)
-            .updating($dragLive) { _, live, _ in live = true }
-            .onChanged { value in
-                let dx = value.translation.width
-                let dy = value.translation.height
-                let axis = PagerSwipe.axis(decided: dragAxis, dx: Double(dx), dy: Double(dy))
-                if axis != dragAxis { dragAxis = axis }
-                guard axis == .horizontal else {
-                    // A scroll (or a revoked arc) never offsets the page or blocks taps.
-                    SwipeGuard.end()
-                    if dragX != 0 { withAnimation(.easeOut(duration: 0.15)) { dragX = 0 } }
-                    return
-                }
-                SwipeGuard.begin()
-                // Rubber band past the first and last page.
-                let atEdge = (page == 0 && dx > 0) || (page == 2 && dx < 0)
-                dragX = atEdge ? dx * 0.25 : dx
-            }
-            .onEnded { value in
-                let axis = dragAxis
-                dragAxis = nil
-                SwipeGuard.end()
-                guard axis == .horizontal else { return }
-                let target = PagerSwipe.target(page: page, width: Double(w),
-                                               dx: Double(value.translation.width),
-                                               dy: Double(value.translation.height),
-                                               predicted: Double(value.predictedEndTranslation.width))
-                animatePages(.spring(response: 0.28, dampingFraction: 0.9)) {
-                    page = target
-                    dragX = 0
-                }
-            }
-    }
-
     private func go(_ target: Int) {
-        animatePages(.easeInOut(duration: 0.2)) { page = target }
+        withAnimation(.easeInOut(duration: 0.2)) { page = target }
     }
 }
 
