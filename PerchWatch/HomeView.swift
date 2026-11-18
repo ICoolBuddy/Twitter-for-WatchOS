@@ -33,8 +33,6 @@ struct HomeView: View {
     /// False only for a freshly created page (the system pager can drop an
     /// off-screen page and build it again): that one restores `place` on appear.
     @State private var hasAppeared = false
-    /// EXPERIMENT (variant O): restore by content offset instead of by post id.
-    @State private var offsetPosition = ScrollPosition(idType: String.self)
 
     /// The top of the list: a zero-height anchor laid out before any row, so a refresh
     /// can scroll up without waiting for the new first post to exist.
@@ -61,9 +59,11 @@ struct HomeView: View {
                 .padding(.horizontal, Metrics.horizontalPadding)
             }
             .background(Color.black)
-            .modifier(OffsetRestore(position: $offsetPosition, active: MediaLab.has("O")))
-            .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, y in
-                if visibility.isActive, place.restoringY == nil { place.liveY = y }
+            .onScrollGeometryChange(for: CGSize.self) {
+                CGSize(width: $0.contentInsets.top, height: $0.containerSize.height)
+            } action: { _, g in
+                place.topInset = g.width
+                place.viewportHeight = g.height
             }
             .id(returnToken)
             #if DEBUG
@@ -77,35 +77,6 @@ struct HomeView: View {
                     .accessibilityValue(placeDebug)
             }
             #endif
-            .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.3) { ids in
-                // Only while this feed is the one being read: a page leaving the
-                // screen (or a rebuilt one, which starts at the top) must not
-                // overwrite where the reader was.
-                guard visibility.isActive else { return }
-                let visible = Set(ids)
-                let top = list.items.first(where: { visible.contains($0.id) })?.id
-                // A restore in flight: a LazyVStack scrolled to a row it has not
-                // measured yet lands short (measured: y 1989 -> 760), so aim again
-                // each time it reports where it really is, a few times at most.
-                if let target = place.restoringID {
-                    if top == target || place.restoreTries >= 4 {
-                        place.restoringID = nil
-                    } else {
-                        place.restoreTries += 1
-                        DispatchQueue.main.async { proxy.scrollTo(target, anchor: .top) }
-                        return
-                    }
-                }
-                // What X calls an impression: sent with the next home request.
-                for item in list.items where visible.contains(item.id) {
-                    place.seen.mark(item)
-                }
-                if let top {
-                    place.liveTopID = top
-                } else if visible.contains(Self.topAnchor) {
-                    place.liveTopID = nil
-                }
-            }
             // Swiped back to: the scroll view was rebuilt (crown), put the reader back.
             .onChange(of: returnToken) { _, _ in restore(proxy) }
             .onAppear {
@@ -138,10 +109,7 @@ struct HomeView: View {
             .onChange(of: isActive, initial: true) { _, active in
                 visibility.isActive = active
                 // Leaving this feed (page swipe, menu, pushed screen): keep the place.
-                if !active {
-                    place.savedTopID = place.liveTopID
-                    place.savedY = place.liveY
-                }
+                if !active { place.save() }
                 // Arriving on this feed: warm what it is about to show.
                 if active, !list.isEmpty { ImageLoader.shared.prefetchFeed(list.items.displayTweets) }
             }
@@ -195,6 +163,13 @@ struct HomeView: View {
                     if item.id != list.items.last?.id { PostSeparator() }
                 }
                 .id(item.id)
+                // Where this row is on screen: the reading place and the "seen"
+                // impressions come from real row frames. (onScrollTargetVisibilityChange
+                // reported rows ~1000 pt above the viewport here: measured 2026-11-18.)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .scrollView) } action: { frame in
+                    guard visibility.isActive else { return }
+                    place.rowMoved(item, frame: frame, isFirst: item.id == list.items.first?.id)
+                }
             }
             PagingFooter(list: list)
         }
@@ -203,26 +178,15 @@ struct HomeView: View {
     /// Scrolls a new scroll view back to the post that was on top when the reader
     /// left this feed. Nothing to do on the very first appearance (no saved place).
     private func restore(_ proxy: ScrollViewProxy) {
-        if MediaLab.has("O") {
-            guard let y = place.savedY, y > 1 else { return }
-            place.restoringY = y
-            DispatchQueue.main.async {
-                offsetPosition.scrollTo(y: y)
-                DispatchQueue.main.async { place.restoringY = nil }
-            }
-            return
-        }
         guard let id = place.savedTopID, list.items.contains(where: { $0.id == id }) else { return }
-        place.liveTopID = id
-        place.restoringID = id
-        place.restoreTries = 0
-        DispatchQueue.main.async { proxy.scrollTo(id, anchor: .top) }
+        let anchor = place.savedAnchor
+        DispatchQueue.main.async { proxy.scrollTo(id, anchor: anchor) }
     }
 
     #if DEBUG
     /// Restore evidence for the place tests (refreshed on each body pass).
     private var placeDebug: String {
-        "saved=\(place.savedTopID ?? "-") live=\(place.liveTopID ?? "-") tries=\(place.restoreTries) savedY=\(Int(place.savedY ?? -1)) liveY=\(Int(place.liveY ?? -1))"
+        "saved=\(place.savedTopID ?? "-") live=\(place.liveTopID ?? "-") anchor=\(String(format: "%.2f", place.savedAnchor.y)) inset=\(Int(place.topInset)) vh=\(Int(place.viewportHeight))"
     }
     #endif
 
@@ -304,69 +268,52 @@ final class FeedPlace {
     /// `liveTopID` at the moment the reader left the feed: what a rebuilt scroll
     /// view returns to.
     var savedTopID: String?
-    /// Content offset, for the offset-based restore experiment (variant O).
-    var liveY: CGFloat?
-    var savedY: CGFloat?
-    var restoringY: CGFloat?
+    /// Where inside the top row the viewport started (0 = its top), live and saved.
+    var liveFraction: CGFloat = 0
+    var liveHeight: CGFloat = 0
+    var savedAnchor: UnitPoint = .top
+    /// The scroll view's visible height (what "on screen" means for a row frame).
+    var viewportHeight: CGFloat = 0
+    /// The scroll view's top inset (under the toolbar): where reading starts.
+    var topInset: CGFloat = 0
     /// Posts the reader has had on screen in this feed (see `FeedSeen`).
     let seen = FeedSeen()
-    /// A restore that has not landed on its post yet, and how often it re-aimed.
-    var restoringID: String?
-    var restoreTries = 0
+
+    /// One row's frame in the scroll view's visible coordinates changed.
+    func rowMoved(_ item: TimelineItem, frame: CGRect, isFirst: Bool) {
+        let height = viewportHeight > 0 ? viewportHeight : 150
+        // On screen at all: an impression (sent with the next home request).
+        let top = topInset
+        if frame.maxY > top + 8, frame.minY < height - 8 { seen.mark(item) }
+        if frame.minY <= top + 0.5, frame.maxY > top + 0.5 {
+            // This row covers the top edge of the viewport: it is the reading place.
+            liveTopID = item.id
+            liveFraction = frame.height > 0 ? (top - frame.minY) / frame.height : 0
+            liveHeight = frame.height
+        } else if isFirst, frame.minY > top + 0.5 {
+            liveTopID = nil          // the top of the feed (label/anchor) is showing
+        }
+    }
+
+    /// The reader leaves the feed: remember the row on top and how far into it.
+    func save() {
+        savedTopID = liveTopID
+        // `scrollTo(id, anchor: a)` puts the row's point at `a` onto the viewport's
+        // point at `a`. The row top was `d` above the viewport top, so solve
+        // a·H − a·V = d for a (row taller than the screen); a short row goes to the top.
+        let v = viewportHeight > 0 ? viewportHeight : 150
+        let d = liveFraction * liveHeight
+        if liveHeight > v + 1 {
+            savedAnchor = UnitPoint(x: 0.5, y: min(1, max(0, d / (liveHeight - v))))
+        } else {
+            savedAnchor = .top
+        }
+    }
     /// The account/login the shared list was configured for (`HomeView.taskKey`).
     var configuredFor: String?
     /// The account changed since the feed was first configured: the next refresh
     /// replaces the list instead of merging into it.
     var accountChanged = false
-}
-
-/// EXPERIMENT (variant O): the scroll view gets a `ScrollPosition` only in that variant.
-private struct OffsetRestore: ViewModifier {
-    @Binding var position: ScrollPosition
-    let active: Bool
-
-    func body(content: Content) -> some View {
-        if active { content.scrollPosition($position) } else { content }
-    }
-}
-
-/// The posts a reader has seen in one home feed, kept the way x.com's web client
-/// keeps them: `pending` = seen since the last home request (sent as `seenTweetIds`,
-/// then cleared), `known` = every row seen this session, so a refresh never puts one
-/// back on top as new. Main thread only (visibility callbacks and `MainActor.run`).
-final class FeedSeen {
-    private var pending: [String] = []
-    private var pendingSet: Set<String> = []
-    private var known: Set<String> = []
-    /// Bounds: X's own tracker sends what was seen since the last request (a few
-    /// dozen); `known` only has to cover a session of reading.
-    private static let maxPending = 100
-    private static let maxKnown = 3000
-
-    func mark(_ item: TimelineItem) {
-        // Only the first time a row is seen: it was already reported after that.
-        guard known.insert(item.id).inserted else { return }
-        if known.count > Self.maxKnown { known.removeAll(keepingCapacity: true); known.insert(item.id) }
-        for tweet in item.tweets {
-            let id = tweet.displayed.id
-            guard pending.count < Self.maxPending, pendingSet.insert(id).inserted else { continue }
-            pending.append(id)
-        }
-    }
-
-    func wasSeen(_ item: TimelineItem) -> Bool { known.contains(item.id) }
-
-    /// The ids for the next request; cleared, as the web client does after sending.
-    func drain() -> [String] {
-        defer { pending.removeAll(); pendingSet.removeAll() }
-        return pending
-    }
-
-    func reset() {
-        pending.removeAll()
-        pendingSet.removeAll()
-        known.removeAll()
-    }
 }
 
 /// Whether a feed page is the one on screen, readable from closures stored earlier.

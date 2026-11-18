@@ -74,10 +74,7 @@ struct MediaViewer: View {
             #endif
         }
         .background(Color.black)
-        // EXPERIMENT (photo swipe-down, 2026-11-18): variant H makes the close drag
-        // high-priority. `.subviews` = this gesture off, the children's still on.
-        .simultaneousGesture(dismissDrag, including: MediaLab.has("H") ? .subviews : .all)
-        .highPriorityGesture(dismissDrag, including: MediaLab.has("H") ? .all : .subviews)
+        .simultaneousGesture(dismissDrag)
         .modifier(CoverChrome(hidden: inCover))
         .accessibilityAction(named: "Close") { close() }
         .onChange(of: selection, initial: true) { _, index in
@@ -266,7 +263,7 @@ private struct MediaPhotoPage: View {
                 .scaleEffect(zoom)
                 .offset(clamped(offset, in: geo.size))
                 .gesture(panGesture(in: geo.size), including: zoom > 1 ? GestureMask.all : GestureMask())
-                .onTapGesture { if !MediaLab.has("T") { toggleZoom() } }
+                .onTapGesture { toggleZoom() }
                 .onAppear { container = geo.size }
                 .onChange(of: geo.size) { _, size in container = size }
         }
