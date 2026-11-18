@@ -17,27 +17,57 @@ struct ProfileTarget: Identifiable, Hashable {
 }
 
 /// The profile popup: banner, avatar, bio, counts, Follow button and recent
-/// posts with infinite scroll. It owns a navigation stack so posts open inside it.
+/// posts with infinite scroll. It owns a navigation stack so posts open inside it,
+/// and its own media host so a picture opens inside the sheet instead of after
+/// the sheet closes.
 struct ProfileSheet: View {
     let target: ProfileTarget
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var presenter = MediaPresenter.shared
+    @State private var path: [Route] = []
 
     var body: some View {
-        NavigationStack {
-            ProfileContent(target: target)
-                .navigationTitle("Profile")
-                // Swiping right on the profile itself closes the sheet. This sits
-                // on the stack's root view, not on the whole stack: there it also
-                // fired on a post pushed inside the sheet, so one swipe popped the
-                // post *and* dismissed the sheet.
-                .swipeBack()
-                .navigationDestination(for: Route.self) { RouteView(route: $0) }
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Close") { dismiss() }
+        ZStack {
+            NavigationStack(path: $path) {
+                ProfileContent(target: target)
+                    .navigationTitle("Profile")
+                    // Swiping right on the profile itself closes the sheet. This sits
+                    // on the stack's root view, not on the whole stack: there it also
+                    // fired on a post pushed inside the sheet, so one swipe popped the
+                    // post *and* dismissed the sheet.
+                    .swipeBack()
+                    .navigationDestination(for: Route.self) { route in
+                        RouteView(route: route,
+                                  isTop: path.last == route,
+                                  pop: { if !path.isEmpty { path.removeLast() } })
                     }
-                }
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Close") { dismiss() }
+                        }
+                    }
+            }
+            // A profile opened inside this sheet is pushed in its stack, never a
+            // second sheet, so exactly one media host exists at a time.
+            .environment(\.pushProfile, pushProfile)
+
+            MediaHost()
         }
+        ._statusBarHidden(presenter.target != nil)
+    }
+
+    private func pushProfile(_ profile: ProfileTarget) {
+        if let route = profile.route { path.append(route) }
+    }
+}
+
+extension ProfileTarget {
+    /// The route that shows this profile inside a sheet's own stack.
+    var route: Route? {
+        if let userId { return .userId(userId) }
+        if let screenName { return .user(screenName) }
+        if let user { return .user(user.screenName) }
+        return nil
     }
 }
 

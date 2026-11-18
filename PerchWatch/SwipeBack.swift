@@ -14,13 +14,15 @@ import SwiftUI
 ///   not happen, so it can never stay shifted with black beside it.
 struct SwipeBack: ViewModifier {
     @Environment(\.dismiss) private var dismiss
+    /// Set by `RouteView` on pushed screens: pops by state. Sheets have none and
+    /// fall back to `dismiss()`.
+    @Environment(\.popScreen) private var popScreen
     var enabled = true
 
     /// Leading strip that belongs to the system's edge swipe.
     private static let systemEdge: CGFloat = 22
 
     @State private var offsetX: CGFloat = 0
-    @State private var popping = false
     /// Live while the drag is; reset by SwiftUI on end *or cancel* (see `onChange`).
     @GestureState private var dragLive = false
 
@@ -36,7 +38,7 @@ struct SwipeBack: ViewModifier {
                         // Every rightward swipe guards the taps under it, including one
                         // that starts on the edge and is popped by the system.
                         if horizontal { SwipeGuard.begin() } else { SwipeGuard.end() }
-                        guard enabled, !popping, value.startLocation.x > Self.systemEdge else { return }
+                        guard enabled, value.startLocation.x > Self.systemEdge else { return }
                         guard horizontal else {
                             if offsetX != 0 { offsetX = 0 }
                             return
@@ -45,22 +47,20 @@ struct SwipeBack: ViewModifier {
                     }
                     .onEnded { value in
                         SwipeGuard.end()
-                        guard enabled, !popping, value.startLocation.x > Self.systemEdge else {
+                        guard enabled, value.startLocation.x > Self.systemEdge else {
                             settle()
                             return
                         }
                         let dx = value.translation.width
                         let go = dx > 55 && abs(dx) > abs(value.translation.height) * 1.8
                         if go {
-                            popping = true
                             // Back to rest first: the pop animates the whole
                             // screen away; a half-shifted screen is what showed
                             // black beside it when the pop did not complete.
                             withAnimation(.easeOut(duration: 0.12)) { offsetX = 0 }
-                            dismiss()
-                            // Still here after the pop should have finished (the
-                            // system cancelled it): accept swipes again.
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { popping = false }
+                            // A pushed screen pops by state: one mutation, so it
+                            // cannot race the system's own pop. A sheet dismisses.
+                            if let popScreen { popScreen() } else { dismiss() }
                         } else {
                             settle()
                         }
@@ -71,13 +71,10 @@ struct SwipeBack: ViewModifier {
                 guard !live else { return }
                 DispatchQueue.main.async {
                     SwipeGuard.end()
-                    if !popping { settle() }
+                    settle()
                 }
             }
-            .onAppear {
-                offsetX = 0
-                popping = false
-            }
+            .onAppear { offsetX = 0 }
             .onDisappear { offsetX = 0 }
     }
 

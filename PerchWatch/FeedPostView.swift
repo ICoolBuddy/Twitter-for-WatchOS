@@ -12,51 +12,105 @@ struct MediaTarget: Identifiable {
     var id: String { media.map(\.id).joined(separator: ",") + "-\(startIndex)" }
 }
 
-/// App-wide full-screen media presentation. The viewer is drawn as an overlay at
-/// the root (`WatchRootView`) instead of a `fullScreenCover`, so it has no system
-/// close button: we draw our own and can hide it with the rest of the chrome.
+/// App-wide full-screen media presentation. The viewer is drawn by a `MediaHost`
+/// above whatever presentation context is on screen (the root, or a sheet), not
+/// by a `fullScreenCover`, so it has no system close button: we draw our own and
+/// can hide it with the rest of the chrome.
 @MainActor
 final class MediaPresenter: ObservableObject {
     static let shared = MediaPresenter()
     @Published private(set) var target: MediaTarget?
-    /// Set for a moment before the viewer goes away: its pages give up crown
-    /// focus first. A focused view that is simply removed leaves the crown
-    /// pointing nowhere (it only came back after a finger scroll).
-    @Published private(set) var closing = false
+    /// True from the start of a present/dismiss until its transition is complete.
+    /// Screens hold the crown while it is true (no timers): a focused view that
+    /// is simply removed leaves the crown pointing nowhere.
+    @Published private(set) var isTransitioning = false
+    /// How many sheets are above the root. Exactly one `MediaHost` draws at a
+    /// time (a video would otherwise play twice).
+    @Published private(set) var sheetDepth = 0
 
     func show(_ target: MediaTarget) {
         // A finger lifted over an image at the end of a page swipe.
         guard !SwipeGuard.isActive else { return }
-        closing = false
-        self.target = target
+        guard self.target == nil else { return }
+        isTransitioning = true
+        withAnimation(.easeInOut(duration: 0.18), completionCriteria: .logicallyComplete) {
+            self.target = target
+        } completion: {
+            self.isTransitioning = false
+        }
     }
 
     func close() {
-        guard target != nil, !closing else { return }
-        closing = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+        guard target != nil, !isTransitioning else { return }
+        isTransitioning = true
+        withAnimation(.easeInOut(duration: 0.18), completionCriteria: .logicallyComplete) {
             self.target = nil
-            self.closing = false
+        } completion: {
+            self.isTransitioning = false
+        }
+    }
+
+    func sheetOpened() { sheetDepth += 1 }
+    func sheetClosed() { sheetDepth = max(0, sheetDepth - 1) }
+}
+
+/// Draws the one media viewer above whatever this presentation context shows.
+/// Placed at the root and inside every sheet; the state is the same
+/// `MediaPresenter`, so the chrome, the close button and the crown handoff
+/// cannot drift between contexts.
+struct MediaHost: View {
+    /// True for the root copy: it only draws while no sheet is above it.
+    var root = false
+    @ObservedObject private var presenter = MediaPresenter.shared
+
+    var body: some View {
+        if let target = presenter.target,
+           (root ? presenter.sheetDepth == 0 : presenter.sheetDepth > 0) {
+            MediaViewer(media: target.media, startIndex: target.startIndex,
+                        title: target.title, caption: target.caption,
+                        onClose: { presenter.close() })
+                .transition(.opacity)
+                .zIndex(1)
+                .ignoresSafeArea()
         }
     }
 }
 
-/// Presents the profile sheet and routes media to the root overlay. Each screen
+/// Presents the profile sheet and routes media to the media host. Each screen
 /// owns its own state so sheets never fight over a presenter. Replies use
 /// `TextFieldLink` inside the action row, so there is no reply sheet.
+///
+/// Inside a sheet a profile is *pushed* (`\.pushProfile`) instead of presenting
+/// a second sheet: two stacked sheets would each draw a media host.
 struct PostPresentation: ViewModifier {
     @Binding var profile: ProfileTarget?
     @Binding var media: MediaTarget?
 
+    @Environment(\.pushProfile) private var pushProfile
+    @ObservedObject private var presenter = MediaPresenter.shared
+
     func body(content: Content) -> some View {
         content
-            .sheet(item: $profile) { target in
+            // nil when this screen pushes profiles: no second sheet.
+            .sheet(item: (pushProfile == nil) ? $profile : .constant(ProfileTarget?.none)) { target in
                 ProfileSheet(target: target)
+                    .onAppear { presenter.sheetOpened() }
+                    // The sheet owned the crown while it was up: tell the screen
+                    // behind it (and give its list back the crown).
+                    .onDisappear {
+                        presenter.sheetClosed()
+                        CrownFocusMark.shared.mark()
+                    }
+            }
+            .onChange(of: profile?.id) { _, _ in
+                guard let target = profile, let pushProfile else { return }
+                profile = nil
+                pushProfile(target)
             }
             .onChange(of: media?.id) { _, _ in
                 guard let target = media else { return }
                 media = nil
-                MediaPresenter.shared.show(target)
+                presenter.show(target)
             }
     }
 }

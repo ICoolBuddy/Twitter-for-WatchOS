@@ -83,28 +83,33 @@ struct PerchWatchApp: App {
 struct WatchRootView: View {
     @EnvironmentObject private var app: AppModel
     @ObservedObject private var presenter = MediaPresenter.shared
+    /// The navigation state, owned by the root: a screen is "on top" (and may
+    /// own the crown) exactly while it is the last element of this path.
+    @StateObject private var nav = Navigator()
 
     var body: some View {
         ZStack {
             if app.canBrowse {
-                NavigationStack {
-                    RootPager()
-                        .navigationDestination(for: Route.self) { RouteView(route: $0) }
+                NavigationStack(path: $nav.path) {
+                    RootPager(rootActive: nav.path.isEmpty)
+                        .navigationDestination(for: Route.self) { route in
+                            RouteView(route: route,
+                                      isTop: nav.path.last == route,
+                                      pop: { nav.back() })
+                        }
                 }
+                // Same rule the pager already uses for off-screen pages: only the
+                // screen on display may hold the crown. While the viewer covers
+                // this context its pages own it; a viewer drawn inside a sheet is
+                // not this one, hence `sheetDepth`.
+                .disabled(presenter.target != nil && presenter.sheetDepth == 0)
             } else {
                 NavigationStack { OnboardingView() }
             }
 
             // Full-screen media lives above the whole app: no system close
             // button, and the clock can be hidden while it is open.
-            if let target = presenter.target {
-                MediaViewer(media: target.media, startIndex: target.startIndex,
-                            title: target.title, caption: target.caption,
-                            onClose: { presenter.close() })
-                    .transition(.opacity)
-                    .zIndex(1)
-                    .ignoresSafeArea()
-            }
+            MediaHost(root: true)
         }
         // One app-wide notice for a dead session (X answered 401) instead of an error
         // on every screen; it goes away by itself when the iPhone sends new cookies.
@@ -114,9 +119,23 @@ struct WatchRootView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.easeInOut(duration: 0.18), value: presenter.target?.id)
         .animation(.easeInOut(duration: 0.2), value: app.sessionExpired)
         ._statusBarHidden(presenter.target != nil)
+        // Logout: do not restore the old stack when the next session appears.
+        .onChange(of: app.canBrowse) { _, canBrowse in
+            if !canBrowse { nav.path = [] }
+        }
+    }
+}
+
+/// The pushed-screen stack. `back()` is one state mutation, so a pop cannot
+/// race the system's own pop (the two used to leave a black frame).
+@MainActor
+final class Navigator: ObservableObject {
+    @Published var path: [Route] = []
+
+    func back() {
+        if !path.isEmpty { path.removeLast() }
     }
 }
 
@@ -156,6 +175,8 @@ struct SessionExpiredBanner: View {
 /// `NavigationStack`, so menu entries push over whichever page is showing.
 /// The toolbar lives here so the pages never contribute one themselves.
 struct RootPager: View {
+    /// False while a detail screen is pushed: the crown belongs to that screen.
+    var rootActive = true
     @AppStorage(PerchSettings.homeKind) private var kindRaw = HomeKind.forYou.rawValue
     @State private var page = 1
     /// The two feeds' lists live here (not in the pages) so the edge glow can read
@@ -187,15 +208,15 @@ struct RootPager: View {
                 // that is on screen. (All three pages stay alive; an enabled
                 // off-screen list was taking the crown on launch and after the
                 // media viewer closed, which is why it needed a touch first.)
-                MenuView(isActive: page == 0, onPick: { kind in
+                MenuView(isActive: rootActive && page == 0, onPick: { kind in
                     goFeed(kind)
                 })
                 .frame(width: w)
                 .disabled(page != 0)
-                HomeView(kind: .forYou, isActive: page == 1, list: forYou)
+                HomeView(kind: .forYou, isActive: rootActive && page == 1, list: forYou)
                     .frame(width: w)
                     .disabled(page != 1)
-                HomeView(kind: .following, isActive: page == 2, list: following)
+                HomeView(kind: .following, isActive: rootActive && page == 2, list: following)
                     .frame(width: w)
                     .disabled(page != 2)
             }
@@ -313,9 +334,21 @@ struct RootPager: View {
 /// a placeholder.
 struct RouteView: View {
     let route: Route
+    /// True for the screen that is actually on top of the stack.
+    var isTop: Bool = true
+    /// Pops one screen by state (no `dismiss()` round trip).
+    var pop: (() -> Void)? = nil
     @EnvironmentObject private var app: AppModel
 
     var body: some View {
+        screen
+            // The crown's owner is navigation state, not a timer.
+            .environment(\.screenIsTop, isTop)
+            .environment(\.popScreen, pop)
+    }
+
+    @ViewBuilder
+    private var screen: some View {
         switch route {
         case .post(let route):
             PostDetailView(tweet: route.value)

@@ -84,7 +84,10 @@ struct MenuView: View {
         .crownScrollFocus(active: isActive)
         // No navigationTitle: the root navigation bar only carries the pager's
         // back/hamburger button, and the menu is recognisable by its content.
-        .sheet(isPresented: $showAccounts) {
+        .sheet(isPresented: $showAccounts, onDismiss: {
+            // The picker owned the crown while it was up: take it back.
+            CrownFocusMark.shared.mark()
+        }) {
             // Switching opens the new account on For You; leaving the picker without
             // switching (Done, the current account, swipe back) stays on the menu.
             AccountPicker(onSwitched: {
