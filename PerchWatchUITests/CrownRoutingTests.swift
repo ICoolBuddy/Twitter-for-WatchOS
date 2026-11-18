@@ -645,12 +645,45 @@ final class CrownRoutingTests: XCTestCase {
     }
 
     /// Menu -> a pushed list. Leaves the pushed screen on top.
+    ///
+    /// The menu's `List` rows did not expose their identifiers to XCUITest (baseline
+    /// run: every push BLOCKED), so fall back to the row's visible label.
     private func pushFromMenu(_ row: String, probe name: String) -> Bool {
         guard tap("chrome.menuToggle") else { return false }
         settle()
         guard onScreen("menu") else { return false }
-        guard tap(row) else { return false }
+        let label = Self.menuLabels[row] ?? row
+        guard tap(row, attempts: 2) || tapLabel(label) else {
+            print("CROWNDEBUG menu row \(row) / '\(label)' not found; buttons: " +
+                  app.buttons.allElementsBoundByIndex.prefix(30)
+                    .map { "\($0.identifier)|\($0.label)" }.joined(separator: ", "))
+            return false
+        }
         return probe(name).waitForExistence(timeout: 10)
+    }
+
+    private static let menuLabels = [
+        "menu.likes": "Likes",
+        "menu.notifications": "Notifications",
+        "menu.bookmarks": "Bookmarks",
+    ]
+
+    /// Taps the first on-screen, hittable element whose label is (or starts with) `label`.
+    private func tapLabel(_ label: String, attempts: Int = 6) -> Bool {
+        let predicate = NSPredicate(format: "label == %@ OR label BEGINSWITH %@", label, label + ",")
+        for _ in 0..<attempts {
+            let screen = app.frame
+            for candidate in app.descendants(matching: .any).matching(predicate).allElementsBoundByIndex
+            where candidate.exists && candidate.isHittable {
+                let mid = CGPoint(x: candidate.frame.midX, y: candidate.frame.midY)
+                guard screen.contains(mid) else { continue }
+                candidate.tap()
+                return true
+            }
+            app.swipeUp()
+            Thread.sleep(forTimeInterval: 0.4)
+        }
+        return false
     }
 
     /// The pushed screen's back control is watchOS' own chevron, so its identifier is
@@ -690,17 +723,27 @@ final class CrownRoutingTests: XCTestCase {
 
     /// The viewer hides its chrome after 1.2 s (`MediaViewer.showControls`); a tap
     /// brings it back, so retry with a tap in between.
+    ///
+    /// The faded chrome stays in the accessibility tree and looks hittable, but it is
+    /// not hit-testable: a tap on it falls through to the photo (which zooms). So read
+    /// the button's value ("visible"/"hidden"), reveal the chrome with a tap on the
+    /// media when it is hidden, and tap the button only while it is visible. Verified
+    /// by the button going away.
     private func closeViewer() -> Bool {
         let close = app.buttons["media.close"]
-        for _ in 0..<4 {
-            if close.exists && close.isHittable {
-                close.tap()
-                return true
+        for _ in 0..<5 {
+            guard close.exists else { return true }
+            if (close.value as? String) != "visible" {
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)).tap()
+                Thread.sleep(forTimeInterval: 0.3)
             }
-            app.tap()
-            Thread.sleep(forTimeInterval: 0.3)
+            if (close.value as? String) == "visible", close.isHittable {
+                close.tap()
+                Thread.sleep(forTimeInterval: 0.6)
+                if !close.exists { return true }
+            }
         }
-        return false
+        return !close.exists
     }
 
     // MARK: Crown

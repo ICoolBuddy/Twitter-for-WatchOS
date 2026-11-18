@@ -139,8 +139,11 @@ struct MediaViewer: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Close")
-                // crown-lab: the routing tests close the viewer with this.
+                // crown-lab: the routing tests close the viewer with this. The chrome
+                // fades out but stays in the tree, so the value says whether a tap
+                // would land on it (hidden chrome is not hit-testable).
                 .accessibilityIdentifier("media.close")
+                .accessibilityValue(controlsVisible ? "visible" : "hidden")
                 Spacer(minLength: 0)
             }
             Spacer(minLength: 0)
