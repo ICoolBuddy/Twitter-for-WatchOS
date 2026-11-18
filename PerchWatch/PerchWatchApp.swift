@@ -16,7 +16,16 @@ struct PerchWatchApp: App {
         // Cached threads/profiles belong to the session that fetched them.
         // Cached threads/profiles belong to the session that fetched them. (The
         // complication follows the login state by itself: ComplicationPublisher.)
-        AppModel.shared.onLogout = { OfflineCache.clear() }
+        // Read the saved index now, not on the first feed row that asks for a local photo
+        // (a file read + JSON decode in the middle of a frame).
+        _ = SavedStore.shared
+        // Logout signs out both devices: cached threads/profiles, saved posts and the
+        // image cache belonged to that account. (Switching accounts keeps them.)
+        AppModel.shared.onLogout = {
+            OfflineCache.clear()
+            SavedStore.shared.purge()
+            ImageLoader.shared.purgeAll()
+        }
         ComplicationPublisher.start()
         #if DEBUG
         // Screenshot harness: install the fixture session in the same main-actor turn

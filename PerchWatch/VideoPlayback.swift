@@ -55,7 +55,12 @@ final class VideoPlayback: ObservableObject {
     func start(_ media: XMedia, title: String? = nil, caption: String? = nil) {
         if mediaId == media.id {
             player.play()
-            updateNowPlaying(force: true)
+            startTicker()
+            // `stop()` dropped Now Playing when the page was left: restore it.
+            if backgroundSession {
+                registerRemoteCommands()
+                updateNowPlaying(force: true)
+            }
             return
         }
         stop()
@@ -92,7 +97,12 @@ final class VideoPlayback: ObservableObject {
         }
         let id = media.id
         BackgroundAudio.activate { [weak self] background in
-            guard let self, self.mediaId == id else { return }
+            guard let self, self.mediaId == id else {
+                // The viewer went away while the session was still activating (the
+                // route picker can take seconds): nothing else would ever turn it off.
+                if background { BackgroundAudio.deactivate() }
+                return
+            }
             self.backgroundSession = background
             self.player.play()
             if background {
@@ -105,9 +115,9 @@ final class VideoPlayback: ObservableObject {
     /// The best variant the measured link carries with headroom; with no recent
     /// measurement, one step above the lowest (never a blurry 240p by default).
     private func pickLevel() -> Int {
-        let bitsPerSecond = TransferMonitor.shared.snapshot().bytesPerSecond * 8
         let fallback = levels.count >= 3 ? 1 : 0
-        guard bitsPerSecond > 8_000 else { return fallback }
+        guard let bytesPerSecond = LinkBudget.bytesPerSecond, bytesPerSecond * 8 > 8_000 else { return fallback }
+        let bitsPerSecond = bytesPerSecond * 8
         var best = 0
         for (i, v) in levels.enumerated() where Double(v.bitrate ?? 0) * 1.5 <= bitsPerSecond {
             best = i
@@ -115,10 +125,14 @@ final class VideoPlayback: ObservableObject {
         return best
     }
 
+    /// Leaving the page (swiping to another attachment): pause and stop advertising a
+    /// playback that is not happening. The audio session stays up so coming back keeps
+    /// background audio; `teardown` (the viewer closing) releases it.
     func stop() {
         ticker?.cancel()
         ticker = nil
         player.pause()
+        if backgroundSession { clearNowPlaying() }
     }
 
     /// Called by the view when the page goes away for good.
@@ -251,7 +265,10 @@ final class VideoPlayback: ObservableObject {
         ticker?.cancel()
         ticker = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 250_000_000)
+                // 4 Hz only while the clock moves: a paused or ended page has nothing
+                // to report, and every @Published write re-renders the page.
+                let interval: UInt64 = (self?.isPlaying ?? false) || (self?.loading ?? false) ? 250_000_000 : 1_000_000_000
+                try? await Task.sleep(nanoseconds: interval)
                 guard let self, !Task.isCancelled else { return }
                 self.tick()
             }
@@ -261,14 +278,15 @@ final class VideoPlayback: ObservableObject {
     private func tick() {
         guard let item = player.currentItem else { return }
         if item.status == .failed {
-            failed = item.error?.localizedDescription ?? "Video unavailable"
+            if failed == nil { failed = item.error?.localizedDescription ?? "Video unavailable" }
             return
         }
 
+        // Assign only real changes: @Published re-renders on every write, equal or not.
         let length = item.duration.seconds
-        if length.isFinite, length > 0 { duration = length }
+        if length.isFinite, length > 0, abs(length - duration) > 0.01 { duration = length }
         let now = player.currentTime().seconds
-        if scrubTarget == nil, now.isFinite { position = now }
+        if scrubTarget == nil, now.isFinite, abs(now - position) > 0.05 { position = now }
         let playing = player.timeControlStatus == .playing
         if isPlaying != playing {
             isPlaying = playing
@@ -278,7 +296,8 @@ final class VideoPlayback: ObservableObject {
         }
 
         if length.isFinite, length > 0 {
-            buffered = min(1, max(0, bufferedSeconds(item) / length))
+            let fraction = min(1, max(0, bufferedSeconds(item) / length))
+            if abs(fraction - buffered) > 0.01 { buffered = fraction }
         }
 
         // "Playing" is reported a moment before the first frame is on screen;

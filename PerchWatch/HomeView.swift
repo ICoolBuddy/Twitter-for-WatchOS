@@ -21,6 +21,9 @@ struct HomeView: View {
     /// The account changed since this page was first configured: the next refresh
     /// replaces the list instead of merging into it.
     @State private var accountChanged = false
+    /// `PagedList` keeps the closures it was configured with, so they cannot read the
+    /// `isActive` struct property later: this box carries the live value.
+    @State private var visibility = PageVisibility()
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
 
@@ -61,6 +64,11 @@ struct HomeView: View {
                 await start()
             }
             .postPresentation(profile: $profileTarget, media: $mediaTarget)
+            .onChange(of: isActive, initial: true) { _, active in
+                visibility.isActive = active
+                // Arriving on this feed: warm what it is about to show.
+                if active, !list.isEmpty { ImageLoader.shared.prefetchFeed(list.items.displayTweets) }
+            }
             .onDisappear { list.cancel() }
         }
     }
@@ -141,7 +149,10 @@ struct HomeView: View {
         list.onFirstPage = { items, _ in
             TimelineDiskCache.save(items, scope: scope)
         }
+        let visibility = self.visibility
         list.onPage = { items in
+            // Both feeds stay alive in the pager: only the one on screen warms images.
+            guard visibility.isActive else { return }
             ImageLoader.shared.prefetchFeed(items.displayTweets)
         }
         list.skip = { $0.isFiller }
@@ -172,6 +183,11 @@ struct HomeView: View {
         // Offline taps (like/repost/bookmark) go out as soon as we are online.
         await app.posts.flush(client: app.client)
     }
+}
+
+/// Whether a feed page is the one on screen, readable from closures stored earlier.
+final class PageVisibility {
+    var isActive = true
 }
 
 /// Launch gate for the intro animation.

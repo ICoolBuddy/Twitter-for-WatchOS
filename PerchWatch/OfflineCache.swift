@@ -24,8 +24,11 @@ enum OfflineCache {
     }
 
     static func save<T: Encodable>(_ value: T, name: String) {
-        guard let url = url(name), let data = try? JSONEncoder().encode(value) else { return }
+        guard let url = url(name) else { return }
         DiskWriter.queue.async {
+            // Encoded on the queue too: a thread page is up to a few hundred KB, and this
+            // used to run on the main thread for every page of every post.
+            guard let data = try? JSONEncoder().encode(value) else { return }
             try? data.write(to: url, options: .atomic)
             trimIfNeeded(url.deletingLastPathComponent())
         }
@@ -34,6 +37,13 @@ enum OfflineCache {
     static func load<T: Decodable>(_ type: T.Type, name: String) -> T? {
         guard let url = url(name), let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(T.self, from: data)
+    }
+
+    /// `load` off the main thread: opening a screen must not stall on its cache.
+    static func loadAsync<T: Decodable>(_ type: T.Type, name: String) async -> T? {
+        await withCheckedContinuation { continuation in
+            DiskWriter.queue.async { continuation.resume(returning: load(type, name: name)) }
+        }
     }
 
     /// Runs on `DiskWriter.queue`; scans the folder at most once a minute.
@@ -66,8 +76,8 @@ enum OfflineCache {
 
     // MARK: Posts
 
-    static func thread(id: String) -> ThreadPage? {
-        load(ThreadPage.self, name: "thread-" + id)
+    static func thread(id: String) async -> ThreadPage? {
+        await loadAsync(ThreadPage.self, name: "thread-" + id)
     }
 
     static func save(_ page: ThreadPage, id: String) {
@@ -76,14 +86,14 @@ enum OfflineCache {
 
     // MARK: Profiles
 
-    static func user(id: String?) -> XUser? {
+    static func user(id: String?) async -> XUser? {
         guard let id, !id.isEmpty else { return nil }
-        return load(XUser.self, name: "user-" + id)
+        return await loadAsync(XUser.self, name: "user-" + id)
     }
 
-    static func user(screenName: String?) -> XUser? {
+    static func user(screenName: String?) async -> XUser? {
         guard let screenName, !screenName.isEmpty else { return nil }
-        return load(XUser.self, name: "handle-" + screenName.lowercased())
+        return await loadAsync(XUser.self, name: "handle-" + screenName.lowercased())
     }
 
     static func save(_ user: XUser) {

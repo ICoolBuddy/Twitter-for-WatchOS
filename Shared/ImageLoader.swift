@@ -104,7 +104,10 @@ final class ImageLoader: @unchecked Sendable {
             // A bad file (older builds stored error pages): drop it and download again.
             await removeFromDisk(url)
         }
+        let startedAt = Date()
         let (downloaded, response) = try await session.data(from: url)
+        // Images are most of the traffic: let the link-speed estimate see them.
+        TransferMonitor.shared.record(bytes: downloaded.count, over: Date().timeIntervalSince(startedAt))
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw URLError(.badServerResponse)
         }
@@ -140,11 +143,9 @@ final class ImageLoader: @unchecked Sendable {
             guard seen.insert("\(maxPixel)|\(url.absoluteString)").inserted else { return }
             items.append((url: url, maxPixel: maxPixel))
         }
-        // Adaptive: on a slow (Bluetooth-relayed) link only warm the few posts
-        // that are about to be visible; on a fast one warm the whole page.
-        let rate = TransferMonitor.shared.snapshot().bytesPerSecond
-        let limit = (rate > 1 && rate < 40_000) ? 4 : 40
-        for tweet in tweets.prefix(limit) {
+        // Adaptive: on a slow (Bluetooth-relayed) link or before anything was measured
+        // only warm the few posts about to be visible; on a fast one the whole page.
+        for tweet in tweets.prefix(LinkBudget.prefetchPostCount) {
             let t = tweet.displayed
             // `Avatar` shows the `_bigger` variant at feed size (44 pt): warm only
             // that one (warming the `_normal` one too doubled avatar traffic).
@@ -199,6 +200,16 @@ final class ImageLoader: @unchecked Sendable {
     }
 
     func purge() { cache.removeAllObjects() }
+
+    /// Logout: the cached bytes came from the signed-out account's feed.
+    func purgeAll() {
+        cache.removeAllObjects()
+        guard let dir = diskDir else { return }
+        DiskWriter.queue.async {
+            try? FileManager.default.removeItem(at: dir)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+    }
 
     private func key(_ url: URL, _ px: Int) -> NSString { "\(px)|\(url.absoluteString)" as NSString }
 
@@ -422,10 +433,18 @@ struct RemoteImage: View {
         if image == nil, let fallbackURL {
             image = ImageLoader.shared.cached(fallbackURL, maxPixel: fallbackMaxPixel)
         }
-        do {
-            image = try await ImageLoader.shared.load(url, maxPixel: maxPixel)
-        } catch {
-            if !(error is CancellationError) && !Task.isCancelled { failed = true }
+        // The task only restarts when the URL changes, so a download that failed once
+        // used to stay broken for as long as the row stayed on screen: retry, backing off.
+        for attempt in 0..<3 {
+            do {
+                image = try await ImageLoader.shared.load(url, maxPixel: maxPixel)
+                return
+            } catch {
+                if error is CancellationError || Task.isCancelled { return }
+                if attempt == 2 { failed = true; return }
+                try? await Task.sleep(nanoseconds: 700_000_000 << UInt64(attempt))
+                if Task.isCancelled { return }
+            }
         }
     }
 

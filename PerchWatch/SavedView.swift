@@ -94,6 +94,13 @@ private struct SavedRow: View {
                     .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
             }
+
+            // Why an attachment is missing, instead of an image that silently never comes.
+            if let problem = post.problem, !downloading {
+                Label(problem, systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.orange)
+            }
         }
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -173,7 +180,13 @@ private struct SavedDetailView: View {
                 player = p
             }
         }
-        .onDisappear { player?.pause() }
+        .onDisappear {
+            // Release the item, not just pause: a paused player keeps the decoder and
+            // file open for as long as SwiftUI keeps this state around.
+            player?.pause()
+            player?.replaceCurrentItem(with: nil)
+            player = nil
+        }
     }
 }
 

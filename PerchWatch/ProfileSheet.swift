@@ -246,7 +246,9 @@ struct ProfileContent: View {
         loadingProfile = true
         error = nil
         defer { loadingProfile = false }
-        if user == nil, let cached = OfflineCache.user(id: target.userId) ?? OfflineCache.user(screenName: target.screenName) {
+        var cachedUser = await OfflineCache.user(id: target.userId)
+        if cachedUser == nil { cachedUser = await OfflineCache.user(screenName: target.screenName) }
+        if user == nil, let cached = cachedUser {
             apply(cached)
             configurePosts(cached.id)
             await list.loadIfNeeded()

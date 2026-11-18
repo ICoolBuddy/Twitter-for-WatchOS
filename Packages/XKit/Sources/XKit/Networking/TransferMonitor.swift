@@ -52,6 +52,23 @@ public final class TransferMonitor: @unchecked Sendable {
         prune(now)
     }
 
+    /// Records a transfer measured outside the transport (the image loader's own
+    /// URLSession), so the link-speed estimate sees image traffic too. Without it the
+    /// rate drops to 0 a moment after the last API call, while images keep loading.
+    public func record(bytes: Int, over seconds: TimeInterval) {
+        guard bytes > 0, seconds > 0 else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        let now = Date()
+        let span = min(max(seconds, Self.minimumSpan), Self.window)
+        bytesReceived += Int64(bytes)
+        // `snapshot()` measures from the first event in the window: one empty event at
+        // the start of the transfer, all the bytes at its end.
+        events.append(Event(date: now.addingTimeInterval(-span), bytes: 0))
+        events.append(Event(date: now, bytes: Int64(bytes)))
+        prune(now)
+    }
+
     public func end(_ id: UUID) {
         lock.lock()
         activeIDs.remove(id)

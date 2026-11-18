@@ -16,7 +16,6 @@ struct PostDetailView: View {
 
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
-    @ObservedObject private var saved = SavedStore.shared
 
     private var focal: XTweet { thread?.focal ?? tweet.displayed }
     private var ancestors: [XTweet] { thread?.ancestors ?? [] }
@@ -97,19 +96,11 @@ struct PostDetailView: View {
         .background(Color.black)
         .navigationTitle("Post")
         .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button {
-                    guard !SwipeGuard.isActive else { return }
-                    saved.toggle(focal)
-                } label: {
-                    Image(systemName: saved.isSaved(focal.id) ? "arrow.down.circle.fill" : "arrow.down.circle")
-                }
-                .accessibilityLabel(saved.isSaved(focal.id) ? "Remove from saved" : "Save for offline")
-            }
+            ToolbarItem(placement: .confirmationAction) { SaveButton(tweet: focal) }
         }
         .task {
             if thread == nil {
-                seedFromCache()
+                await seedFromCache()
                 await load()
             }
         }
@@ -118,8 +109,9 @@ struct PostDetailView: View {
     }
 
     /// What was on screen last time this post was opened (offline support).
-    private func seedFromCache() {
-        guard thread == nil, let cached = OfflineCache.thread(id: tweet.displayed.id) else { return }
+    private func seedFromCache() async {
+        guard thread == nil, let cached = await OfflineCache.thread(id: tweet.displayed.id),
+              thread == nil else { return }
         thread = cached
         replies = cached.replies
         cursor = cached.bottomCursor
@@ -183,5 +175,22 @@ struct PostDetailView: View {
         } catch {
             self.error = XError.from(error)
         }
+    }
+}
+
+/// Only this button observes the saved store: as an `@ObservedObject` of the whole post
+/// screen, every attachment write re-rendered the thread and all its replies.
+private struct SaveButton: View {
+    let tweet: XTweet
+    @ObservedObject private var saved = SavedStore.shared
+
+    var body: some View {
+        Button {
+            guard !SwipeGuard.isActive else { return }
+            saved.toggle(tweet)
+        } label: {
+            Image(systemName: saved.isSaved(tweet.id) ? "arrow.down.circle.fill" : "arrow.down.circle")
+        }
+        .accessibilityLabel(saved.isSaved(tweet.id) ? "Remove from saved" : "Save for offline")
     }
 }

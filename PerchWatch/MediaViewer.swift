@@ -26,6 +26,8 @@ struct MediaViewer: View {
     /// The visible photo is zoomed: a downward drag pans instead of closing.
     @State private var zoomed = false
     @State private var dragDown: CGFloat = 0
+    /// Warms the full-size photo a swipe would land on.
+    @State private var neighbourPrefetch: Task<Void, Never>?
     @State private var controlsVisible = true
     @State private var hideTask: Task<Void, Never>?
 
@@ -57,6 +59,15 @@ struct MediaViewer: View {
         .background(Color.black)
         .simultaneousGesture(dismissDrag)
         .onAppear { showControls() }
+        .onChange(of: selection, initial: true) { _, index in
+            // `zoomed` decides whether a downward drag pans or closes, and only the
+            // visible page can write it: paging away from a zoomed photo used to leave
+            // it true, which killed swipe-down-to-close on the next page.
+            zoomed = false
+            dragDown = 0
+            prefetchNeighbours(around: index)
+        }
+        .onDisappear { neighbourPrefetch?.cancel() }
         .onDisappear { hideTask?.cancel() }
     }
 
@@ -159,6 +170,20 @@ struct MediaViewer: View {
     }
 
     /// Swipe down to close (ignored while a photo is zoomed: that drag pans).
+    /// The photo a swipe would land on, decoded ahead (the same URL + size the page asks
+    /// for), so it does not go soft→sharp on arrival. Bounded by the prefetch gate,
+    /// cancelled on every swipe, and skipped on a slow or unmeasured link.
+    private func prefetchNeighbours(around index: Int) {
+        neighbourPrefetch?.cancel()
+        guard media.count > 1 else { return }
+        let urls = [index - 1, index + 1]
+            .filter { media.indices.contains($0) && media[$0].type == .photo }
+            .filter { LinkSpeed.prefersFullPhoto(media[$0]) }
+            .map { media[$0].fullURL }
+        guard !urls.isEmpty else { return }
+        neighbourPrefetch = ImageLoader.shared.prefetch(urls, maxPixel: 1200)
+    }
+
     private var dismissDrag: some Gesture {
         DragGesture(minimumDistance: 20)
             .onChanged { value in
@@ -269,7 +294,13 @@ private struct MediaPhotoPage: View {
         .focusable()
         .focused($crownFocused)
         .onChange(of: isActive) { _, active in
-            if active { DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { crownFocused = true } }
+            if active {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { crownFocused = true }
+                // While off screen this page could not write `zoomed`: re-publish its zoom.
+                zoomed = zoom > 1.05
+                // The full-size copy is for the page on screen.
+                if !wantsFull { wantsFull = LinkSpeed.prefersFullPhoto(media) }
+            }
         }
         .onChange(of: presenter.closing) { _, closing in
             if closing { crownFocused = false }
@@ -293,9 +324,13 @@ private struct MediaPhotoPage: View {
             }
         }
         .onAppear {
-            zoomed = zoom > 1.05
-            wantsFull = LinkSpeed.prefersFullPhoto(media)
-            if isActive { DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { crownFocused = true } }
+            // Only the page on screen earns the 1200 px copy (4–6 MB decoded, held for
+            // the life of the viewer): a paged TabView appears its neighbours too.
+            if isActive {
+                zoomed = zoom > 1.05
+                wantsFull = LinkSpeed.prefersFullPhoto(media)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { crownFocused = true }
+            }
         }
         .onDisappear { zoomed = false }
         .ignoresSafeArea()
@@ -638,11 +673,9 @@ enum LinkSpeed {
         if ImageLoader.shared.cached(media.fullURL, maxPixel: 1200) != nil { return true }
         let pixels = media.width * media.height
         guard pixels > 0 else { return true }
-        // ~0.2 bytes per pixel is typical for the JPEGs X serves.
-        let estimate = Double(pixels) * 0.2
-        let rate = TransferMonitor.shared.snapshot().bytesPerSecond
-        guard rate > 1 else { return true }          // idle: no measurement to trust
-        return estimate / rate <= 3
+        // Within ~3 s on the measured link; with no measurement yet, the feed copy
+        // (it was "fetch the 1200 px one" before, i.e. unknown counted as fast).
+        return !LinkBudget.isTooSlow(bytes: Double(pixels) * LinkBudget.bytesPerPixel, seconds: 3)
     }
 }
 
