@@ -18,6 +18,8 @@ final class AppModel: ObservableObject {
     static let shared = AppModel()
 
     let store: XSessionStore
+    /// The only owner of the signing material download (client 404 retry + manual refresh).
+    let materialProvider: TransactionMaterialProvider
     let posts = PostStateStore()
 
     @Published private(set) var isLoggedIn = false
@@ -50,7 +52,9 @@ final class AppModel: ObservableObject {
         PerchSettings.registerDefaults()
         let store = XSessionStore()
         self.store = store
-        client = Self.makeClient(store: store)
+        let provider = TransactionMaterialProvider(store: store)
+        materialProvider = provider
+        client = Self.makeClient(store: store, provider: provider)
         UserDefaults.standard.removeObject(forKey: "demoMode")  // left over from the removed demo mode
         Task { [weak self] in
             await store.observe { Task { @MainActor in await AppModel.shared.reloadState() } }
@@ -86,16 +90,12 @@ final class AppModel: ObservableObject {
         stateLoaded = true
     }
 
-    private static func makeClient(store: XSessionStore) -> XClient {
-        LiveXClient(store: store, refreshMaterial: {
-            let creds = await store.credentials
-            let cfg = await store.config
-            return try await TransactionMaterialFetcher(credentials: creds, config: cfg).fetch()
-        })
+    private static func makeClient(store: XSessionStore, provider: TransactionMaterialProvider) -> XClient {
+        LiveXClient(store: store, refreshMaterial: { try await provider.material(force: true) })
     }
 
     private func rebuildClient() {
-        client = Self.makeClient(store: store)
+        client = Self.makeClient(store: store, provider: materialProvider)
         viewer = nil
     }
 
@@ -214,12 +214,7 @@ final class AppModel: ObservableObject {
         if scrape {
             do {
                 let base = await store.config
-                #if os(watchOS)
-                var discovery = EndpointDiscovery()
-                discovery.maxChunks = 25
-                #else
-                let discovery = EndpointDiscovery()
-                #endif
+                let discovery = EndpointDiscovery()      // platform caps live in XKit
                 let cfg = try await discovery.discover(base: base)
                 await store.setConfig(cfg)
                 lastError = nil
@@ -233,10 +228,7 @@ final class AppModel: ObservableObject {
     }
 
     func refreshMaterial() async throws {
-        let creds = await store.credentials
-        let cfg = await store.config
-        let m = try await TransactionMaterialFetcher(credentials: creds, config: cfg).fetch()
-        await store.setMaterial(m)
+        try await materialProvider.material(force: true)
         await reloadState()
         sync?.syncNow()
     }

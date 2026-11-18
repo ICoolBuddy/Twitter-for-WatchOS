@@ -12,7 +12,14 @@ public struct XCredentials: Codable, Sendable, Hashable {
     public init(authToken: String, ct0: String, twid: String? = nil) {
         self.authToken = authToken.trimmingCharacters(in: .whitespacesAndNewlines)
         self.ct0 = ct0.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.twid = twid?.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The browser sends the URL-escaped form ("u%3D123"); accept the decoded one too
+        // but always send what the real web client sends.
+        let trimmed = twid?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmed, trimmed.hasPrefix("u=") {
+            self.twid = "u%3D" + trimmed.dropFirst(2)
+        } else {
+            self.twid = trimmed
+        }
     }
 
     /// Basic sanity check: auth_token is 40 hex chars, ct0 is 32–160 hex chars.
@@ -88,11 +95,18 @@ public struct KeychainStore: Sendable {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
-        SecItemDelete(base as CFDictionary)
-        var add = base
-        add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        let status = SecItemAdd(add as CFDictionary, nil)
+        // Update in place, add only when missing: delete-then-add lost every account
+        // whenever the add failed (and the caller only logs the error).
+        let attrs: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        var status = SecItemUpdate(base as CFDictionary, attrs as CFDictionary)
+        if status == errSecItemNotFound {
+            var add = base
+            for (k, v) in attrs { add[k] = v }
+            status = SecItemAdd(add as CFDictionary, nil)
+        }
         guard status == errSecSuccess else { throw KeychainError.status(Int(status)) }
         #else
         KeychainStore.memory.set(data, for: service + "/" + account)

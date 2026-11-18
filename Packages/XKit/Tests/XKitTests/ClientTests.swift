@@ -104,6 +104,8 @@ final class ClientTests: XCTestCase {
         if case .rateLimited = await run(429) {} else { XCTFail("429 must map to rateLimited") }
         let eGQL = await run(200, #"{"errors":[{"message":"boom"}]}"#)
         XCTAssertEqual(eGQL, .graphQL(["boom"]))
+        XCTAssertEqual(XError.transactionRejected("x").recovery, .refreshMaterial)
+        XCTAssertEqual(XError.forbidden("x").recovery, .refreshEndpoints)
     }
 
     func testRateLimiterBacksOff() async throws {
@@ -128,12 +130,17 @@ final class ClientTests: XCTestCase {
 
     func test404RefreshesMaterialOnce() async throws {
         let store = await makeStore()
+        // Older than the 120 s cooldown, so the empty-body 404 may refresh it.
+        await store.setMaterial(TransactionMaterial(
+            verificationKey: "apq2SfoM1EWywcDsmgNQPSj3jOxdYOEh3+PaeD5ZUmrl3Nof03MzwPFtjNK+Tvo1",
+            animationKey: "81ec7d100100", fetchedAt: Date(timeIntervalSinceNow: -3600), source: "old"))
         let stub = StubTransport([.init(status: 404, body: Data()), .init(status: 200, body: Data(#"{"data":{}}"#.utf8))])
         let counter = Counter()
         let client = LiveXClient(store: store, transport: stub, log: RequestLog(), limiter: RateLimiter(minimumGap: 0),
                                  refreshMaterial: {
                                      await counter.inc()
-                                     return TransactionMaterial(verificationKey: "AAAA", animationKey: "k", source: "fresh")
+                                     return TransactionMaterial(verificationKey: "apq2SfoM1EWywcDsmgNQPSj3jOxdYOEh3+PaeD5ZUmrl3Nof03MzwPFtjNK+Tvo1",
+                                                                animationKey: "81ec7d100100", source: "fresh")
                                  })
         _ = try await client.badgeCounts()
         let n = await counter.value
@@ -185,4 +192,163 @@ final class ClientTests: XCTestCase {
 actor Counter {
     var value = 0
     func inc() { value += 1 }
+}
+
+// MARK: - Review fixes (net-1/2/3/6/7/10/14/19)
+
+actor Flag {
+    private(set) var value = false
+    func set() { value = true }
+}
+
+extension ClientTests {
+    /// One tight endpoint must not block the rest (net-1 / net-14).
+    func testOneOperationRateLimitedDoesNotBlockAnother() async throws {
+        let store = await makeStore()
+        let reset = Int(Date().timeIntervalSince1970) + 900
+        let stub = StubTransport([
+            .init(status: 429, body: Data(#"{"errors":[{"code":88,"message":"Rate limit exceeded"}]}"#.utf8),
+                  headers: ["x-rate-limit-reset": String(reset)]),
+            .init(status: 200, body: Data(#"{"data":{}}"#.utf8)),
+        ])
+        let client = LiveXClient(store: store, transport: stub, log: RequestLog(), limiter: RateLimiter(minimumGap: 0))
+        do { _ = try await client.search("swift", product: .latest, cursor: nil) } catch {}
+        _ = try await client.badgeCounts()          // must not throw .rateLimited
+        XCTAssertEqual(stub.requests.count, 2)
+    }
+
+    /// Limits belong to the account, not to the client (net-14, Q5(b)).
+    func testRateLimitDoesNotFollowTheAccountSwitch() async throws {
+        let store = XSessionStore(keychain: KeychainStore(service: "test-\(UUID().uuidString)"), directory: nil)
+        let a = XCredentials(authToken: String(repeating: "a", count: 40),
+                             ct0: String(repeating: "b", count: 64), twid: "u%3D111")
+        let b = XCredentials(authToken: String(repeating: "c", count: 40),
+                             ct0: String(repeating: "d", count: 64), twid: "u%3D222")
+        _ = await store.upsertAccount(a, user: nil)
+        _ = await store.upsertAccount(b, user: nil)
+        await store.setActiveAccount("111")
+        let stub = StubTransport([.init(status: 429, body: Data()),
+                                  .init(status: 200, body: Data(#"{"data":{}}"#.utf8))])
+        let client = LiveXClient(store: store, transport: stub, log: RequestLog(), limiter: RateLimiter(minimumGap: 0))
+        do { _ = try await client.search("x", product: .latest, cursor: nil) } catch {}
+        await store.setActiveAccount("222")
+        _ = try await client.badgeCounts()          // B's bucket is empty
+        XCTAssertEqual(stub.requests.count, 2)
+    }
+
+    /// A rotated ct0 may only touch the account the request was made for (net-3).
+    func testCt0RotationTouchesOnlyTheRequestingAccount() async {
+        let store = XSessionStore(keychain: KeychainStore(service: "test-\(UUID().uuidString)"), directory: nil)
+        let a = XCredentials(authToken: String(repeating: "a", count: 40),
+                             ct0: String(repeating: "b", count: 64), twid: "u%3D111")
+        let b = XCredentials(authToken: String(repeating: "c", count: 40),
+                             ct0: String(repeating: "d", count: 64), twid: "u%3D222")
+        _ = await store.upsertAccount(a, user: nil)
+        _ = await store.upsertAccount(b, user: nil)          // B is active
+        await store.updateCt0("rotated-for-a", forAuthToken: a.authToken)
+        let active = await store.credentials
+        XCTAssertEqual(active?.ct0, b.ct0)
+        let accounts = await store.accounts
+        XCTAssertEqual(accounts.first { $0.id == "111" }?.credentials.ct0, "rotated-for-a")
+    }
+
+    /// A REST 404 is a real 404: no signer download (net-2).
+    func testRestNotFoundDoesNotRefreshMaterial() async throws {
+        let store = await makeStore()
+        let stub = StubTransport([.init(status: 404, body: Data(#"{"errors":[{"message":"gone"}]}"#.utf8))])
+        let counter = Counter()
+        let client = LiveXClient(store: store, transport: stub, log: RequestLog(), limiter: RateLimiter(minimumGap: 0),
+                                 refreshMaterial: {
+                                     await counter.inc()
+                                     return TransactionMaterial(verificationKey: "apq2SfoM1EWywcDsmgNQPSj3jOxdYOEh3+PaeD5ZUmrl3Nof03MzwPFtjNK+Tvo1",
+                                                                animationKey: "81ec7d100100", source: "fresh")
+                                 })
+        do { _ = try await client.dmMessages(conversationId: "1") } catch {}
+        let awaited1 = await counter.value
+        XCTAssertEqual(awaited1, 0)
+        XCTAssertEqual(stub.requests.count, 1)
+    }
+
+    /// A 404 *with* a body is a real 404 / restricted account, not a bad signer (net-2, follow-up).
+    func testGraphQL404WithBodyDoesNotRefreshMaterial() async throws {
+        let store = await makeStore()
+        // Old material, so the 120 s cooldown is not what makes this pass.
+        await store.setMaterial(TransactionMaterial(
+            verificationKey: "apq2SfoM1EWywcDsmgNQPSj3jOxdYOEh3+PaeD5ZUmrl3Nof03MzwPFtjNK+Tvo1",
+            animationKey: "81ec7d100100", fetchedAt: Date(timeIntervalSinceNow: -3600), source: "old"))
+        let stub = StubTransport([.init(status: 404,
+                                        body: Data(#"{"errors":[{"code":34,"message":"Sorry, that page does not exist"}]}"#.utf8))])
+        let counter = Counter()
+        let client = LiveXClient(store: store, transport: stub, log: RequestLog(), limiter: RateLimiter(minimumGap: 0),
+                                 refreshMaterial: {
+                                     await counter.inc()
+                                     return TransactionMaterial(verificationKey: "apq2SfoM1EWywcDsmgNQPSj3jOxdYOEh3+PaeD5ZUmrl3Nof03MzwPFtjNK+Tvo1",
+                                                                animationKey: "81ec7d100100", source: "fresh")
+                                 })
+        do { _ = try await client.badgeCounts() } catch {}
+        let awaited2 = await counter.value
+        XCTAssertEqual(awaited2, 0)
+        XCTAssertEqual(stub.requests.count, 1)
+    }
+
+    /// An empty-body 404 on a fresh signer must not re-download it (net-2 cooldown).
+    func test404DoesNotRefreshMaterialYoungerThanTheCooldown() async throws {
+        let store = await makeStore()          // makeStore() stores material fetched "now"
+        let stub = StubTransport([.init(status: 404, body: Data())])
+        let counter = Counter()
+        let client = LiveXClient(store: store, transport: stub, log: RequestLog(), limiter: RateLimiter(minimumGap: 0),
+                                 refreshMaterial: {
+                                     await counter.inc()
+                                     return TransactionMaterial(verificationKey: "apq2SfoM1EWywcDsmgNQPSj3jOxdYOEh3+PaeD5ZUmrl3Nof03MzwPFtjNK+Tvo1",
+                                                                animationKey: "81ec7d100100", source: "fresh")
+                                 })
+        do { _ = try await client.badgeCounts() } catch {}
+        let awaited3 = await counter.value
+        XCTAssertEqual(awaited3, 0)
+    }
+
+    /// Cancelling the caller cancels the signer refresh (net-6).
+    func testCancelledCallerCancelsTheMaterialFetch() async throws {
+        let store = await makeStore()
+        let stopped = Flag()
+        let client = LiveXClient(store: store, transport: StubTransport([]), log: RequestLog(),
+                                 limiter: RateLimiter(minimumGap: 0),
+                                 refreshMaterial: {
+                                     do { try await Task.sleep(nanoseconds: 5_000_000_000) }
+                                     catch { await stopped.set(); throw error }
+                                     return TransactionMaterial(verificationKey: "AAAA", animationKey: "k", source: "t")
+                                 })
+        let t = Task { try? await client.freshMaterial() }
+        try await Task.sleep(nanoseconds: 50_000_000)     // let the refresh start
+        t.cancel()
+        _ = await t.value
+        let stoppedEarly = await stopped.value
+        XCTAssertTrue(stoppedEarly)                       // without the fix the sleep runs to completion
+    }
+
+    /// Home pagination keeps the same `requestContext` as page 1 (net-10, twikit evidence).
+    func testHomePaginationKeepsRequestContext() async throws {
+        let store = await makeStore()
+        let stub = StubTransport([.init(status: 200, body: Data(#"{"data":{}}"#.utf8))])
+        let client = LiveXClient(store: store, transport: stub, log: RequestLog(), limiter: RateLimiter(minimumGap: 0))
+        _ = try await client.homeTimeline(.forYou, cursor: "CURSOR")
+        let req = try XCTUnwrap(stub.requests.first)
+        let body = try JSON(data: XCTUnwrap(req.httpBody))
+        XCTAssertEqual(body["variables"]["cursor"].string, "CURSOR")
+        XCTAssertEqual(body["variables"]["requestContext"].string, "launch")
+    }
+
+    /// Unusable material must throw, not trap (net-7).
+    func testAnimationKeyRejectsShortVerificationKey() {
+        XCTAssertThrowsError(try ClientTransaction.animationKey(
+            verificationKey: "AAAA", frames: ["M0 0C0 0 0 0 0 0"], indices: [0, 1]))
+    }
+
+    /// `twid` is normalised to the form the browser sends (net-19, Q7).
+    func testTwidIsNormalisedToTheCookieForm() {
+        XCTAssertEqual(XCredentials(authToken: "a", ct0: "b", twid: "u=12345").twid, "u%3D12345")
+        XCTAssertEqual(XCredentials(authToken: "a", ct0: "b", twid: "u%3D12345").twid, "u%3D12345")
+        XCTAssertEqual(XCredentials(authToken: "a", ct0: "b", twid: "u=12345").cookieHeader,
+                       "auth_token=a; ct0=b; twid=u%3D12345")
+    }
 }

@@ -68,7 +68,15 @@ enum Regex {
 public struct EndpointDiscovery: Sendable {
     let fetcher: Fetcher
     /// Upper bound on chunk downloads so a phone never pulls the whole site.
-    public var maxChunks = 80
+    public var maxChunks = EndpointDiscovery.defaultMaxChunks
+    /// The Watch has far less time, battery and RAM than the phone.
+    public static var defaultMaxChunks: Int {
+        #if os(watchOS)
+        return 25
+        #else
+        return 80
+        #endif
+    }
 
     public init(transport: HTTPTransport = URLSessionTransport()) {
         self.fetcher = Fetcher(transport: transport, cookieHeader: nil)
@@ -175,7 +183,14 @@ public struct TransactionMaterialFetcher: Sendable {
     let fetcher: Fetcher
     let fallbackSigner: SignerInfo?
     let fallbackLegacySigner: SignerInfo?
-    public var maxChunkScans = 40
+    public var maxChunkScans = TransactionMaterialFetcher.defaultMaxChunkScans
+    public static var defaultMaxChunkScans: Int {
+        #if os(watchOS)
+        return 12
+        #else
+        return 40
+        #endif
+    }
 
     public init(transport: HTTPTransport = URLSessionTransport(), credentials: XCredentials?, config: EndpointConfig) {
         self.fetcher = Fetcher(transport: transport, cookieHeader: credentials?.cookieHeader)

@@ -54,10 +54,11 @@ public actor LiveXClient: XClient {
     private let log: RequestLog
     private let limiter: RateLimiter
     private let refreshMaterial: MaterialRefresher?
-    private var refreshingMaterial: Task<TransactionMaterial, Error>?
 
+    /// `limiter` defaults to the app-wide one: X's limits belong to the account and the
+    /// operation, so rebuilding the client (login, account switch) must not forget them.
     public init(store: XSessionStore, transport: HTTPTransport = URLSessionTransport(), log: RequestLog = .shared,
-                limiter: RateLimiter = RateLimiter(), refreshMaterial: MaterialRefresher? = nil) {
+                limiter: RateLimiter = .shared, refreshMaterial: MaterialRefresher? = nil) {
         self.store = store
         self.transport = transport
         self.log = log
@@ -72,11 +73,12 @@ public actor LiveXClient: XClient {
             "count": .number(Double(Self.pageSize)),
             "includePromotedContent": false,
             "latestControlAvailable": true,
-            "requestContext": cursor == nil ? "launch" : "ptr",
+            // "launch" on every page, as the web client does (page 2+ just adds the cursor).
+            "requestContext": "launch",
             "withCommunity": true,
             "seenTweetIds": [],
         ]
-        if let cursor { v["cursor"] = .string(cursor); v.removeValue(forKey: "requestContext") }
+        if let cursor { v["cursor"] = .string(cursor) }
         let op: Operation = kind == .forYou ? .homeTimeline : .homeLatestTimeline
         // The web client POSTs home timelines.
         let json = try await graphQL(op, variables: .object(v), forcePost: true)
@@ -292,7 +294,8 @@ public actor LiveXClient: XClient {
             url = url.withStrictQuery(items)
         }
         let json = try await perform(method: post ? "POST" : "GET", url: url, body: body, contentType: "application/json",
-                                     bearer: config.bearer, label: op.rawValue)
+                                     bearer: config.bearer, label: op.rawValue,
+                                     isRead: !info.isMutation, graphQL: true)
         let errors = XParser.graphQLErrors(json)
         if !errors.isEmpty, json["data"].object.isEmpty {
             throw XError.graphQL(errors)
@@ -315,92 +318,141 @@ public actor LiveXClient: XClient {
             body = json.data()
             contentType = "application/json"
         }
-        return try await perform(method: method, url: url, body: body, contentType: contentType, bearer: config.bearer, label: path)
+        return try await perform(method: method, url: url, body: body, contentType: contentType, bearer: config.bearer,
+                                 label: path, isRead: method == "GET", graphQL: false)
     }
+
+    /// What one request may still spend on retries. Each is a one-shot budget decided
+    /// in a single place (the loop below), so no retry path can forget a policy.
+    private struct RetryBudget {
+        var csrf = false        // 403/353 with a rotated ct0: one more attempt
+        var material = false    // empty-body 404 on a GraphQL call: one signer refresh + retry
+        var transient = false   // network error / 5xx on a read: one more attempt
+    }
+
+    /// A 404 within this long of the last signer download is not retried with a new
+    /// signer: if the key we fetched seconds ago is rejected, fetching it again won't help.
+    private static let materialRefreshCooldown: TimeInterval = 120
 
     private func perform(method: String, url: URL, body: Data?, contentType: String?, bearer: String, label: String,
-                         attempt: Int = 0) async throws -> JSON {
-        try Task.checkCancellation()
-        guard let creds = await store.credentials else { throw XError.notLoggedIn }
-        try await limiter.acquire()
+                         isRead: Bool, graphQL: Bool) async throws -> JSON {
+        var budget = RetryBudget()
+        // The identity the request started with: a retry after an account switch must not
+        // be sent with the other account's cookies (and shown as this account's data).
+        let startedAs = await store.credentials.map { XAccount.id(for: $0) }
+        while true {
+            try Task.checkCancellation()
+            guard let creds = await store.credentials else { throw XError.notLoggedIn }
+            guard startedAs == nil || XAccount.id(for: creds) == startedAs else { throw XError.accountChanged }
+            // X limits each endpoint per account.
+            let bucket = "\(XAccount.id(for: creds))/\(label)"
+            try await limiter.acquire(key: bucket)
 
-        var req = URLRequest(url: url)
-        req.httpMethod = method
-        req.httpBody = body
-        req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
-        req.setValue(creds.ct0, forHTTPHeaderField: "x-csrf-token")
-        req.setValue("OAuth2Session", forHTTPHeaderField: "x-twitter-auth-type")
-        req.setValue("yes", forHTTPHeaderField: "x-twitter-active-user")
-        req.setValue("en", forHTTPHeaderField: "x-twitter-client-language")
-        req.setValue(creds.cookieHeader, forHTTPHeaderField: "Cookie")
-        req.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
-        req.setValue("https://x.com/", forHTTPHeaderField: "Referer")
-        req.setValue("https://x.com", forHTTPHeaderField: "Origin")
-        req.setValue("*/*", forHTTPHeaderField: "Accept")
-        if let contentType { req.setValue(contentType, forHTTPHeaderField: "Content-Type") }
-        if let material = await store.material,
-           let tid = try? ClientTransaction.transactionId(method: method, path: url.path, material: material) {
-            req.setValue(tid, forHTTPHeaderField: "x-client-transaction-id")
-        }
-
-        let start = Date()
-        let data: Data
-        let resp: HTTPURLResponse
-        do {
-            (data, resp) = try await transport.send(req)
-        } catch {
-            await log.record(method: method, url: url, status: nil, durationMs: ms(since: start), note: "\(label): \(error.localizedDescription)")
-            if error is CancellationError || (error as? URLError)?.code == .cancelled { throw CancellationError() }
-            throw XError.from(error)
-        }
-        let status = resp.statusCode
-        let json = (try? JSON(data: data)) ?? .null
-        let errorText = XParser.graphQLErrors(json).joined(separator: "; ")
-        await log.record(method: method, url: url, status: status, durationMs: ms(since: start),
-                         note: label + (errorText.isEmpty ? "" : " — " + errorText))
-
-        // X rotates ct0 occasionally.
-        if let newCt0 = Self.ct0(from: resp), newCt0 != creds.ct0 { await store.updateCt0(newCt0) }
-
-        let reset = (resp.value(forHTTPHeaderField: "x-rate-limit-reset")).flatMap(TimeInterval.init)
-        let until = await limiter.didReceive(status: status, resetEpoch: reset)
-
-        switch status {
-        case 200..<300:
-            return json
-        case 401:
-            throw XError.unauthorized
-        case 403:
-            let codes = json["errors"].array.compactMap { $0["code"].int }
-            if codes.contains(353), attempt == 0, Self.ct0(from: resp) != nil {
-                return try await perform(method: method, url: url, body: body, contentType: contentType, bearer: bearer,
-                                         label: label, attempt: attempt + 1)
+            var req = URLRequest(url: url)
+            req.httpMethod = method
+            req.httpBody = body
+            req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+            req.setValue(creds.ct0, forHTTPHeaderField: "x-csrf-token")
+            req.setValue("OAuth2Session", forHTTPHeaderField: "x-twitter-auth-type")
+            req.setValue("yes", forHTTPHeaderField: "x-twitter-active-user")
+            req.setValue("en", forHTTPHeaderField: "x-twitter-client-language")
+            req.setValue(creds.cookieHeader, forHTTPHeaderField: "Cookie")
+            req.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+            req.setValue("https://x.com/", forHTTPHeaderField: "Referer")
+            req.setValue("https://x.com", forHTTPHeaderField: "Origin")
+            req.setValue("*/*", forHTTPHeaderField: "Accept")
+            if let contentType { req.setValue(contentType, forHTTPHeaderField: "Content-Type") }
+            let material = await store.material
+            if let material {
+                do {
+                    let tid = try ClientTransaction.transactionId(method: method, path: url.path, material: material)
+                    req.setValue(tid, forHTTPHeaderField: "x-client-transaction-id")
+                } catch {
+                    // Unusable material makes every request look like a stale-signer
+                    // problem: drop it (the next request re-fetches) and say so.
+                    await log.record(method: method, url: url, status: nil, durationMs: 0,
+                                     note: "\(label): unusable signing material — \(error)")
+                    await store.setMaterial(nil)
+                }
             }
-            throw XError.forbidden(errorText)
-        case 404:
-            // Often a stale/invalid transaction id; regenerate once, then blame the query ID.
-            if attempt == 0, refreshMaterial != nil, (try? await freshMaterial()) != nil {
-                return try await perform(method: method, url: url, body: body, contentType: contentType, bearer: bearer,
-                                         label: label, attempt: attempt + 1)
+
+            let start = Date()
+            let data: Data
+            let resp: HTTPURLResponse
+            do {
+                (data, resp) = try await transport.send(req)
+            } catch {
+                await log.record(method: method, url: url, status: nil, durationMs: ms(since: start),
+                                 note: "\(label): \(error.localizedDescription)")
+                if error is CancellationError || (error as? URLError)?.code == .cancelled { throw CancellationError() }
+                // A read can be repeated safely (a mutation must not be).
+                if isRead, !budget.transient { budget.transient = true; continue }
+                throw XError.from(error)
             }
-            throw XError.notFound
-        case 429:
-            throw XError.rateLimited(until: until)
-        default:
-            throw XError.server(status)
+            let status = resp.statusCode
+            let json = (try? JSON(data: data)) ?? .null
+            let errorText = XParser.graphQLErrors(json).joined(separator: "; ")
+            // Fault rows say how old the signer was, which dates X-side rotations over time.
+            let materialNote = (200..<300).contains(status) ? ""
+                : " · " + (material.map { "material \(RelativeTime.short($0.fetchedAt))" } ?? "no material")
+            await log.record(method: method, url: url, status: status, durationMs: ms(since: start),
+                             note: label + (errorText.isEmpty ? "" : " — " + errorText) + materialNote)
+
+            // X rotates ct0 occasionally; it belongs to the account that made this request.
+            if let newCt0 = Self.ct0(from: resp), newCt0 != creds.ct0 {
+                await store.updateCt0(newCt0, forAuthToken: creds.authToken)
+            }
+
+            let reset = (resp.value(forHTTPHeaderField: "x-rate-limit-reset")).flatMap(TimeInterval.init)
+            let until = await limiter.didReceive(key: bucket, status: status, resetEpoch: reset)
+
+            switch status {
+            case 200..<300:
+                return json
+            case 401:
+                await store.markSessionExpired(forAuthToken: creds.authToken)
+                throw XError.unauthorized
+            case 403:
+                let codes = json["errors"].array.compactMap { $0["code"].int }
+                if codes.contains(353) {
+                    // csrf mismatch: X sent a fresh ct0 with the 403, so one retry can work.
+                    if !budget.csrf, Self.ct0(from: resp) != nil { budget.csrf = true; continue }
+                    throw XError.transactionRejected(errorText)
+                }
+                throw XError.forbidden(errorText)
+            case 404:
+                // An empty-body 404 is X's WAF rejecting a missing/invalid transaction id
+                // (twscrape #306/#322, twikit #419); a 404 with a body is a real 404 or a
+                // restricted account, which no signer can fix (twscrape #367).
+                let materialAge = material.map { Date().timeIntervalSince($0.fetchedAt) } ?? .infinity
+                if graphQL, !budget.material, errorText.isEmpty, materialAge > Self.materialRefreshCooldown,
+                   refreshMaterial != nil {
+                    budget.material = true
+                    do { _ = try await freshMaterial() }
+                    catch is CancellationError { throw CancellationError() }
+                    catch { throw XError.notFound }
+                    continue
+                }
+                throw XError.notFound
+            case 429:
+                throw XError.rateLimited(until: until)
+            case 500...599:
+                if isRead, !budget.transient { budget.transient = true; continue }
+                throw XError.server(status)
+            default:
+                throw XError.server(status)
+            }
         }
     }
 
-    /// Single-flight refresh of the transaction material.
+    /// Fresh transaction material from the app's provider (`TransactionMaterialProvider`
+    /// single-flights, caches and stores it). Awaited directly, so cancelling the caller
+    /// cancels the download.
     @discardableResult
     public func freshMaterial() async throws -> TransactionMaterial {
-        if let t = refreshingMaterial { return try await t.value }
         guard let refresh = refreshMaterial else { throw XError.network("No transaction material source") }
-        let t = Task { try await refresh() }
-        refreshingMaterial = t
-        defer { refreshingMaterial = nil }
-        let m = try await t.value
-        await store.setMaterial(m)
+        let m = try await refresh()
+        if await store.material != m { await store.setMaterial(m) }
         return m
     }
 

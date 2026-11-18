@@ -145,7 +145,9 @@ final class ChunkedDataDelegate: NSObject, URLSessionDataDelegate, @unchecked Se
         lock.lock()
         pending[dataTask.taskIdentifier]?.response = response
         let expected = response.expectedContentLength
-        if expected > 0, expected < 32 * 1024 * 1024 {
+        // Only an optimisation (larger bodies still append); the size is server-chosen,
+        // so keep the up-front reservation small on a 1 GB Watch.
+        if expected > 0, expected < 2 * 1024 * 1024 {
             pending[dataTask.taskIdentifier]?.data.reserveCapacity(Int(expected))
         }
         lock.unlock()
@@ -179,7 +181,12 @@ final class ChunkedDataDelegate: NSObject, URLSessionDataDelegate, @unchecked Se
 public enum XError: Error, Sendable, Equatable, LocalizedError {
     case notLoggedIn
     case unauthorized              // 401 — session expired / logged out
-    case forbidden(String)         // 403 — csrf mismatch, locked account, missing transaction id…
+    case forbidden(String)         // 403 — locked account, outdated feature switches…
+    /// 403/353 that survived the csrf retry: the signing material is the suspect, not
+    /// the query IDs, so the remedy is a new signing key.
+    case transactionRejected(String)
+    /// The active account changed while the request was being retried.
+    case accountChanged
     case notFound                  // 404 — usually a stale GraphQL query ID
     case rateLimited(until: Date?) // 429
     case server(Int)
@@ -193,6 +200,8 @@ public enum XError: Error, Sendable, Equatable, LocalizedError {
         case .notLoggedIn: return "Not logged in. Log in on your iPhone."
         case .unauthorized: return "Your X session expired. Please log in again."
         case .forbidden(let m): return "X refused the request (403). \(m)"
+        case .transactionRejected(let m): return "X rejected the request signature (403). \(m)"
+        case .accountChanged: return "The account changed while loading."
         case .notFound: return "This X endpoint has changed (404). Refresh endpoints."
         case .rateLimited(let until):
             if let until { return "Rate limited by X. Try again \(RelativeTime.short(until, future: true))." }
@@ -205,13 +214,14 @@ public enum XError: Error, Sendable, Equatable, LocalizedError {
         }
     }
 
-    public enum Recovery: Sendable { case relogin, refreshEndpoints, wait, retry }
+    /// One remedy per error, decided where the evidence is (XKit), so the UI never has
+    /// to try several.
+    public enum Recovery: Sendable { case relogin, refreshMaterial, refreshEndpoints, wait, retry }
 
     public var recovery: Recovery {
         switch self {
         case .notLoggedIn, .unauthorized: return .relogin
-        // A 403 is almost always a missing/stale transaction id or feature
-        // flags, not an expired session (that is a 401).
+        case .transactionRejected: return .refreshMaterial
         case .forbidden: return .refreshEndpoints
         case .notFound, .missingOperation: return .refreshEndpoints
         case .rateLimited: return .wait

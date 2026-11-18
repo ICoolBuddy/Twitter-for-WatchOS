@@ -60,6 +60,9 @@ public enum ClientTransaction {
     /// `frames` are the `d` attributes of the second `<path>` in each loading-x-anim SVG.
     public static func animationKey(verificationKey: String, frames: [String], indices: [Int]) throws -> String {
         let kb = try keyBytes(verificationKey)
+        // Byte 5 picks the animation frame, so the key must be at least 6 bytes
+        // (real keys are 48): a short/corrupt synced key must throw, not trap.
+        guard kb.count >= 6 else { throw TransactionError.invalidVerificationKey }
         guard indices.count >= 2, indices.allSatisfy({ $0 >= 0 && $0 < kb.count }) else { throw TransactionError.indicesNotFound }
         guard !frames.isEmpty else { throw TransactionError.animationFramesNotFound }
 
@@ -294,5 +297,15 @@ public enum HTMLExtract {
         return re.matches(in: js, range: NSRange(location: 0, length: ns.length)).compactMap {
             Int(ns.substring(with: $0.range(at: 1)))
         }
+    }
+}
+
+extension TransactionMaterial {
+    /// Material that can actually produce a transaction id. Anything else is stored as
+    /// absent (see `XSessionStore.setMaterial`), so it gets re-fetched instead of
+    /// silently sending unsigned requests.
+    public var isUsable: Bool {
+        guard !animationKey.isEmpty, let bytes = try? ClientTransaction.keyBytes(verificationKey) else { return false }
+        return bytes.count >= 6
     }
 }

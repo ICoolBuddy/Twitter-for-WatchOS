@@ -517,22 +517,18 @@ struct ErrorStateView: View {
                 #else
                 Text("Log in again from the Account section.").font(.caption).foregroundStyle(.secondary)
                 #endif
+            // One remedy per error: XKit decided which one fits (`XError.recovery`).
             case .refreshEndpoints:
                 Button(working ? "Refreshing…" : "Refresh endpoints") {
                     guard !SwipeGuard.isActive else { return }
-                    Task {
-                        working = true
-                        defer { working = false }
-                        do {
-                            try await app.refreshEndpoints()
-                            // A 403 is usually a stale transaction key: renew it too.
-                            try? await app.refreshMaterial()
-                            message = "Updated."
-                            await retry?()
-                        } catch {
-                            message = XError.from(error).localizedDescription
-                        }
-                    }
+                    recover { try await app.refreshEndpoints() }
+                }
+                .frame(maxWidth: .infinity)
+                .disabled(working)
+            case .refreshMaterial:
+                Button(working ? "Renewing…" : "Renew signing key") {
+                    guard !SwipeGuard.isActive else { return }
+                    recover { try await app.refreshMaterial() }
                 }
                 .frame(maxWidth: .infinity)
                 .disabled(working)
@@ -552,10 +548,26 @@ struct ErrorStateView: View {
         .frame(maxWidth: .infinity)
     }
 
+    /// Runs a remedy, then retries the failed load.
+    private func recover(_ remedy: @escaping @MainActor () async throws -> Void) {
+        Task {
+            working = true
+            defer { working = false }
+            do {
+                try await remedy()
+                message = "Updated."
+                await retry?()
+            } catch {
+                message = XError.from(error).localizedDescription
+            }
+        }
+    }
+
     private var icon: String {
         switch error.recovery {
         case .relogin: return "person.crop.circle.badge.exclamationmark"
         case .refreshEndpoints: return "arrow.triangle.2.circlepath"
+        case .refreshMaterial: return "key"
         case .wait: return "hourglass"
         case .retry: return "wifi.exclamationmark"
         }
