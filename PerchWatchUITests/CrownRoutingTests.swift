@@ -400,8 +400,8 @@ final class CrownRoutingTests: XCTestCase {
                 settle()
                 let after = read(name)
                 guard let after else {
-                    report(id, iteration, "NOPROBE", note: "probe.\(name) became unreadable after the crown",
-                           reading: before)
+                    report(id, iteration, "NOPROBE", reading: before,
+                           note: "probe.\(name) became unreadable after the crown")
                     XCTFail("\(id) iteration \(iteration): probe.\(name) became unreadable after the crown")
                     app.terminate()
                     continue
