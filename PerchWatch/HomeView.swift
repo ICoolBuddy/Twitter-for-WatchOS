@@ -16,23 +16,40 @@ struct HomeView: View {
     /// scroll view that appears, not to one a page swipe merely brings back (crown
     /// routing test S3) — and the reader is put back on the post they were reading.
     var returnToken = 0
+    /// Tapping the other tab at the top switches feeds (the pager owns the page).
+    var onSelect: ((HomeKind) -> Void)? = nil
 
     @EnvironmentObject private var app: AppModel
     @AppStorage(PerchSettings.autoRefreshOnOpen) private var autoRefreshOnOpen = true
 
     /// Owned by `RootPager`, which also draws the edge glow from it.
     @ObservedObject var list: PagedList<TimelineItem>
-    @State private var configuredFor: String?
-    /// The account changed since this page was first configured: the next refresh
-    /// replaces the list instead of merging into it.
-    @State private var accountChanged = false
+    /// Where the reader was, owned by `RootPager` so it survives this page being
+    /// rebuilt (`returnToken`) or dropped by the system pager while off screen.
+    let place: FeedPlace
     /// `PagedList` keeps the closures it was configured with, so they cannot read the
     /// `isActive` struct property later: this box carries the live value.
     @State private var visibility = PageVisibility()
     @State private var profileTarget: ProfileTarget?
-    /// The first post on screen, so a rebuilt scroll view can return to it.
-    @State private var topVisibleID: String?
     @State private var mediaTarget: MediaTarget?
+    /// False only for a freshly created page (the system pager can drop an
+    /// off-screen page and build it again): that one restores `place` on appear.
+    @State private var hasAppeared = false
+    /// Black over the list while a restore lands (a frame or two), so a page that
+    /// comes back never shows the top first and then jumps to the reader's place.
+    @State private var coverWhileRestoring = false
+    /// The `returnToken` whose scroll view has been put back at the reader's place.
+    /// Different from `returnToken` = a rebuilt scroll view that has not been
+    /// restored yet: covered from its very first frame (setting a flag in
+    /// `onChange` came one frame late, and a fast swipe back showed that frame).
+    /// -1 = this page's scroll view was never put back (a page the pager created).
+    @State private var restoredToken = -1
+
+    /// Black over the list: a restore is running, or a new scroll view (rebuilt, or a
+    /// page the pager created again) has not been put back at the reader's place yet.
+    private var covered: Bool {
+        coverWhileRestoring || returnToken != restoredToken
+    }
 
     /// The top of the list: a zero-height anchor laid out before any row, so a refresh
     /// can scroll up without waiting for the new first post to exist.
@@ -59,19 +76,48 @@ struct HomeView: View {
                 .padding(.horizontal, Metrics.horizontalPadding)
             }
             .background(Color.black)
-            .id(returnToken)
-            .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.3) { ids in
-                topVisibleID = ids.first
+            .overlay {
+                if covered { Color.black.allowsHitTesting(false) }
             }
+            .onScrollGeometryChange(for: CGSize.self) {
+                CGSize(width: $0.contentInsets.top, height: $0.containerSize.height)
+            } action: { _, g in
+                place.topInset = g.width
+                place.viewportHeight = g.height
+            }
+            .id(returnToken)
+            #if DEBUG
+            .overlay(alignment: .topTrailing) {
+                Text(verbatim: "place")
+                    .font(.system(size: 1))
+                    .foregroundStyle(.clear)
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+                    .accessibilityIdentifier("place." + (kind == .forYou ? "forYou" : "following"))
+                    .accessibilityValue(placeDebug)
+            }
+            #endif
+            // Swiped back to: the scroll view was rebuilt (crown), put the reader back.
+            // Rebuilt (crown): restore only while on screen. Off screen the list does
+            // not lay its rows out, so the jump landed short (an older post) and there
+            // were no row frames to correct it with (device: menu -> For You). A feed
+            // rebuilt off screen stays covered and restores when it comes back.
             .onChange(of: returnToken) { _, _ in
-                // Read before the new scroll view reports its own (top) rows.
-                guard let id = topVisibleID, id != Self.topAnchor else { return }
-                DispatchQueue.main.async { proxy.scrollTo(id, anchor: .top) }
+                if isActive { restore(proxy) }
+            }
+            .onAppear {
+                guard !hasAppeared else { return }
+                hasAppeared = true
+                // The pager creates the neighbouring page off screen: that one waits
+                // (covered) and restores when it becomes the feed on screen.
+                if isActive { restore(proxy) }
             }
             // The edge glow is drawn by `RootGlow` straight from the lists; pulling
             // or turning the crown only triggers the refresh.
             .pullToRefresh(isRefreshing: list.isRefreshing, failed: list.error != nil) {
-                await refresh(merge: false)
+                // Like X: newer posts above the ones already loaded, never a reload.
+                await list.refreshNewer()
+                await app.posts.flush(client: app.client)
                 // A refresh the reader asked for brings the new posts into view;
                 // animated, and a no-op when the pull already left the list at the top.
                 withAnimation(.easeOut(duration: 0.25)) {
@@ -90,6 +136,8 @@ struct HomeView: View {
             .postPresentation(profile: $profileTarget, media: $mediaTarget)
             .onChange(of: isActive, initial: true) { _, active in
                 visibility.isActive = active
+                // Back on screen with a scroll view not yet put back at the place.
+                if active, returnToken != restoredToken { restore(proxy) }
                 // Arriving on this feed: warm what it is about to show.
                 if active, !list.isEmpty { ImageLoader.shared.prefetchFeed(list.items.displayTweets) }
             }
@@ -97,15 +145,15 @@ struct HomeView: View {
         }
     }
 
-    /// Which timeline this page is (the menu no longer lists them; the pager's
-    /// swipes decide, so the label says where you are).
+    /// X-style tabs: both feeds named, the current one bold white with a blue bar.
+    /// The first row of the list, so it scrolls away with the posts (owner,
+    /// 2026-11-18: not pinned). Tapping the other name switches feeds.
     private var timelineLabel: some View {
-        VStack(spacing: 1) {
-            Text(kind == .forYou ? "FOR YOU" : "FOLLOWING")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.8)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel(kind == .forYou ? "For You timeline" : "Following timeline")
+        VStack(spacing: 2) {
+            HStack(spacing: 16) {
+                feedTab(.forYou, "For You")
+                feedTab(.following, "Following")
+            }
             // Cached posts on screen but the last refresh failed: say so, instead
             // of an error line at the very bottom of the feed nobody sees.
             if !list.isEmpty, list.error != nil, !list.isRefreshing {
@@ -119,6 +167,29 @@ struct HomeView: View {
         .padding(.top, 2)
         .padding(.bottom, 6)
     }
+
+    private func feedTab(_ tab: HomeKind, _ title: String) -> some View {
+        let current = tab == kind
+        return Button {
+            if !current { onSelect?(tab) }
+        } label: {
+            VStack(spacing: 3) {
+                Text(title)
+                    .font(.system(size: 14, weight: current ? .bold : .medium))
+                    .foregroundStyle(current ? Color.white : Color.white.opacity(0.45))
+                Capsule()
+                    .fill(current ? Self.tabBlue : Color.clear)
+                    .frame(width: 26, height: 3)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.swipeSafe)
+        .accessibilityLabel(title + " timeline")
+        .accessibilityAddTraits(current ? .isSelected : [])
+    }
+
+    /// X's own blue.
+    private static let tabBlue = Color(red: 0.114, green: 0.608, blue: 0.941)
 
     private var offlineText: String {
         guard let d = list.lastUpdated else { return "Offline · cached posts" }
@@ -143,26 +214,78 @@ struct HomeView: View {
                     if item.id != list.items.last?.id { PostSeparator() }
                 }
                 .id(item.id)
+                // Where this row is on screen: the reading place and the "seen"
+                // impressions come from real row frames. (onScrollTargetVisibilityChange
+                // reported rows ~1000 pt above the viewport here: measured 2026-11-18.)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .scrollView) } action: { frame in
+                    // A page created a moment ago starts at the top: its rows must not
+                    // overwrite the place before `restore` has run (`hasAppeared`).
+                    place.rowMoved(item, frame: frame, isFirst: item.id == list.items.first?.id,
+                                   active: visibility.isActive && returnToken == restoredToken)
+                }
             }
             PagingFooter(list: list)
         }
     }
 
+    /// Scrolls a new scroll view back to the post that was on top when the reader
+    /// left this feed. Nothing to do on the very first appearance (no saved place).
+    /// Puts a new scroll view back at the reader's exact place: first the saved row
+    /// to the top, then `FeedPlace` corrects by measuring where the row really landed
+    /// (the new list has not measured the rows above it, so one scroll is not exact).
+    private func restore(_ proxy: ScrollViewProxy) {
+        let token = returnToken
+        guard let id = place.savedTopID, list.items.contains(where: { $0.id == id }) else {
+            restoredToken = token
+            return
+        }
+        coverWhileRestoring = true
+        place.beginRestore({ id, anchor in proxy.scrollTo(id, anchor: anchor) },
+                           done: {
+                               coverWhileRestoring = false
+                               restoredToken = token
+                           })
+    }
+
+    #if DEBUG
+    /// Restore evidence for the place tests (refreshed on each body pass).
+    private var placeDebug: String {
+        "saved=\(place.savedTopID ?? "-") live=\(place.liveTopID ?? "-") d=\(Int(place.savedDepth)) inset=\(Int(place.topInset)) vh=\(Int(place.viewportHeight))"
+    }
+    #endif
+
     private func configure() {
         let key = taskKey
-        guard configuredFor != key else { return }
-        // Not the first configure of this page: the account (or login) changed.
-        accountChanged = configuredFor != nil
-        configuredFor = key
+        // Kept in `place` (owned by RootPager, like the list): a page the system
+        // pager rebuilt is not a new configuration, and resetting the shared list
+        // there threw away the posts and the place it had just restored.
+        guard place.configuredFor != key else { return }
+        // Not the first configure of this feed: the account (or login) changed.
+        place.accountChanged = place.configuredFor != nil
+        if place.accountChanged {
+            // Another account's reading place means nothing here.
+            place.liveTopID = nil
+            place.savedTopID = nil
+            place.seen.reset()
+        }
+        place.configuredFor = key
         list.reset()
 
         let client = app.client
         let k = kind
         let scope = app.homeCacheScope(k)
+        let seen = place.seen
         list.fetch = { cursor in
-            let p = try await client.homeTimeline(k, cursor: cursor)
+            let ids = await MainActor.run { seen.drain() }
+            let p = try await client.homeTimeline(k, cursor: cursor, context: .launch, seenTweetIds: ids)
             return (p.items, p.bottomCursor, p.topCursor)
         }
+        list.topFetch = { top in
+            let ids = await MainActor.run { seen.drain() }
+            let p = try await client.homeTimeline(k, cursor: top, context: .refresh, seenTweetIds: ids)
+            return (p.items, p.bottomCursor, p.topCursor)
+        }
+        list.alreadySeen = { seen.wasSeen($0) }
         list.onFirstPage = { items, _ in
             TimelineDiskCache.save(items, scope: scope)
         }
@@ -183,13 +306,13 @@ struct HomeView: View {
     private func start() async {
         guard !list.hasLoadedFirstPage else { return }
         if !list.isEmpty { FeedActivity.shared.markContentReady() }   // cached posts
-        if list.isEmpty || autoRefreshOnOpen || accountChanged {
+        if list.isEmpty || autoRefreshOnOpen || place.accountChanged {
             // Merge, so posts already on screen are never reordered or dropped: only
             // new ones appear above them. After an account switch, replace.
-            await refresh(merge: !accountChanged)
+            await refresh(merge: !place.accountChanged)
         }
         if !Task.isCancelled {
-            if list.hasLoadedFirstPage { accountChanged = false }
+            if list.hasLoadedFirstPage { place.accountChanged = false }
             FeedActivity.shared.markContentReady()
         }
     }
@@ -198,6 +321,166 @@ struct HomeView: View {
         await list.refresh(merge: merge)
         // Offline taps (like/repost/bookmark) go out as soon as we are online.
         await app.posts.flush(client: app.client)
+    }
+}
+
+/// The reading place of one home feed. A plain reference (not observed): updating
+/// it on every scrolled post must not re-render the pager.
+final class FeedPlace {
+    /// The first post on screen right now (only tracked while the feed is active).
+    var liveTopID: String?
+    /// `liveTopID` at the moment the reader left the feed: what a rebuilt scroll
+    /// view returns to.
+    var savedTopID: String?
+    /// How far (points) the viewport top was inside the top row, live and saved.
+    var liveDepth: CGFloat = 0
+    var savedDepth: CGFloat = 0
+    /// An exact restore in flight (see `beginRestore`).
+    private var restoring: (id: String, tries: Int, a0: CGFloat, top0: CGFloat?, a: CGFloat,
+                            lastTop: CGFloat?)?
+    private var scrollToRow: ((String, UnitPoint) -> Void)?
+    /// The scroll view's visible height (what "on screen" means for a row frame).
+    var viewportHeight: CGFloat = 0
+    /// The scroll view's top inset (under the toolbar): where reading starts.
+    var topInset: CGFloat = 0
+    /// Posts the reader has had on screen in this feed (see `FeedSeen`).
+    let seen = FeedSeen()
+
+    /// One row's frame in the scroll view's visible coordinates changed.
+    /// Called when a restore finished (or gave up).
+    private var restoreDone: (() -> Void)?
+
+    func rowMoved(_ item: TimelineItem, frame: CGRect, isFirst: Bool, active: Bool) {
+        let top = topInset
+        if let r = restoring, r.id == item.id {
+            correct(frame: frame)
+            return
+        }
+        guard active, restoring == nil else { return }
+        let height = viewportHeight > 0 ? viewportHeight : 150
+        // On screen at all: an impression (sent with the next home request).
+        if frame.maxY > top + 8, frame.minY < height - 8 { seen.mark(item) }
+        if frame.minY <= top + 0.5, frame.maxY > top + 0.5 {
+            // This row covers the top edge of the viewport: it is the reading place.
+            liveTopID = item.id
+            liveDepth = top - frame.minY
+        } else if isFirst, frame.minY > top + 0.5 {
+            liveTopID = nil          // the top of the feed (label/anchor) is showing
+            liveDepth = 0
+        }
+        // Saved continuously, not when the feed is left: the system pager can drop
+        // the page in the same update that makes it inactive, so a "save on leave"
+        // never ran (device: back at the top, later at a long-gone post).
+        savedTopID = liveTopID
+        savedDepth = liveDepth
+    }
+
+    private func finishRestore() {
+        restoring = nil
+        let done = restoreDone
+        restoreDone = nil
+        done?()
+    }
+
+    /// Starts an exact restore: the saved row is scrolled to anchor 0 (its top at
+    /// the viewport top), then `correct` measures and re-aims.
+    func beginRestore(_ scroll: @escaping (String, UnitPoint) -> Void, done: @escaping () -> Void) {
+        guard let id = savedTopID else { done(); return }
+        scrollToRow = scroll
+        restoreDone?()
+        restoreDone = done
+        restoring = (id, 0, 0, nil, 0, nil)
+        liveTopID = id
+        liveDepth = savedDepth
+        DispatchQueue.main.async { scroll(id, UnitPoint(x: 0.5, y: 0)) }
+        // Belt: a row that never reports a frame must not freeze place tracking
+        // (or leave the list covered).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            if self?.restoring?.id == id { self?.finishRestore() }
+        }
+    }
+
+    /// Where the restored row landed vs. where it was (`savedDepth` into it).
+    /// `scrollTo(id, anchor: a)` moves the row top linearly with `a`; two
+    /// measurements give the slope (secant step), so it converges in a step or two
+    /// without assuming how watchOS measures the viewport.
+    private func correct(frame: CGRect) {
+        guard var r = restoring, let scroll = scrollToRow else { return }
+        let rowTop = frame.minY
+        if let last = r.lastTop, abs(last - rowTop) < 0.25 { return }   // same frame again
+        r.lastTop = rowTop
+        let desired = topInset - savedDepth
+        let error = rowTop - desired
+        if abs(error) <= 1.5 || r.tries >= 4 {
+            liveDepth = topInset - rowTop
+            finishRestore()
+            return
+        }
+        let next: CGFloat
+        if let top0 = r.top0, abs(r.a - r.a0) > 0.0001, abs(rowTop - top0) > 0.5 {
+            let slope = (rowTop - top0) / (r.a - r.a0)
+            next = r.a - error / slope
+            r.a0 = r.a
+            r.top0 = rowTop
+        } else {
+            // First measurement: guess the slope from the sizes (row taller than the
+            // viewport moves up as `a` grows), then refine with the secant.
+            let v = viewportHeight > 0 ? viewportHeight : 150
+            let h = max(frame.height, 1)
+            let slope = (v - h) == 0 ? -1 : (v - h)
+            next = r.a - error / slope
+            r.a0 = r.a
+            r.top0 = rowTop
+        }
+        r.a = next
+        r.tries += 1
+        restoring = r
+        let id = r.id
+        DispatchQueue.main.async { scroll(id, UnitPoint(x: 0.5, y: next)) }
+    }
+    /// The account/login the shared list was configured for (`HomeView.taskKey`).
+    var configuredFor: String?
+    /// The account changed since the feed was first configured: the next refresh
+    /// replaces the list instead of merging into it.
+    var accountChanged = false
+}
+
+/// The posts a reader has seen in one home feed, kept the way x.com's web client
+/// keeps them: `pending` = seen since the last home request (sent as `seenTweetIds`,
+/// then cleared), `known` = every row seen this session, so a refresh never puts one
+/// back on top as new. Main thread only (visibility callbacks and `MainActor.run`).
+final class FeedSeen {
+    private var pending: [String] = []
+    private var pendingSet: Set<String> = []
+    private var known: Set<String> = []
+    /// Bounds: X's own tracker sends what was seen since the last request (a few
+    /// dozen); `known` only has to cover a session of reading.
+    private static let maxPending = 100
+    private static let maxKnown = 3000
+
+    func mark(_ item: TimelineItem) {
+        // Only the first time a row is seen: it was already reported after that.
+        guard known.insert(item.id).inserted else { return }
+        if known.count > Self.maxKnown { known.removeAll(keepingCapacity: true); known.insert(item.id) }
+        for tweet in item.tweets {
+            let id = tweet.displayed.id
+            guard pending.count < Self.maxPending, pendingSet.insert(id).inserted else { continue }
+            pending.append(id)
+        }
+    }
+
+    func wasSeen(_ item: TimelineItem) -> Bool { known.contains(item.id) }
+
+    /// The ids for the next request; cleared, as the web client does after sending.
+    func drain() -> [String] {
+        defer { pending.removeAll(); pendingSet.removeAll() }
+        return pending
+    }
+
+    func reset() {
+        pending.removeAll()
+        pendingSet.removeAll()
+        known.removeAll()
     }
 }
 

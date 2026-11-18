@@ -7,6 +7,15 @@ public enum HomeKind: String, Codable, Sendable, CaseIterable {
     case forYou, following
 }
 
+/// `requestContext` of a home timeline request, as x.com's web client sends it
+/// (`{LAUNCH:"launch",REFRESH:"ptr"}` in the web bundle, checked 2026-11-18).
+public enum HomeRequestContext: String, Sendable {
+    /// First load and paging further down.
+    case launch
+    /// Pull-to-refresh: newer posts above the top cursor.
+    case refresh = "ptr"
+}
+
 public enum NotificationKind: String, Codable, Sendable, CaseIterable {
     case all = "All", mentions = "Mentions"
 }
@@ -17,7 +26,11 @@ public enum SearchProduct: String, Sendable, CaseIterable {
 
 /// Everything the UI needs from X. `LiveXClient` talks to x.com.
 public protocol XClient: Sendable {
-    func homeTimeline(_ kind: HomeKind, cursor: String?) async throws -> TimelinePage
+    /// `seenTweetIds`: posts the reader had on screen since the previous home request.
+    /// The web client sends exactly that (its impression tracker, cleared after each
+    /// request), and X uses it not to serve the same posts again.
+    func homeTimeline(_ kind: HomeKind, cursor: String?, context: HomeRequestContext,
+                      seenTweetIds: [String]) async throws -> TimelinePage
     func tweetDetail(id: String, cursor: String?) async throws -> ThreadPage
     func setLiked(_ liked: Bool, tweetId: String) async throws
     func setRetweeted(_ retweeted: Bool, tweetId: String) async throws
@@ -39,6 +52,12 @@ public protocol XClient: Sendable {
     func dmInbox() async throws -> [DMConversation]
     func dmMessages(conversationId: String) async throws -> (messages: [DMMessage], users: [String: XUser])
     func sendDM(conversationId: String, text: String) async throws
+}
+
+extension XClient {
+    public func homeTimeline(_ kind: HomeKind, cursor: String?) async throws -> TimelinePage {
+        try await homeTimeline(kind, cursor: cursor, context: .launch, seenTweetIds: [])
+    }
 }
 
 /// Produces fresh transaction material (iPhone scrapes x.com; Watch may too).
@@ -68,15 +87,18 @@ public actor LiveXClient: XClient {
 
     // MARK: Timeline
 
-    public func homeTimeline(_ kind: HomeKind, cursor: String?) async throws -> TimelinePage {
+    public func homeTimeline(_ kind: HomeKind, cursor: String?, context: HomeRequestContext,
+                             seenTweetIds: [String]) async throws -> TimelinePage {
         var v: [String: JSON] = [
-            "count": .number(Double(Self.pageSize)),
+            // The web client asks for 40 when it fetches newer posts from the top.
+            "count": .number(Double(context == .refresh ? 40 : Self.pageSize)),
             "includePromotedContent": false,
             "latestControlAvailable": true,
-            // "launch" on every page, as the web client does (page 2+ just adds the cursor).
-            "requestContext": "launch",
+            // "launch" for the first page and paging (page 2+ just adds the cursor),
+            // "ptr" for a pull-to-refresh from the top cursor.
+            "requestContext": .string(context.rawValue),
             "withCommunity": true,
-            "seenTweetIds": [],
+            "seenTweetIds": .array(seenTweetIds.map { .string($0) }),
         ]
         if let cursor { v["cursor"] = .string(cursor) }
         let op: Operation = kind == .forYou ? .homeTimeline : .homeLatestTimeline

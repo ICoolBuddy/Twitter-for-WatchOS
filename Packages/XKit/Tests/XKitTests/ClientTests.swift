@@ -340,6 +340,22 @@ extension ClientTests {
         XCTAssertEqual(body["variables"]["requestContext"].string, "launch")
     }
 
+    /// Pull-to-refresh is a "ptr" request from the top cursor carrying the posts the
+    /// reader has seen, like the web client's HomeTimeline call.
+    func testHomeRefreshSendsPtrAndSeenTweets() async throws {
+        let store = await makeStore()
+        let stub = StubTransport([.init(status: 200, body: Data(#"{"data":{}}"#.utf8))])
+        let client = LiveXClient(store: store, transport: stub, log: RequestLog(), limiter: RateLimiter(minimumGap: 0))
+        _ = try? await client.homeTimeline(.following, cursor: "TOP", context: .refresh,
+                                           seenTweetIds: ["1", "2"])
+        let req = try XCTUnwrap(stub.requests.first)
+        let body = try JSON(data: XCTUnwrap(req.httpBody))
+        XCTAssertEqual(body["variables"]["cursor"].string, "TOP")
+        XCTAssertEqual(body["variables"]["requestContext"].string, "ptr")
+        XCTAssertEqual(body["variables"]["count"].double, 40)
+        XCTAssertEqual(body["variables"]["seenTweetIds"].array.compactMap(\.string), ["1", "2"])
+    }
+
     /// Unusable material must throw, not trap (net-7).
     func testAnimationKeyRejectsShortVerificationKey() {
         XCTAssertThrowsError(try ClientTransaction.animationKey(

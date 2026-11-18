@@ -104,13 +104,12 @@ struct WatchRootView: View {
         // Full-screen media is a real presentation (crown fix, 2026-11-18): when an
         // overlay viewer went away, watchOS did not hand the crown back to the feed;
         // dismissing a presentation is a moment it re-picks the crown's scroll view.
-        // The cover brings watchOS' own close (X) button, so the viewer drops its own.
+        // The viewer hides the cover's X and clock (`inCover`); it closes by swipe down.
         .fullScreenCover(isPresented: mediaCoverPresented) {
             if let target = presenter.target {
                 MediaViewer(media: target.media, startIndex: target.startIndex,
                             title: target.title, caption: target.caption,
-                            onClose: { presenter.close() }, showsCloseButton: false)
-                    ._statusBarHidden(true)
+                            onClose: { presenter.close() }, inCover: true)
             }
         }
         // One app-wide notice for a dead session (X answered 401) instead of an error
@@ -210,6 +209,9 @@ struct RootPager: View {
     /// See `HomeView.returnToken`: bumped when a feed is swiped back to.
     @State private var forYouReturn = 0
     @State private var followingReturn = 0
+    /// Each feed's reading place, kept here so it outlives the pages.
+    @State private var forYouPlace = FeedPlace()
+    @State private var followingPlace = FeedPlace()
     /// Feeds already shown once (the first appearance gets the crown by itself).
     @State private var shownFeeds: Set<Int> = []
     /// The next page change comes from a button, not a swipe (buttons were fine).
@@ -220,10 +222,10 @@ struct RootPager: View {
             MenuView(onPick: { kind in goFeed(kind) })
                 .tag(0)
             HomeView(kind: .forYou, isActive: rootActive && page == 1, returnToken: forYouReturn,
-                     list: forYou)
+                     onSelect: { goFeed($0) }, list: forYou, place: forYouPlace)
                 .tag(1)
             HomeView(kind: .following, isActive: rootActive && page == 2, returnToken: followingReturn,
-                     list: following)
+                     onSelect: { goFeed($0) }, list: following, place: followingPlace)
                 .tag(2)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
@@ -254,16 +256,20 @@ struct RootPager: View {
         }
         // The page is the source of truth for the swipe; the stored kind follows
         // it so the menu checkmark, background refresh and account switch agree.
-        .onChange(of: page) { _, value in
-            let swiped = !programmaticChange
+        .onChange(of: page) { old, value in
             programmaticChange = false
-            guard value != 0 else { return }
-            if swiped && shownFeeds.contains(value) {
-                // After the swipe has settled.
+            // The feed just left gets its new scroll view now, while it is off screen
+            // (owner, 2026-11-18): it is rebuilt at the reader's exact place, so coming
+            // back shows no jump. A rebuilt scroll view is what watchOS hands the crown
+            // to (crown test S3); whether one built off screen still gets it is the
+            // open question of this approach.
+            if old != value, old == 1 || old == 2 {
+                // After the swipe has settled (the feed saved its place on leaving).
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    if value == 1 { forYouReturn += 1 } else { followingReturn += 1 }
+                    if old == 1 { forYouReturn += 1 } else { followingReturn += 1 }
                 }
             }
+            guard value != 0 else { return }
             shownFeeds.insert(value)
             lastFeed = value
             let kind = value == 2 ? HomeKind.following : HomeKind.forYou

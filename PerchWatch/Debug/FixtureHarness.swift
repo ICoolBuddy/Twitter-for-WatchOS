@@ -114,8 +114,7 @@ private struct MediaDebugScreen: View {
             .onAppear { show = true }
             .fullScreenCover(isPresented: $show) {
                 // Same as the root presentation in WatchRootView.
-                MediaViewer(media: media, startIndex: 0, showsCloseButton: false)
-                    ._statusBarHidden(true)
+                MediaViewer(media: media, startIndex: 0, inCover: true)
             }
     }
 }

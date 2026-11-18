@@ -6,22 +6,25 @@ import AVFoundation
 import Combine
 import XKit
 
-/// Full-screen media viewer, drawn as an overlay at the root (see
-/// `MediaPresenter`): black background, swipe sideways between attachments (only
-/// when there is more than one), swipe down to close, photos zoom with the
-/// Digital Crown and start from the feed's decoded copy, videos start playing
-/// immediately on a small MP4 and step up to better variants while they play.
+/// Full-screen media viewer, presented by `MediaPresenter` (a `fullScreenCover` at
+/// the root, an overlay `MediaHost` inside the profile sheet): black background,
+/// swipe sideways between attachments (only when there is more than one), swipe
+/// down to close, photos zoom with the Digital Crown and start from the feed's
+/// decoded copy, videos play one MP4 chosen from the measured link speed.
 ///
-/// The chrome (close button) hides itself after a second; tapping brings it back.
+/// No chrome of our own (owner, 2026-11-18): no close button and no video
+/// controls. Videos and GIFs use the system player's controls; the viewer
+/// closes with a swipe down or a hand double-tap. Inside the root
+/// `fullScreenCover` watchOS' own X is hidden too (`inCover`).
 struct MediaViewer: View {
     let media: [XMedia]
     /// Now Playing text for videos (author, post text).
     var title: String? = nil
     var caption: String? = nil
-    /// Dismiss handler for the root overlay presentation (`nil` inside a cover).
+    /// Dismiss handler (`nil` = the environment's `dismiss`).
     var onClose: (() -> Void)? = nil
-    /// False inside a `fullScreenCover`, which already has watchOS' close button.
-    var showsCloseButton = true
+    /// Presented as a `fullScreenCover`: hide the X and the clock watchOS draws on it.
+    var inCover = false
 
     @Environment(\.dismiss) private var dismiss
     /// The viewer is going away: pages drop crown focus and close actions are
@@ -34,16 +37,14 @@ struct MediaViewer: View {
     @State private var dragDown: CGFloat = 0
     /// Warms the full-size photo a swipe would land on.
     @State private var neighbourPrefetch: Task<Void, Never>?
-    @State private var controlsVisible = true
-    @State private var hideTask: Task<Void, Never>?
 
     init(media: [XMedia], startIndex: Int, title: String? = nil, caption: String? = nil,
-         onClose: (() -> Void)? = nil, showsCloseButton: Bool = true) {
+         onClose: (() -> Void)? = nil, inCover: Bool = false) {
         self.media = media
         self.title = title
         self.caption = caption
         self.onClose = onClose
-        self.showsCloseButton = showsCloseButton
+        self.inCover = inCover
         let start = media.isEmpty ? 0 : min(max(startIndex, 0), media.count - 1)
         _selection = State(initialValue: start)
     }
@@ -60,8 +61,8 @@ struct MediaViewer: View {
                 if media.count > 1 { counter }
             }
 
-            if showsCloseButton { closeButton }
             closeGesture
+            accessibleClose
             #if DEBUG
             // Crown routing tests: "the viewer is open", whichever close button it has.
             Text(verbatim: "viewer")
@@ -74,7 +75,8 @@ struct MediaViewer: View {
         }
         .background(Color.black)
         .simultaneousGesture(dismissDrag)
-        .onAppear { showControls() }
+        .modifier(CoverChrome(hidden: inCover))
+        .accessibilityAction(named: "Close") { close() }
         .onChange(of: selection, initial: true) { _, index in
             // `zoomed` decides whether a downward drag pans or closes, and only the
             // visible page can write it: paging away from a zoomed photo used to leave
@@ -84,7 +86,6 @@ struct MediaViewer: View {
             prefetchNeighbours(around: index)
         }
         .onDisappear { neighbourPrefetch?.cancel() }
-        .onDisappear { hideTask?.cancel() }
     }
 
     @ViewBuilder
@@ -93,9 +94,7 @@ struct MediaViewer: View {
             // One attachment is not a pager: no sideways swipe at all.
             MediaPage(media: media[0], title: title, caption: caption, isActive: true,
                       closing: closing,
-                      zoomed: $zoomed,
-                      controlsVisible: $controlsVisible,
-                      touch: showControls, toggleControls: toggleControls)
+                      zoomed: $zoomed)
                 .ignoresSafeArea()
         } else {
             TabView(selection: $selection) {
@@ -103,10 +102,7 @@ struct MediaViewer: View {
                     MediaPage(media: media[index], title: title, caption: caption,
                               isActive: selection == index,
                               closing: closing,
-                              zoomed: selection == index ? $zoomed : .constant(false),
-                              controlsVisible: $controlsVisible,
-                              touch: showControls,
-                              toggleControls: toggleControls)
+                              zoomed: selection == index ? $zoomed : .constant(false))
                         .tag(index)
                 }
             }
@@ -133,61 +129,7 @@ struct MediaViewer: View {
         .accessibilityHidden(true)
     }
 
-    // MARK: Chrome
-
-    /// Our own close button (the overlay has no system one). Visible for a
-    /// moment, then it fades so the picture/video fills the screen.
-    private var closeButton: some View {
-        VStack {
-            HStack {
-                Button {
-                    close()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 28, height: 28)
-                        .background(Color.black.opacity(0.55), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close")
-                // crown-lab: the routing tests close the viewer with this. The chrome
-                // fades out but stays in the tree, so the value says whether a tap
-                // would land on it (hidden chrome is not hit-testable).
-                .accessibilityIdentifier("media.close")
-                .accessibilityValue(controlsVisible ? "visible" : "hidden")
-                Spacer(minLength: 0)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.leading, 4)
-        .padding(.top, 2)
-        .opacity(controlsVisible ? 1 : 0)
-        .allowsHitTesting(controlsVisible)
-        .animation(.easeOut(duration: 0.2), value: controlsVisible)
-    }
-
-    private func showControls() {
-        hideTask?.cancel()
-        if !controlsVisible {
-            withAnimation(.easeOut(duration: 0.15)) { controlsVisible = true }
-        }
-        hideTask = Task {
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.25)) { controlsVisible = false }
-        }
-    }
-
-    private func hideControls() {
-        hideTask?.cancel()
-        hideTask = nil
-        withAnimation(.easeOut(duration: 0.25)) { controlsVisible = false }
-    }
-
-    private func toggleControls() {
-        if controlsVisible { hideControls() } else { showControls() }
-    }
+    // MARK: Closing
 
     private func close() {
         guard !closing else { return }
@@ -241,6 +183,17 @@ struct MediaViewer: View {
         .handGestureShortcut(.primaryAction)
     }
 
+    /// There is no visible close button, and swipe down is a VoiceOver gesture:
+    /// VoiceOver gets a "Close" element and a named "Close" action instead.
+    private var accessibleClose: some View {
+        Color.clear
+            .frame(width: 1, height: 1)
+            .accessibilityElement()
+            .accessibilityLabel("Close")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { close() }
+    }
+
     private var emptyState: some View {
         VStack(spacing: 5) {
             Image(systemName: "photo")
@@ -260,37 +213,27 @@ private struct MediaPage: View {
     /// The viewer is closing: no page may hold the crown any more.
     let closing: Bool
     @Binding var zoomed: Bool
-    @Binding var controlsVisible: Bool
-    let touch: () -> Void
-    let toggleControls: () -> Void
 
     var body: some View {
         switch media.type {
         case .photo:
             MediaPhotoPage(media: media, isActive: isActive, closing: closing,
-                           zoomed: $zoomed, touch: touch)
+                           zoomed: $zoomed)
         case .video, .gif:
             MediaVideoPage(media: media, title: title, caption: caption, isActive: isActive,
-                           closing: closing,
-                           controlsVisible: $controlsVisible,
-                           touch: touch, toggleControls: toggleControls)
+                           closing: closing)
         }
     }
 }
 
-/// One photo page: fit inside the screen, crown zoom, drag to pan (clamped to the
+/// One photo page: fit inside the screen, drag to pan (clamped to the
 /// image so zooming out can never leave black around a corner), single tap
-/// toggles between 1× and 2.5× (centred) and brings the close button back.
+/// toggles between 1× and 2.5× (centred).
 private struct MediaPhotoPage: View {
     let media: XMedia
     let isActive: Bool
     let closing: Bool
     @Binding var zoomed: Bool
-    let touch: () -> Void
-
-    /// The crown zooms the photo on screen (with several attachments, focus
-    /// used to stay on the first page).
-    @FocusState private var crownFocused: Bool
 
     @State private var zoom: Double = 1
     @State private var offset: CGSize = .zero
@@ -316,35 +259,22 @@ private struct MediaPhotoPage: View {
                 .scaleEffect(zoom)
                 .offset(clamped(offset, in: geo.size))
                 .gesture(panGesture(in: geo.size), including: zoom > 1 ? GestureMask.all : GestureMask())
-                .onTapGesture {
-                    touch()
-                    toggleZoom()
-                }
+                .onTapGesture { toggleZoom() }
                 .onAppear { container = geo.size }
                 .onChange(of: geo.size) { _, size in container = size }
         }
-        // Only the page on screen may take the crown, and never once the viewer
-        // has started closing: an off-screen page must not swallow it, and the
-        // crown has to be free again while the viewer fades out.
-        .focusable(isActive && !closing)
-        .focused($crownFocused)
+        // No crown zoom (owner, 2026-11-18): a focusable page with
+        // `digitalCrownRotation` swallowed the swipe-down that closes the viewer
+        // (measured: plain, `.edit` and `.activate` focus all block it; only no
+        // focus lets it through). Tap toggles 2.5×, drag pans while zoomed.
         .onChange(of: isActive) { _, active in
             if active {
                 // While off screen this page could not write `zoomed`: re-publish its zoom.
                 zoomed = zoom > 1.05
                 // The full-size copy is for the page on screen.
                 if !wantsFull { wantsFull = LinkSpeed.prefersFullPhoto(media) }
-                claimCrown()
-            } else {
-                crownFocused = false
             }
         }
-        .onChange(of: closing) { _, closing in
-            if closing { crownFocused = false }
-        }
-        .digitalCrownRotation($zoom, from: 1, through: 5, by: 0.1,
-                              sensitivity: .medium, isContinuous: false,
-                              isHapticFeedbackEnabled: true)
         .onChange(of: zoom) { _, value in
             zoomed = value > 1.05
             // Zooming in is the moment the extra resolution matters.
@@ -366,19 +296,11 @@ private struct MediaPhotoPage: View {
             if isActive {
                 zoomed = zoom > 1.05
                 wantsFull = LinkSpeed.prefersFullPhoto(media)
-                claimCrown()
             }
         }
         .onDisappear { zoomed = false }
         .ignoresSafeArea()
         .accessibilityLabel(media.altText ?? "Image")
-    }
-
-    /// After the viewer's open animation; focusing during it does not stick.
-    private func claimCrown() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            if isActive, !closing { crownFocused = true }
-        }
     }
 
     /// Largest offset that still keeps the scaled image covering the frame in
@@ -417,45 +339,41 @@ private struct MediaPhotoPage: View {
     }
 }
 
-/// One video/GIF page.
+/// One video/GIF page: the system player with its own controls (play/pause,
+/// progress, Done) and its own Digital Crown volume, as in Apple's apps. We only
+/// pick and load the file (`VideoPlayback`: lowest-bitrate MP4 first, retry,
+/// background audio) and show the poster + buffering bar until the first frame.
 ///
-/// The Digital Crown changes the *Watch's* volume while the video is clean
-/// (through WatchKit's system volume control, so it starts at the current
-/// volume and is the same setting Now Playing uses); after a tap
-/// (which shows the play/pause button and the timestamp) it scrubs. Both give a
-/// haptic detent (every 5 % of volume, every second of video). The page holds
-/// crown focus itself; AVKit's player is display-only, so it can never take the
-/// crown or the taps away.
+/// There used to be our own play button, timestamps, scrubbing and a volume HUD
+/// over a `.disabled` player; the system player still drew its controls (at the
+/// end of a video, or on a tap), so two sets overlapped (device, 2026-11-18).
 private struct MediaVideoPage: View {
     let media: XMedia
     var title: String?
     var caption: String?
     let isActive: Bool
+    /// The viewer is closing: the player lets go of the crown on the way out.
     let closing: Bool
-    @Binding var controlsVisible: Bool
-    let touch: () -> Void
-    let toggleControls: () -> Void
 
     @StateObject private var playback = VideoPlayback()
-    @FocusState private var crownFocused: Bool
-    @State private var crown = 0.0
-    @State private var lastCrown = 0.0
     @State private var volumeHUD: Double?
     @State private var volumeTask: Task<Void, Never>?
-    /// Last detent that played a haptic (volume step or whole second).
-    @State private var lastDetent: Int?
-    @State private var lastHaptic = Date.distantPast
 
     var body: some View {
         ZStack {
             Color.black
-            VideoPlayer(player: playback.player)
-                .disabled(true)              // no AVKit controls, focus or crown
-                .allowsHitTesting(false)
-                .ignoresSafeArea()
+            // Gone the moment the viewer starts closing: a player (and the volume
+            // control) still in the tree held the crown through the close animation,
+            // so the feed did not scroll for about a second after closing a video.
+            if !closing {
+                VideoPlayer(player: playback.player)
+                    // Only the page on screen may take the crown (several attachments).
+                    .disabled(!isActive)
+                    .ignoresSafeArea()
+            }
 
             // Poster until the first frame is really on screen (no black flash),
-            // and behind an error.
+            // and behind an error. Never hit-testable: taps reach the player.
             if playback.loading || playback.failed != nil {
                 poster
             }
@@ -463,28 +381,15 @@ private struct MediaVideoPage: View {
                 unavailable(failure)
             } else if playback.loading {
                 loadingBar
-            } else if playback.stalled {
-                ProgressView()
-                    .allowsHitTesting(false)
             }
 
-            // Swallow taps: AVKit's own controls never appear, the chrome is ours.
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    toggleControls()
-                    claimCrown()
-                }
-
-            if controlsVisible { controls }
             if let volume = volumeHUD { volumeOverlay(volume) }
 
-            // The system volume control owns the crown while the chrome is
-            // hidden. Videos only: a GIF is silent (no volume to change), and a
-            // WKInterfaceVolumeControl that never existed cannot be the thing
-            // the crown is still attached to after the viewer closes.
-            if media.type == .video {
-                SystemVolumeControl(focused: isActive && !controlsVisible && !closing)
+            // The crown = the Watch's volume while a video plays (owner, 2026-11-18),
+            // through WatchKit's system volume control (SwiftUI has none). Videos
+            // only: a GIF is silent.
+            if media.type == .video, isActive, !closing {
+                SystemVolumeControl(focused: true)
                     .frame(width: 40, height: 40)
                     .opacity(0.02)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
@@ -492,41 +397,14 @@ private struct MediaVideoPage: View {
                     .accessibilityHidden(true)
             }
         }
-        // Chrome visible: this page owns the crown (scrub). Hidden: it is not
-        // focusable at all, so the system volume control below gets it.
-        .focusable(isActive && controlsVisible && !closing)
-        .focused($crownFocused)
-        .digitalCrownRotation($crown, from: -100_000, through: 100_000, by: 1,
-                              sensitivity: .low, isContinuous: false,
-                              isHapticFeedbackEnabled: false)
-        .onChange(of: crown) { _, value in
-            let delta = value - lastCrown
-            lastCrown = value
-            guard abs(delta) > 0.01 else { return }
-            // Only reached while our page holds the crown (chrome visible).
-            guard controlsVisible else { return }
-            let target = playback.scrub(bySeconds: delta * 0.5)
-            detent(Int(target.rounded(.down)))
-            touch()
-        }
-        .onChange(of: controlsVisible) { _, visible in
-            lastDetent = nil
-            // Chrome visible: our page takes the crown (scrub). Hidden: hand it
-            // to the system volume control.
-            crownFocused = visible && isActive && !closing
-        }
-        // The Watch's volume changed (crown, or the Now Playing app): show it.
         .onChange(of: playback.systemVolume) { _, value in
-            if isActive, !controlsVisible { showVolume(value) }
+            if isActive, !closing { showVolume(value) }
         }
         .onChange(of: closing) { _, closing in
-            if closing { crownFocused = false }
+            if closing { playback.stop() }
         }
         .onAppear {
-            if isActive {
-                playback.start(media, title: title, caption: caption)
-                claimCrown()
-            }
+            if isActive { playback.start(media, title: title, caption: caption) }
         }
         .onDisappear {
             playback.teardown()
@@ -535,42 +413,58 @@ private struct MediaVideoPage: View {
         .onChange(of: isActive) { _, active in
             if active {
                 playback.start(media, title: title, caption: caption)
-                claimCrown()
             } else {
-                crownFocused = false
                 playback.stop()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification)) { note in
             guard let item = note.object as? AVPlayerItem,
                   item === playback.player.currentItem else { return }
-            if media.type == .gif {
-                playback.replay()
-            } else {
-                playback.markEnded()
-                touch()
-            }
+            // GIFs loop: the player does not pause at the end (`actionAtItemEnd`
+            // = .none), so the system controls never pop up between loops.
+            if media.type == .gif { playback.replay() } else { playback.markEnded() }
         }
         .accessibilityLabel(media.altText ?? (media.type == .gif ? "GIF" : "Video"))
     }
 
-    private func claimCrown() {
-        // After the viewer's open animation; focusing during it does not stick.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            // Scrubbing needs our focus; volume belongs to the system control.
-            if isActive, !closing { crownFocused = controlsVisible }
+    /// Small transient speaker bar while the crown changes the volume. The icon has
+    /// a fixed frame, so muted and unmuted are the same capsule (the slashed speaker
+    /// is narrower and the pill used to resize).
+    private func volumeOverlay(_ value: Double) -> some View {
+        VStack {
+            Spacer(minLength: 0)
+            HStack(spacing: 6) {
+                Image(systemName: value <= 0.001 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .frame(width: 16, alignment: .center)
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.25))
+                        Capsule()
+                            .fill(Color.white)
+                            .frame(width: geo.size.width * CGFloat(min(1, max(0, value))))
+                    }
+                }
+                .frame(width: 70, height: 3)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 9)
+            .frame(height: 22)
+            .background(Color.black.opacity(0.6), in: Capsule())
+            .padding(.bottom, 34)
         }
+        .allowsHitTesting(false)
+        .transition(.opacity)
     }
 
-    /// A click each time the crown crosses a detent (rate-limited so a fast
-    /// spin does not buzz continuously).
-    private func detent(_ value: Int) {
-        defer { lastDetent = value }
-        guard let last = lastDetent, last != value else { return }
-        let now = Date()
-        guard now.timeIntervalSince(lastHaptic) > 0.06 else { return }
-        lastHaptic = now
-        WKInterfaceDevice.current().play(.click)
+    private func showVolume(_ value: Float) {
+        volumeTask?.cancel()
+        volumeHUD = Double(value)
+        volumeTask = Task {
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.2)) { volumeHUD = nil }
+        }
     }
 
     private var poster: some View {
@@ -627,103 +521,22 @@ private struct MediaVideoPage: View {
         guard playback.buffered > 0.02 else { return "Buffering" }
         return "Buffering \(Int((playback.buffered * 100).rounded()))%"
     }
+}
 
-    /// Play/pause in the middle and the timestamp + position bar at the bottom.
-    private var controls: some View {
-        ZStack {
-            Button {
-                playback.togglePlayPause()
-                touch()
-                claimCrown()
-            } label: {
-                Image(systemName: controlIcon)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 52, height: 52)
-                    .background(Color.black.opacity(0.55), in: Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(playback.endedFlag ? "Replay" : (playback.isPlaying ? "Pause" : "Play"))
+/// Inside the root `fullScreenCover`: no watchOS X button and no clock over the
+/// media (owner, 2026-11-18). The cover itself stays: dismissing a real
+/// presentation is what hands the Digital Crown back to the feed (AGENTS.md §8.4).
+private struct CoverChrome: ViewModifier {
+    let hidden: Bool
 
-            VStack {
-                Spacer(minLength: 0)
-                HStack(spacing: 6) {
-                    Text(Self.clock(playback.position))
-                    Spacer(minLength: 0)
-                    Text(Self.clock(playback.duration))
-                }
-                .font(.system(size: 10, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(.white.opacity(0.85))
-
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Color.white.opacity(0.25))
-                        Capsule()
-                            .fill(Color.white)
-                            .frame(width: geo.size.width * progressFraction)
-                    }
-                }
-                .frame(height: 2.5)
-                .padding(.top, 3)
-            }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 14)
-            .allowsHitTesting(false)
+    func body(content: Content) -> some View {
+        if hidden {
+            content
+                .toolbar(.hidden, for: .navigationBar)
+                ._statusBarHidden(true)
+        } else {
+            content
         }
-    }
-
-    private var controlIcon: String {
-        if playback.endedFlag { return "arrow.counterclockwise" }
-        return playback.isPlaying ? "pause.fill" : "play.fill"
-    }
-
-    private var progressFraction: CGFloat {
-        guard playback.duration > 0 else { return 0 }
-        return CGFloat(min(1, max(0, playback.position / playback.duration)))
-    }
-
-    /// Small transient speaker bar while the crown changes the volume.
-    private func volumeOverlay(_ value: Double) -> some View {
-        VStack {
-            Spacer(minLength: 0)
-            HStack(spacing: 5) {
-                Image(systemName: value <= 0.001 ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Color.white.opacity(0.25))
-                        Capsule()
-                            .fill(Color.white)
-                            .frame(width: geo.size.width * CGFloat(min(1, max(0, value))))
-                    }
-                }
-                .frame(width: 70, height: 3)
-            }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(Color.black.opacity(0.6), in: Capsule())
-            .padding(.bottom, 34)
-        }
-        .allowsHitTesting(false)
-        .transition(.opacity)
-    }
-
-    private func showVolume(_ value: Float) {
-        volumeTask?.cancel()
-        volumeHUD = Double(value)
-        volumeTask = Task {
-            try? await Task.sleep(nanoseconds: 900_000_000)
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.2)) { volumeHUD = nil }
-        }
-    }
-
-    private static func clock(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds > 0 else { return "0:00" }
-        let total = Int(seconds.rounded())
-        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }
 
@@ -761,9 +574,8 @@ struct SystemVolumeControl: WKInterfaceObjectRepresentable {
     }
 
     func updateWKInterfaceObject(_ control: WKInterfaceVolumeControl, context: Context) {
-        // This runs on every body pass — several times a second while a video
-        // plays. Re-asserting focus mid-rotation fights the crown, so only talk
-        // to the control when the answer actually changed.
+        // Runs on every body pass: only talk to the control when the answer changed
+        // (re-asserting focus mid-rotation fights the crown).
         guard context.coordinator.applied != focused else { return }
         context.coordinator.applied = focused
         if focused { control.focus() } else { control.resignFocus() }
