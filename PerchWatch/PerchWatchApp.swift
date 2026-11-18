@@ -216,9 +216,22 @@ struct RootPager: View {
     // (crown-lab: `CrownLab.pagerTabView` brings the TabView back to measure it.)
     /// crown-lab `P`: true while a swipe or a page animation needs the neighbours drawn.
     @State private var pagesInMotion = false
+    /// crown-lab `R`: bumped when a feed becomes the visible scroll view again.
+    @State private var crownGeneration = 0
+    @ObservedObject private var presenter = MediaPresenter.shared
 
     var body: some View {
         pager
+        .environment(\.crownGeneration, crownGeneration)
+        // crown-lab `R`: the moments the crown was measured lost (baseline S2/S3/S5,
+        // S10/S11, S16, media): a page change settling, a pop to the root, a sheet
+        // closing, the media viewer closing.
+        .onChange(of: pagesInMotion) { _, moving in if !moving { rebuildVisibleFeed() } }
+        // (The TabView pages without `animatePages` for a swipe.)
+        .onChange(of: page) { _, _ in if CrownLab.pagerTabView { rebuildVisibleFeed() } }
+        .onChange(of: rootActive) { _, active in if active { rebuildVisibleFeed() } }
+        .onChange(of: presenter.sheetDepth) { _, depth in if depth == 0 { rebuildVisibleFeed() } }
+        .onChange(of: presenter.target == nil) { _, closed in if closed { rebuildVisibleFeed() } }
         // No `.clipped()` and no `.ignoresSafeArea()` here (measured with the
         // layout probe in the CI screenshots): the pager's frame is the safe
         // area (y62 h150 on a 46 mm watch) while each page's scroll view extends
@@ -339,6 +352,12 @@ struct RootPager: View {
                 .frame(width: w)
                 .disabled(!onScreen)
         }
+    }
+
+    /// crown-lab `R`: after the transition has finished drawing.
+    private func rebuildVisibleFeed() {
+        guard CrownLab.rebuildOnReturn else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { crownGeneration += 1 }
     }
 
     /// Animates a page change and tells `P` when the neighbours may go away again.

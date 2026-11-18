@@ -101,6 +101,12 @@ struct FixtureXClient: XClient {
     func homeTimeline(_ kind: HomeKind, cursor: String?) async throws -> TimelinePage {
         guard cursor == nil else { return TimelinePage(items: [], topCursor: nil, bottomCursor: nil) }
         var items = library.home.items
+        // crown-lab: `-PerchFixtureFirst <tweet id>` puts that post first, so a media
+        // scenario can open it without scrolling past autoplaying media.
+        if let first = UserDefaults.standard.string(forKey: "PerchFixtureFirst"),
+           let index = items.firstIndex(where: { $0.tweets.first?.id == first }) {
+            items.insert(items.remove(at: index), at: 0)
+        }
         if longPostFirst, let long = library.longPost {
             items.removeAll { $0.tweets.first?.id == long.id }
             items.insert(.tweet(long), at: 0)

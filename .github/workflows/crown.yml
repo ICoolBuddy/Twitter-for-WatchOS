@@ -38,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: ${{ fromJSON(github.event.inputs.variants != '' && github.event.inputs.variants || '["A","P","S","T","M","F"]') }}
+        variant: ${{ fromJSON(github.event.inputs.variants != '' && github.event.inputs.variants || '["A","T","TM","TR"]') }}
     env:
       XCODE_APP: /Applications/Xcode_26.6.app
     steps:

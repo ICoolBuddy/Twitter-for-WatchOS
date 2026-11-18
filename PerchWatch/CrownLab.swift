@@ -14,6 +14,10 @@ import SwiftUI
 /// - `T` pager: the system pager, `TabView` with `.page` style.
 /// - `M` media viewer: presented with `fullScreenCover` instead of the overlay.
 /// - `F` the leading toolbar button (hamburger / back to feed) is `.focusable(false)`.
+/// - `R` rebuild: after a page change, a pop back to the root, a sheet closing or the
+///   media viewer closing, the visible feed's ScrollView gets a new identity, so it
+///   *appears* again (a feed that appears gets the crown: baseline S1), keeping the
+///   list and the page's state.
 ///
 /// DEBUG builds read `-crownVariant <letters>` (UserDefaults argument domain); Release
 /// builds always use `shipped`. When a winner is picked it becomes `shipped`, and the
@@ -36,6 +40,7 @@ enum CrownLab {
     static var pagerTabView: Bool { has("T") }
     static var mediaCover: Bool { has("M") }
     static var chromeUnfocusable: Bool { has("F") }
+    static var rebuildOnReturn: Bool { has("R") }
 }
 
 /// `F`: `.focusable(false)` only when the experiment is on, so variant "A" stays the
@@ -46,6 +51,31 @@ struct CrownLabUnfocusable: ViewModifier {
     func body(content: Content) -> some View {
         if active {
             content.focusable(false)
+        } else {
+            content
+        }
+    }
+}
+
+/// `R`: bumped by `RootPager` when a feed becomes the visible scroll view again.
+private struct CrownGenerationKey: EnvironmentKey {
+    static let defaultValue = 0
+}
+
+extension EnvironmentValues {
+    var crownGeneration: Int {
+        get { self[CrownGenerationKey.self] }
+        set { self[CrownGenerationKey.self] = newValue }
+    }
+}
+
+/// `R`: a new identity for the scroll view on every generation; nothing otherwise.
+struct CrownLabRebuild: ViewModifier {
+    let generation: Int
+
+    func body(content: Content) -> some View {
+        if CrownLab.rebuildOnReturn {
+            content.id(generation)
         } else {
             content
         }

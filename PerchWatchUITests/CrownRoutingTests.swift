@@ -286,7 +286,7 @@ final class CrownRoutingTests: XCTestCase {
     /// S14: S12 with the video in the fixture timeline (scrolled into reach first:
     /// a touch before the last navigation step is allowed).
     func test15_S14_videoViewer() {
-        scenario("S14", probe: "feed.forYou") {
+        scenario("S14", probe: "feed.forYou", first: FixtureID.videoPost) {
             guard self.openViewer(tile: "media.tile." + FixtureID.videoPost + ".0") else {
                 return .blocked("the video tile never became tappable")
             }
@@ -429,7 +429,7 @@ final class CrownRoutingTests: XCTestCase {
 
     /// S21 (added): the GIF half of S12, now that the fixture timeline has one.
     func test22_S21_gifViewer() {
-        scenario("S21", probe: "feed.forYou") {
+        scenario("S21", probe: "feed.forYou", first: FixtureID.gifPost) {
             guard self.openViewer(tile: "media.tile." + FixtureID.gifPost + ".0") else {
                 return .blocked("the GIF tile never became tappable")
             }
@@ -472,6 +472,28 @@ final class CrownRoutingTests: XCTestCase {
         }
     }
 
+    /// S23 (added): Bookmarks pushed from the menu, popped by a mid-screen swipe right ->
+    /// crown on `menu`. A page-style TabView once left a black screen exactly here; the
+    /// menu probe being on screen is the check that the pager is still drawn.
+    func test24_S23_bookmarksSwipeBackToMenu() {
+        scenario("S23", probe: "menu") {
+            guard self.pushFromMenu("menu.bookmarks", probe: "bookmarks") else {
+                return .blocked("could not push Bookmarks from the menu")
+            }
+            let start = self.app.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.62))
+            let end = self.app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.62))
+            start.press(forDuration: 0.08, thenDragTo: end)
+            self.settle()
+            guard !self.probe("bookmarks").exists else {
+                return .blocked("swipe right did not pop Bookmarks")
+            }
+            guard self.onScreen("menu") else {
+                return .blocked("after the swipe pop the menu is not on screen — black screen? (\(self.pagerNote()))")
+            }
+            return .ready("Bookmarks, popped by a mid-screen swipe right")
+        }
+    }
+
     // MARK: The runner
 
     private enum StepResult {
@@ -484,10 +506,10 @@ final class CrownRoutingTests: XCTestCase {
     /// Three cold launches of one scenario. Each attempt: launch, run the steps,
     /// settle once, read the probe, turn the crown with no touch in between, settle,
     /// read again, report and assert.
-    private func scenario(_ id: String, probe name: String,
+    private func scenario(_ id: String, probe name: String, first: String? = nil,
                           steps: @escaping () -> StepResult) {
         for iteration in 1...Self.iterations {
-            launch()
+            launch(first: first)
             switch steps() {
             case .blocked(let why):
                 report(id, iteration, "BLOCKED", note: why)
@@ -501,7 +523,14 @@ final class CrownRoutingTests: XCTestCase {
                 }
                 rotate()
                 settle()
-                let after = read(name)
+                var after = read(name)
+                // A list already at its end cannot move further down: turn the other
+                // way (still no touch) before calling it STILL.
+                if let a = after, abs(a.y - before.y) < Self.passMark {
+                    rotate(clockwise: false)
+                    settle()
+                    after = read(name)
+                }
                 guard let after else {
                     report(id, iteration, "NOPROBE", reading: before,
                            note: "probe.\(name) became unreadable after the crown")
@@ -522,14 +551,15 @@ final class CrownRoutingTests: XCTestCase {
 
     // MARK: Launch
 
-    private func launch() {
+    private func launch(first: String? = nil) {
         let app = XCUIApplication()
         app.launchArguments = ["-PerchFixtures", "YES", "-homeKind", "forYou",
                                "-crownVariant", Self.variant]
+        if let first { app.launchArguments += ["-PerchFixtureFirst", first] }
         let launchedAt = Date()
         app.launch()
         self.app = app
-        waitForIntro(launchedAt)
+        waitForIntro(launchedAt, first: first)
     }
 
     /// `LaunchIntroView` ends as soon as the feed has content and at 3 s at the very
@@ -537,7 +567,7 @@ final class CrownRoutingTests: XCTestCase {
     /// worst-case cover below is the belt for the case where SwiftUI does not expose
     /// the overlay at all (then nothing could be waited for). Last, wait for the
     /// first fixture post: the probe alone would happily measure a skeleton list.
-    private func waitForIntro(_ launchedAt: Date) {
+    private func waitForIntro(_ launchedAt: Date, first: String? = nil) {
         let deadline = Date().addingTimeInterval(15)
         while introVisible() && Date() < deadline {
             Thread.sleep(forTimeInterval: 0.25)
@@ -545,7 +575,7 @@ final class CrownRoutingTests: XCTestCase {
         let elapsed = Date().timeIntervalSince(launchedAt)
         let cover: TimeInterval = 3.6      // the intro's own maximum is 3 s
         if elapsed < cover { Thread.sleep(forTimeInterval: cover - elapsed) }
-        _ = element("post.open." + FixtureID.photoPost).waitForExistence(timeout: 20)
+        _ = element("post.open." + (first ?? FixtureID.photoPost)).waitForExistence(timeout: 20)
     }
 
     private func introVisible() -> Bool {
@@ -594,6 +624,9 @@ final class CrownRoutingTests: XCTestCase {
     /// the only one whose probe sits inside the display. Existence proves nothing
     /// (all three pages are alive), so every scenario checks this before measuring.
     private func onScreen(_ name: String) -> Bool {
+        // The system pager drops off-screen pages from the tree: reading the frame of
+        // an element that does not exist fails the test instead of returning false.
+        guard probe(name).exists else { return false }
         let frame = probe(name).frame
         let screen = app.frame
         guard frame.width > 0, screen.width > 0 else { return false }
@@ -604,7 +637,7 @@ final class CrownRoutingTests: XCTestCase {
     /// Where the three pages are, for the notes column.
     private func pagerNote() -> String {
         ["menu", "feed.forYou", "feed.following"]
-            .map { "\($0)@\(Int(probe($0).frame.minX))" }
+            .map { probe($0).exists ? "\($0)@\(Int(probe($0).frame.minX))" : "\($0)@gone" }
             .joined(separator: " ")
     }
 
