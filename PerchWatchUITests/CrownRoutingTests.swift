@@ -583,12 +583,62 @@ final class CrownRoutingTests: XCTestCase {
             guard let after = self.read(feed) else {
                 return .blocked("probe.\(feed) unreadable after returning")
             }
-            let kept = abs(after.y - before.y) < 150
+            // The rebuilt list estimates the rows above it, so its offset differs; the
+            // reading place is "the same post on top" (saved = live, and not the top).
             let place = String(format: "y %.0f -> %.0f", before.y, after.y)
             let key = feed == "feed.forYou" ? "place.forYou" : "place.following"
             let evidence = (self.element(key).value as? String) ?? "no place marker"
+            let fields = Dictionary(evidence.split(separator: " ").compactMap { f -> (String, String)? in
+                let kv = f.split(separator: "=", maxSplits: 1)
+                return kv.count == 2 ? (String(kv[0]), String(kv[1])) : nil
+            }, uniquingKeysWith: { a, _ in a })
+            let saved = fields["saved"] ?? "-"
+            let kept = saved != "-" && fields["live"] == saved && abs(after.y) > 150
             guard kept else { return .blocked("BUG place lost: \(place) [\(evidence)]") }
             return .ready("place kept: \(place)")
+        }
+    }
+
+    /// SR1: crown turned *up* at the top of For You (past the top: the rubber band)
+    /// -> a refresh starts once the crown stops (release-to-refresh), and the crown
+    /// still scrolls the feed afterwards.
+    func test30_SR1_crownRefreshAtTop() { refreshAtTop("SR1", finger: false) }
+
+    /// SR2: finger pull down from the top past the threshold, then let go -> refresh.
+    func test31_SR2_fingerPullRelease() { refreshAtTop("SR2", finger: true) }
+
+    private func refreshAtTop(_ id: String, finger: Bool) {
+        scenario(id, probe: "feed.forYou") {
+            guard self.onScreen("feed.forYou") else {
+                return .blocked("For You is not on screen (\(self.pagerNote()))")
+            }
+            if finger {
+                let start = self.app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
+                let end = self.app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95))
+                start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow,
+                            thenHoldForDuration: 0.4)
+            } else {
+                // Which crown direction scrolls up is not ours to assume: the one that
+                // leaves the probe at (or above) the top is the refresh direction.
+                let before = self.read("feed.forYou")?.y ?? 0
+                self.rotate(clockwise: false, times: 10)
+                let after = self.read("feed.forYou")?.y ?? 0
+                if after > before + 20 {
+                    // That scrolled down: go back to the top and turn the other way.
+                    self.rotate(clockwise: true, times: 10)
+                    self.rotate(clockwise: true, times: 10)
+                }
+            }
+            // The status pill says the refresh ran (it shows "Updated" for 1.4 s).
+            let pill = ["Refreshing", "Updated", "Couldn't update"]
+            let deadline = Date().addingTimeInterval(4)
+            var seen = false
+            while Date() < deadline, !seen {
+                seen = pill.contains { self.app.staticTexts[$0].exists }
+                if !seen { Thread.sleep(forTimeInterval: 0.2) }
+            }
+            guard seen else { return .blocked("BUG no refresh after \(finger ? "the pull + release" : "the crown at the top")") }
+            return .ready("refresh ran after \(finger ? "pull + release" : "crown at the top")")
         }
     }
 
