@@ -59,6 +59,15 @@ final class CrownRoutingTests: XCTestCase {
     }()
     /// The crown experiment the app runs (`-crownVariant`, see `CrownLab.swift`), from
     /// `TEST_RUNNER_CROWN_VARIANT`. "A" = the shipped code, unchanged.
+    /// `TEST_RUNNER_CROWN_ONLY` = "S2,S5,S12": run only those scenarios (CI time budget).
+    private static let only: Set<String>? = {
+        let raw = ProcessInfo.processInfo.environment["CROWN_ONLY"] ?? ""
+        let ids = raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return ids.isEmpty ? nil : Set(ids)
+    }()
+
+    private static func selected(_ id: String) -> Bool { only?.contains(id) ?? true }
+
     private static let variant: String = {
         let v = ProcessInfo.processInfo.environment["CROWN_VARIANT"] ?? ""
         return v.isEmpty ? "A" : v
@@ -280,6 +289,7 @@ final class CrownRoutingTests: XCTestCase {
     /// S13: the GIF half of S12. The fixture timeline has no GIF, so this is
     /// recorded as skipped rather than failed.
     func test14_S13_gifViewer() {
+        guard Self.selected("S13") else { return }
         report("S13", 0, "SKIPPED", note: "measured as S21 (GIF fixture added)")
     }
 
@@ -346,6 +356,7 @@ final class CrownRoutingTests: XCTestCase {
     /// scrolls afterwards.
     func test18_S17_crownRefreshAtTop() {
         let name = "feed.forYou"
+        guard Self.selected("S17") else { return }
         for iteration in 1...Self.iterations {
             launch()
             guard probeExists(name), let start = read(name) else {
@@ -508,6 +519,7 @@ final class CrownRoutingTests: XCTestCase {
     /// read again, report and assert.
     private func scenario(_ id: String, probe name: String, first: String? = nil,
                           steps: @escaping () -> StepResult) {
+        guard Self.selected(id) else { return }
         for iteration in 1...Self.iterations {
             launch(first: first)
             switch steps() {
@@ -686,7 +698,7 @@ final class CrownRoutingTests: XCTestCase {
         settle()
         guard onScreen("menu") else { return false }
         let label = Self.menuLabels[row] ?? row
-        guard tap(row, attempts: 2) || tapLabel(label) else {
+        guard tapLabel(label, attempts: 1) || tap(row, attempts: 1) || tapLabel(label) else {
             print("CROWNDEBUG menu row \(row) / '\(label)' not found; buttons: " +
                   app.buttons.allElementsBoundByIndex.prefix(30)
                     .map { "\($0.identifier)|\($0.label)" }.joined(separator: ", "))
@@ -704,7 +716,13 @@ final class CrownRoutingTests: XCTestCase {
     /// Taps the first on-screen, hittable element whose label is (or starts with) `label`.
     private func tapLabel(_ label: String, attempts: Int = 6) -> Bool {
         let predicate = NSPredicate(format: "label == %@ OR label BEGINSWITH %@", label, label + ",")
-        for _ in 0..<attempts {
+        // First as the list is, then towards the top (the identifier lookup before this
+        // may have scrolled the menu down past the row), then towards the bottom.
+        for attempt in 0..<attempts {
+            if attempt > 0 {
+                if attempt <= 2 { app.swipeDown() } else { app.swipeUp() }
+                Thread.sleep(forTimeInterval: 0.4)
+            }
             let screen = app.frame
             for candidate in app.descendants(matching: .any).matching(predicate).allElementsBoundByIndex
             where candidate.exists && candidate.isHittable {
@@ -713,8 +731,6 @@ final class CrownRoutingTests: XCTestCase {
                 candidate.tap()
                 return true
             }
-            app.swipeUp()
-            Thread.sleep(forTimeInterval: 0.4)
         }
         return false
     }
@@ -750,7 +766,12 @@ final class CrownRoutingTests: XCTestCase {
     // MARK: Media viewer
 
     private func openViewer(tile: String) -> Bool {
-        guard tap(tile) else { return false }
+        let direct = element(tile)
+        if direct.waitForExistence(timeout: 5), direct.frame.width > 0 {
+            direct.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        } else {
+            guard tap(tile) else { return false }
+        }
         return app.buttons["media.close"].waitForExistence(timeout: 10)
     }
 
@@ -770,8 +791,10 @@ final class CrownRoutingTests: XCTestCase {
                 app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)).tap()
                 Thread.sleep(forTimeInterval: 0.3)
             }
-            if (close.value as? String) == "visible", close.isHittable {
-                close.tap()
+            // The video page's own controls overlay the corner, so XCUITest calls the
+            // button "not hittable" even while it is visible: tap its coordinates.
+            if (close.value as? String) == "visible" {
+                close.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
                 Thread.sleep(forTimeInterval: 0.6)
                 if !close.exists { return true }
             }

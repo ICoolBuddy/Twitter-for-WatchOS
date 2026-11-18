@@ -23,6 +23,10 @@ on:
         description: "Cold launches per scenario"
         required: false
         default: "2"
+      only:
+        description: "Comma-separated scenario ids (empty = all)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -34,11 +38,11 @@ concurrency:
 jobs:
   crown:
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        variant: ${{ fromJSON(github.event.inputs.variants != '' && github.event.inputs.variants || '["A","T","TM","TR"]') }}
+        variant: ${{ fromJSON(github.event.inputs.variants != '' && github.event.inputs.variants || '["T","TR","TM"]') }}
     env:
       XCODE_APP: /Applications/Xcode_26.6.app
     steps:
@@ -148,6 +152,8 @@ jobs:
         env:
           TEST_RUNNER_CROWN_VARIANT: ${{ matrix.variant }}
           TEST_RUNNER_CROWN_ITERATIONS: ${{ github.event.inputs.iterations || '2' }}
+          # Push runs measure the scenarios that decide between the candidates.
+          TEST_RUNNER_CROWN_ONLY: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.only || 'S2,S3,S5,S7,S8,S10,S11,S12,S14,S16,S20,S21,S22,S23' }}
         run: |
           UDID="${{ steps.sim.outputs.udid }}"
           mkdir -p build
@@ -170,6 +176,7 @@ jobs:
           grep -E ': error:|error: ' build/crown.log | sort -u | head -40 || true
           grep -oE 'CROWN S[0-9A-Za-z]+ [0-9]+/[0-9]+ [A-Z]+.*' build/crown.log \
             > "build/crown-lines-${{ matrix.variant }}.txt" || true
+          grep -E 'CROWNDEBUG' build/crown.log | head -20 || true
           echo "--- CROWN lines (${{ matrix.variant }}) ---"
           cat "build/crown-lines-${{ matrix.variant }}.txt" || true
           if [ ! -s "build/crown-lines-${{ matrix.variant }}.txt" ]; then
