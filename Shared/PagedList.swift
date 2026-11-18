@@ -55,6 +55,12 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
     var onPage: (([Item]) -> Void)?
     /// Optional row filter (timeline filler); applied to every incoming page.
     var skip: ((Item) -> Bool)?
+    /// Fetches the posts *newer* than a top cursor (home feeds: X's pull-to-refresh).
+    /// When set, `refreshNewer()` uses it instead of reloading the first page.
+    var topFetch: ((String) async throws -> Page)?
+    /// Rows the reader already had on screen at some point. A merge never puts them
+    /// back on top as if they were new.
+    var alreadySeen: ((Item) -> Bool)?
 
     init(maxItems: Int = 300, fetch: @escaping (String?) async throws -> Page) {
         self.fetch = fetch
@@ -158,8 +164,49 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
         }
     }
 
+    /// X-style refresh: posts newer than the top of the list go above it; nothing on
+    /// screen is removed or reordered, so after reading through the new posts the
+    /// reader is back at the ones they had already seen. Falls back to a merging
+    /// first-page refresh when there is no top cursor yet (a list seeded from disk).
+    func refreshNewer() async {
+        guard let top = topCursor, let topFetch, !items.isEmpty else {
+            await refresh(merge: !items.isEmpty)
+            return
+        }
+        loadTask?.cancel()
+        generation += 1
+        let gen = generation
+        isLoading = true
+        isRefreshing = true
+        error = nil
+        defer { if gen == generation { isLoading = false; isRefreshing = false } }
+        do {
+            let page = try await topFetch(top)
+            try Task.checkCancellation()
+            guard gen == generation else { return }
+            let fresh = dedupe(page.items).filter { skip?($0) != true }
+            items = merged(items, with: fresh)
+            // The bottom cursor still belongs to the end of the list: untouched.
+            topCursor = page.top ?? topCursor
+            lastUpdated = Date()
+            lastFailure = nil
+            hasLoadedFirstPage = true
+            onFirstPage?(Array(items.prefix(40)), topCursor)
+            onPage?(fresh)
+        } catch is CancellationError {
+        } catch {
+            let e = XError.from(error)
+            if case .network(let m) = e, m == "Cancelled" { return }
+            guard gen == generation else { return }
+            lastFailure = .refresh
+            self.error = e
+            hasLoadedFirstPage = true
+        }
+    }
+
     /// Same identity = the fresh value replaces the old row in place (fresh data, same
-    /// position); new rows go on top. One `@Published` write.
+    /// position); new rows go on top, except ones the reader has already seen
+    /// (`alreadySeen`). One `@Published` write.
     private func merged(_ old: [Item], with fresh: [Item]) -> [Item] {
         var index: [Item.ID: Int] = [:]
         index.reserveCapacity(old.count)
@@ -167,7 +214,11 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
         var result = old
         var added: [Item] = []
         for item in fresh {
-            if let i = index[item.id] { result[i] = item } else { added.append(item) }
+            if let i = index[item.id] {
+                result[i] = item
+            } else if alreadySeen?(item) != true {
+                added.append(item)
+            }
         }
         if !added.isEmpty { result.insert(contentsOf: added, at: 0) }
         return result

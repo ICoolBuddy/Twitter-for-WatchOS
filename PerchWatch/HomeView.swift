@@ -96,6 +96,10 @@ struct HomeView: View {
                         return
                     }
                 }
+                // What X calls an impression: sent with the next home request.
+                for item in list.items where visible.contains(item.id) {
+                    place.seen.mark(item)
+                }
                 if let top {
                     place.liveTopID = top
                 } else if visible.contains(Self.topAnchor) {
@@ -112,7 +116,9 @@ struct HomeView: View {
             // The edge glow is drawn by `RootGlow` straight from the lists; pulling
             // or turning the crown only triggers the refresh.
             .pullToRefresh(isRefreshing: list.isRefreshing, failed: list.error != nil) {
-                await refresh(merge: false)
+                // Like X: newer posts above the ones already loaded, never a reload.
+                await list.refreshNewer()
+                await app.posts.flush(client: app.client)
                 // A refresh the reader asked for brings the new posts into view;
                 // animated, and a no-op when the pull already left the list at the top.
                 withAnimation(.easeOut(duration: 0.25)) {
@@ -232,6 +238,7 @@ struct HomeView: View {
             // Another account's reading place means nothing here.
             place.liveTopID = nil
             place.savedTopID = nil
+            place.seen.reset()
         }
         place.configuredFor = key
         list.reset()
@@ -239,10 +246,18 @@ struct HomeView: View {
         let client = app.client
         let k = kind
         let scope = app.homeCacheScope(k)
+        let seen = place.seen
         list.fetch = { cursor in
-            let p = try await client.homeTimeline(k, cursor: cursor)
+            let ids = await MainActor.run { seen.drain() }
+            let p = try await client.homeTimeline(k, cursor: cursor, context: .launch, seenTweetIds: ids)
             return (p.items, p.bottomCursor, p.topCursor)
         }
+        list.topFetch = { top in
+            let ids = await MainActor.run { seen.drain() }
+            let p = try await client.homeTimeline(k, cursor: top, context: .refresh, seenTweetIds: ids)
+            return (p.items, p.bottomCursor, p.topCursor)
+        }
+        list.alreadySeen = { seen.wasSeen($0) }
         list.onFirstPage = { items, _ in
             TimelineDiskCache.save(items, scope: scope)
         }
@@ -293,6 +308,8 @@ final class FeedPlace {
     var liveY: CGFloat?
     var savedY: CGFloat?
     var restoringY: CGFloat?
+    /// Posts the reader has had on screen in this feed (see `FeedSeen`).
+    let seen = FeedSeen()
     /// A restore that has not landed on its post yet, and how often it re-aimed.
     var restoringID: String?
     var restoreTries = 0
@@ -310,6 +327,45 @@ private struct OffsetRestore: ViewModifier {
 
     func body(content: Content) -> some View {
         if active { content.scrollPosition($position) } else { content }
+    }
+}
+
+/// The posts a reader has seen in one home feed, kept the way x.com's web client
+/// keeps them: `pending` = seen since the last home request (sent as `seenTweetIds`,
+/// then cleared), `known` = every row seen this session, so a refresh never puts one
+/// back on top as new. Main thread only (visibility callbacks and `MainActor.run`).
+final class FeedSeen {
+    private var pending: [String] = []
+    private var pendingSet: Set<String> = []
+    private var known: Set<String> = []
+    /// Bounds: X's own tracker sends what was seen since the last request (a few
+    /// dozen); `known` only has to cover a session of reading.
+    private static let maxPending = 100
+    private static let maxKnown = 3000
+
+    func mark(_ item: TimelineItem) {
+        // Only the first time a row is seen: it was already reported after that.
+        guard known.insert(item.id).inserted else { return }
+        if known.count > Self.maxKnown { known.removeAll(keepingCapacity: true); known.insert(item.id) }
+        for tweet in item.tweets {
+            let id = tweet.displayed.id
+            guard pending.count < Self.maxPending, pendingSet.insert(id).inserted else { continue }
+            pending.append(id)
+        }
+    }
+
+    func wasSeen(_ item: TimelineItem) -> Bool { known.contains(item.id) }
+
+    /// The ids for the next request; cleared, as the web client does after sending.
+    func drain() -> [String] {
+        defer { pending.removeAll(); pendingSet.removeAll() }
+        return pending
+    }
+
+    func reset() {
+        pending.removeAll()
+        pendingSet.removeAll()
+        known.removeAll()
     }
 }
 

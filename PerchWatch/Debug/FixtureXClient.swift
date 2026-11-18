@@ -98,7 +98,8 @@ struct FixtureXClient: XClient {
 
     // MARK: Timelines
 
-    func homeTimeline(_ kind: HomeKind, cursor: String?) async throws -> TimelinePage {
+    func homeTimeline(_ kind: HomeKind, cursor: String?, context: HomeRequestContext,
+                      seenTweetIds: [String]) async throws -> TimelinePage {
         guard cursor == nil else { return TimelinePage(items: [], topCursor: nil, bottomCursor: nil) }
         var items = library.home.items
         // crown-lab: `-PerchFixtureFirst <tweet id>` puts that post first, so a media
