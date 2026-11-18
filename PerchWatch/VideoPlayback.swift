@@ -26,10 +26,6 @@ final class VideoPlayback: ObservableObject {
     @Published private(set) var position: Double = 0
     @Published private(set) var duration: Double = 0
     @Published private(set) var isPlaying = false
-    /// The Watch's output volume 0…1 (changed by the crown through
-    /// `SystemVolumeControl`); the player itself always plays at full gain.
-    @Published private(set) var systemVolume: Float = AVAudioSession.sharedInstance().outputVolume
-    private var volumeObservation: NSKeyValueObservation?
 
     private var levels: [XVideoVariant] = []
     private var mediaId: String?
@@ -91,7 +87,9 @@ final class VideoPlayback: ObservableObject {
         Self.chosenLevel[media.id] = level
         player.replaceCurrentItem(with: AVPlayerItem(url: levels[level].url))
         player.volume = 1
-        observeSystemVolume()
+        // GIFs loop (the page seeks back on the end notification): never pausing at
+        // the end keeps the system player's end-of-video controls from popping up.
+        player.actionAtItemEnd = media.type == .gif ? .none : .pause
         self.title = title
         self.caption = caption
         startTicker()
@@ -176,8 +174,6 @@ final class VideoPlayback: ObservableObject {
         player.replaceCurrentItem(with: nil)
         mediaId = nil
         loading = true
-        volumeObservation?.invalidate()
-        volumeObservation = nil
         clearNowPlaying()
         if backgroundSession {
             backgroundSession = false
@@ -283,15 +279,6 @@ final class VideoPlayback: ObservableObject {
             }
         }
         return target
-    }
-
-    private func observeSystemVolume() {
-        guard volumeObservation == nil else { return }
-        systemVolume = AVAudioSession.sharedInstance().outputVolume
-        volumeObservation = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { [weak self] session, _ in
-            let value = session.outputVolume
-            Task { @MainActor in self?.systemVolume = value }
-        }
     }
 
     // MARK: Progress

@@ -531,6 +531,65 @@ final class CrownRoutingTests: XCTestCase {
         }
     }
 
+    /// SP1 (device bug 2026-11-18): read For You a few posts down, swipe to Following
+    /// and back -> For You is where it was (not the top), and the crown scrolls it.
+    func test27_SP1_placeKeptForYou() {
+        placeKept("SP1", feed: "feed.forYou",
+                  away: { self.swipe(to: "feed.following", right: false) },
+                  back: { self.swipe(to: "feed.forYou", right: true) })
+    }
+
+    /// SP2: the same for Following (swipe to For You and back).
+    func test28_SP2_placeKeptFollowing() {
+        placeKept("SP2", feed: "feed.following",
+                  away: { self.swipe(to: "feed.forYou", right: true) },
+                  back: { self.swipe(to: "feed.following", right: false) })
+    }
+
+    /// SP3: For You a few posts down, hamburger to the menu, toolbar back to the feed.
+    func test29_SP3_placeKeptViaMenu() {
+        placeKept("SP3", feed: "feed.forYou",
+                  away: {
+                      guard self.tap("chrome.menuToggle", attempts: 1) else { return false }
+                      self.settle()
+                      return self.onScreen("menu")
+                  },
+                  back: {
+                      guard self.tap("chrome.menuToggle", attempts: 1) else { return false }
+                      self.settle()
+                      return self.onScreen("feed.forYou")
+                  })
+    }
+
+    private func placeKept(_ id: String, feed: String,
+                           away: @escaping () -> Bool, back: @escaping () -> Bool) {
+        scenario(id, probe: feed) {
+            if feed == "feed.following" {
+                guard self.swipe(to: "feed.following", right: false) else {
+                    return .blocked("swipe left did not land on Following (\(self.pagerNote()))")
+                }
+            }
+            for _ in 0..<3 {
+                self.app.swipeUp()
+                Thread.sleep(forTimeInterval: 0.4)
+            }
+            self.settle()
+            guard let before = self.read(feed), abs(before.y) > 150 else {
+                return .blocked("could not scroll \(feed) down first")
+            }
+            guard away() else { return .blocked("could not leave \(feed) (\(self.pagerNote()))") }
+            guard back() else { return .blocked("could not return to \(feed) (\(self.pagerNote()))") }
+            self.settle()
+            guard let after = self.read(feed) else {
+                return .blocked("probe.\(feed) unreadable after returning")
+            }
+            let kept = abs(after.y - before.y) < 150
+            let place = String(format: "y %.0f -> %.0f", before.y, after.y)
+            guard kept else { return .blocked("BUG place lost: \(place)") }
+            return .ready("place kept: \(place)")
+        }
+    }
+
     /// S23 (added): Bookmarks pushed from the menu, popped by a mid-screen swipe right ->
     /// crown on `menu`. A page-style TabView once left a black screen exactly here; the
     /// menu probe being on screen is the check that the pager is still drawn.

@@ -104,13 +104,12 @@ struct WatchRootView: View {
         // Full-screen media is a real presentation (crown fix, 2026-11-18): when an
         // overlay viewer went away, watchOS did not hand the crown back to the feed;
         // dismissing a presentation is a moment it re-picks the crown's scroll view.
-        // The cover brings watchOS' own close (X) button, so the viewer drops its own.
+        // The viewer hides the cover's X and clock (`inCover`); it closes by swipe down.
         .fullScreenCover(isPresented: mediaCoverPresented) {
             if let target = presenter.target {
                 MediaViewer(media: target.media, startIndex: target.startIndex,
                             title: target.title, caption: target.caption,
-                            onClose: { presenter.close() }, showsCloseButton: false)
-                    ._statusBarHidden(true)
+                            onClose: { presenter.close() }, inCover: true)
             }
         }
         // One app-wide notice for a dead session (X answered 401) instead of an error
@@ -210,6 +209,9 @@ struct RootPager: View {
     /// See `HomeView.returnToken`: bumped when a feed is swiped back to.
     @State private var forYouReturn = 0
     @State private var followingReturn = 0
+    /// Each feed's reading place, kept here so it outlives the pages.
+    @State private var forYouPlace = FeedPlace()
+    @State private var followingPlace = FeedPlace()
     /// Feeds already shown once (the first appearance gets the crown by itself).
     @State private var shownFeeds: Set<Int> = []
     /// The next page change comes from a button, not a swipe (buttons were fine).
@@ -220,10 +222,10 @@ struct RootPager: View {
             MenuView(onPick: { kind in goFeed(kind) })
                 .tag(0)
             HomeView(kind: .forYou, isActive: rootActive && page == 1, returnToken: forYouReturn,
-                     list: forYou)
+                     list: forYou, place: forYouPlace)
                 .tag(1)
             HomeView(kind: .following, isActive: rootActive && page == 2, returnToken: followingReturn,
-                     list: following)
+                     list: following, place: followingPlace)
                 .tag(2)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))

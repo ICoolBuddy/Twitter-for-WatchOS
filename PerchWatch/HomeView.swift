@@ -22,6 +22,9 @@ struct HomeView: View {
 
     /// Owned by `RootPager`, which also draws the edge glow from it.
     @ObservedObject var list: PagedList<TimelineItem>
+    /// Where the reader was, owned by `RootPager` so it survives this page being
+    /// rebuilt (`returnToken`) or dropped by the system pager while off screen.
+    let place: FeedPlace
     @State private var configuredFor: String?
     /// The account changed since this page was first configured: the next refresh
     /// replaces the list instead of merging into it.
@@ -30,9 +33,10 @@ struct HomeView: View {
     /// `isActive` struct property later: this box carries the live value.
     @State private var visibility = PageVisibility()
     @State private var profileTarget: ProfileTarget?
-    /// The first post on screen, so a rebuilt scroll view can return to it.
-    @State private var topVisibleID: String?
     @State private var mediaTarget: MediaTarget?
+    /// False only for a freshly created page (the system pager can drop an
+    /// off-screen page and build it again): that one restores `place` on appear.
+    @State private var hasAppeared = false
 
     /// The top of the list: a zero-height anchor laid out before any row, so a refresh
     /// can scroll up without waiting for the new first post to exist.
@@ -61,12 +65,23 @@ struct HomeView: View {
             .background(Color.black)
             .id(returnToken)
             .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.3) { ids in
-                topVisibleID = ids.first
+                // Only while this feed is the one being read: a page leaving the
+                // screen (or a rebuilt one, which starts at the top) must not
+                // overwrite where the reader was.
+                guard visibility.isActive else { return }
+                let visible = Set(ids)
+                if let top = list.items.first(where: { visible.contains($0.id) })?.id {
+                    place.liveTopID = top
+                } else if visible.contains(Self.topAnchor) {
+                    place.liveTopID = nil
+                }
             }
-            .onChange(of: returnToken) { _, _ in
-                // Read before the new scroll view reports its own (top) rows.
-                guard let id = topVisibleID, id != Self.topAnchor else { return }
-                DispatchQueue.main.async { proxy.scrollTo(id, anchor: .top) }
+            // Swiped back to: the scroll view was rebuilt (crown), put the reader back.
+            .onChange(of: returnToken) { _, _ in restore(proxy) }
+            .onAppear {
+                guard !hasAppeared else { return }
+                hasAppeared = true
+                restore(proxy)
             }
             // The edge glow is drawn by `RootGlow` straight from the lists; pulling
             // or turning the crown only triggers the refresh.
@@ -90,6 +105,8 @@ struct HomeView: View {
             .postPresentation(profile: $profileTarget, media: $mediaTarget)
             .onChange(of: isActive, initial: true) { _, active in
                 visibility.isActive = active
+                // Leaving this feed (page swipe, menu, pushed screen): keep the place.
+                if !active { place.savedTopID = place.liveTopID }
                 // Arriving on this feed: warm what it is about to show.
                 if active, !list.isEmpty { ImageLoader.shared.prefetchFeed(list.items.displayTweets) }
             }
@@ -148,6 +165,14 @@ struct HomeView: View {
         }
     }
 
+    /// Scrolls a new scroll view back to the post that was on top when the reader
+    /// left this feed. Nothing to do on the very first appearance (no saved place).
+    private func restore(_ proxy: ScrollViewProxy) {
+        guard let id = place.savedTopID, list.items.contains(where: { $0.id == id }) else { return }
+        place.liveTopID = id
+        DispatchQueue.main.async { proxy.scrollTo(id, anchor: .top) }
+    }
+
     private func configure() {
         let key = taskKey
         guard configuredFor != key else { return }
@@ -199,6 +224,16 @@ struct HomeView: View {
         // Offline taps (like/repost/bookmark) go out as soon as we are online.
         await app.posts.flush(client: app.client)
     }
+}
+
+/// The reading place of one home feed. A plain reference (not observed): updating
+/// it on every scrolled post must not re-render the pager.
+final class FeedPlace {
+    /// The first post on screen right now (only tracked while the feed is active).
+    var liveTopID: String?
+    /// `liveTopID` at the moment the reader left the feed: what a rebuilt scroll
+    /// view returns to.
+    var savedTopID: String?
 }
 
 /// Whether a feed page is the one on screen, readable from closures stored earlier.
