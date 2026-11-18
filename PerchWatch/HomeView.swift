@@ -54,10 +54,13 @@ struct HomeView: View {
             .background(Color.black)
             // The edge glow is drawn by `RootGlow` straight from the lists; pulling
             // or turning the crown only triggers the refresh.
-            .pullToRefresh(isRefreshing: list.isRefreshing, showsIndicator: false) {
+            .pullToRefresh(isRefreshing: list.isRefreshing, failed: list.error != nil) {
                 await refresh(merge: false)
-                // A refresh the reader asked for brings the new posts into view.
-                proxy.scrollTo(Self.topAnchor, anchor: .top)
+                // A refresh the reader asked for brings the new posts into view;
+                // animated, and a no-op when the pull already left the list at the top.
+                withAnimation(.easeOut(duration: 0.25)) {
+                    proxy.scrollTo(Self.topAnchor, anchor: .top)
+                }
             }
             .task(id: taskKey) {
                 configure()

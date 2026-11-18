@@ -222,6 +222,10 @@ struct RootPager: View {
             }
             .frame(width: w, alignment: .leading)
             .offset(x: -CGFloat(page) * w + dragX)
+            // While the finger is locked to a horizontal page swipe, the page's
+            // own scroll view must not also follow the vertical part of the drag:
+            // that is what moved the feed up and down during a menu switch.
+            .scrollDisabled(dragAxis == .horizontal)
             .simultaneousGesture(pagerDrag(width: w))
             .onChange(of: dragLive) { _, live in
                 guard !live else { return }

@@ -1,18 +1,21 @@
 import SwiftUI
+import XKit
 
 /// Pull-to-refresh for watchOS scroll views. watchOS accepts `.refreshable` but
 /// draws no control for it, so this tracks the scroll view's overscroll at the
-/// top: the status bar fills as you pull, and crossing the threshold starts the
-/// refresh. Turning the Digital Crown at the top rubber-bands by only a few
-/// points per detent, so those small increases are accumulated too — rotating
-/// the crown a lot refreshes as well.
+/// top: the status pill appears while the fetch runs, and crossing the threshold
+/// starts the refresh. Turning the Digital Crown at the top rubber-bands by only
+/// a few points per detent, so those small increases are accumulated too —
+/// rotating the crown a lot refreshes as well.
 ///
-/// This only triggers the action; there is no pull indicator. The edge glow
-/// (`EdgeGlow`, HomeView) shows the fetch itself. No haptics (refreshing must
-/// be silent).
+/// The tracker lives in a class, so following the overscroll never re-renders the
+/// scroll view.
 struct PullToRefresh: ViewModifier {
     let isRefreshing: Bool
-    /// The home feeds have their own indicators (edge glow, placeholder post).
+    /// The last refresh failed: the pill says so instead of "Updated".
+    var failed = false
+    /// Off for screens that show their own fetch status; the feeds keep both the
+    /// edge glow and this pill.
     var showsIndicator = true
     let action: () async -> Void
 
@@ -21,25 +24,16 @@ struct PullToRefresh: ViewModifier {
     /// Total crown rubber-band travel that counts as "rotated a lot".
     static let crownThreshold: CGFloat = 90
 
-    /// Reference box: all per-frame tracking state lives in a class, so
-    /// following the overscroll never re-renders the scroll view.
+    /// Reference box: all per-frame tracking state lives in a class.
     @State private var tracker = OverscrollTracker()
 
     func body(content: Content) -> some View {
         content
-            // The refresh itself is the indicator (pushed lists have no edge glow):
-            // derived from `isRefreshing`, not from the pull.
             .overlay(alignment: .top) {
-                if isRefreshing, showsIndicator {
-                    HStack(spacing: 5) {
-                        ProgressView()
-                        Text("Refreshing…").font(.caption2).foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .transition(.opacity)
-                    .allowsHitTesting(false)
+                if showsIndicator {
+                    RefreshStatus(isRefreshing: isRefreshing, failed: failed)
+                        .padding(.top, 2)
+                        .allowsHitTesting(false)
                 }
             }
             .onScrollGeometryChange(for: CGFloat.self) { geo in
@@ -84,6 +78,81 @@ struct PullToRefresh: ViewModifier {
     }
 }
 
+/// The fetch, said out loud: what is happening and how fast the link is going,
+/// then a short "Updated" so the end of a refresh is visible without a jump.
+struct RefreshStatus: View {
+    var isRefreshing: Bool
+    var failed = false
+
+    @State private var finished = false
+    /// The outcome of the refresh that just ended, so the tail says the truth.
+    @State private var lastFailed = false
+    @State private var finishTask: Task<Void, Never>?
+
+    private static let appear = Animation.spring(response: 0.32, dampingFraction: 0.86)
+
+    var body: some View {
+        // A ZStack (not a bare `if`) so the observer below stays alive while the
+        // pill is hidden — otherwise it could never notice the refresh ending.
+        ZStack(alignment: .top) {
+            if isRefreshing || finished {
+                pill
+                    .transition(.asymmetric(insertion: .move(edge: .top).combined(with: .opacity),
+                                            removal: .opacity))
+            }
+        }
+        .onChange(of: isRefreshing) { _, refreshing in
+            finishTask?.cancel()
+            if refreshing {
+                withAnimation(Self.appear) { finished = false }
+            } else {
+                lastFailed = failed
+                withAnimation(Self.appear) { finished = true }
+                finishTask = Task {
+                    try? await Task.sleep(nanoseconds: 1_400_000_000)
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeOut(duration: 0.25)) { finished = false }
+                }
+            }
+        }
+    }
+
+    private var pill: some View {
+        HStack(spacing: 5) {
+            if isRefreshing {
+                ProgressView()
+                Text("Refreshing")
+                    .font(.system(size: 11, weight: .medium))
+                TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                    let rate = TransferMonitor.shared.snapshot().bytesPerSecond
+                    // Sub-kilobyte traffic is mostly headers: say nothing.
+                    if rate >= 500 {
+                        Text("· " + TransferMonitor.formatRate(rate))
+                            .font(.system(size: 11, weight: .medium).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } else if lastFailed {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.orange)
+                Text("Couldn't update")
+                    .font(.system(size: 11, weight: .medium))
+            } else {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.green)
+                Text("Updated")
+                    .font(.system(size: 11, weight: .medium))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.1)))
+    }
+}
+
 /// Mutable box so per-frame tracker state does not invalidate SwiftUI views.
 private final class OverscrollTracker {
     var last: CGFloat = 0
@@ -94,8 +163,9 @@ private final class OverscrollTracker {
 }
 
 extension View {
-    func pullToRefresh(isRefreshing: Bool, showsIndicator: Bool = true,
+    func pullToRefresh(isRefreshing: Bool, failed: Bool = false, showsIndicator: Bool = true,
                        action: @escaping () async -> Void) -> some View {
-        modifier(PullToRefresh(isRefreshing: isRefreshing, showsIndicator: showsIndicator, action: action))
+        modifier(PullToRefresh(isRefreshing: isRefreshing, failed: failed,
+                               showsIndicator: showsIndicator, action: action))
     }
 }

@@ -294,38 +294,45 @@ struct FeedPostView: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: Metrics.mediaCorner))
         } else if let m = media.first {
-            Button {
-                onMedia?(MediaTarget(media: media, startIndex: 0,
-                                     title: t.author.name, caption: t.text))
-            } label: {
-                MediaThumb(media: m, extraCount: media.count - 1,
-                           localURL: SavedStore.shared.localPhoto(tweetID: t.id, index: 0))
-            }
-            .buttonStyle(.swipeSafe)
-            .frame(maxWidth: .infinity)
-            .accessibilityLabel("Open media")
+            MediaThumb(media: m, extraCount: media.count - 1,
+                       localURL: SavedStore.shared.localPhoto(tweetID: t.id, index: 0))
+                // A tap gesture, not a Button: a Button's press state competes with
+                // the scroll view, so a drag that started on an attachment did not
+                // scroll, and its action needed a second tap while the list was
+                // still settling. A tap is recognised on lift with no press phase.
+                .contentShape(Rectangle())
+                .simultaneousGesture(TapGesture().onEnded { openMedia(media, at: 0) })
+                .frame(maxWidth: .infinity)
+                .accessibilityElement()
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("Open media")
         }
+    }
+
+    /// Opens the viewer on one attachment. A tap that ends a horizontal swipe is
+    /// not a tap (the pager and swipe-back use simultaneous gestures).
+    private func openMedia(_ media: [XMedia], at index: Int) {
+        guard !SwipeGuard.isActive else { return }
+        onMedia?(MediaTarget(media: media, startIndex: index,
+                             title: t.author.name, caption: t.text))
     }
 
     private func gridTile(_ media: [XMedia], index: Int, wide: Bool) -> some View {
         let m = media[index]
         let local = SavedStore.shared.localPhoto(tweetID: t.id, index: index)
-        return Button {
-            onMedia?(MediaTarget(media: media, startIndex: index,
-                                 title: t.author.name, caption: t.text))
-        } label: {
-            Color.clear
-                .aspectRatio(wide ? 2 : 1, contentMode: .fit)
-                .overlay {
-                    RemoteImage(url: local ?? m.feedURL, placeholderURL: m.previewURL,
-                                maxPixel: local != nil ? 400 : 300)
-                }
-                .clipped()
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.swipeSafe)
-        .frame(maxWidth: .infinity)
-        .accessibilityLabel(m.altText ?? "Image \(index + 1) of \(media.count)")
+        return Color.clear
+            .aspectRatio(wide ? 2 : 1, contentMode: .fit)
+            .overlay {
+                RemoteImage(url: local ?? m.feedURL, placeholderURL: m.previewURL,
+                            maxPixel: local != nil ? 400 : 300)
+            }
+            .clipped()
+            .contentShape(Rectangle())
+            .simultaneousGesture(TapGesture().onEnded { openMedia(media, at: index) })
+            .frame(maxWidth: .infinity)
+            .accessibilityElement()
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(m.altText ?? "Image \(index + 1) of \(media.count)")
     }
 
     // MARK: Text

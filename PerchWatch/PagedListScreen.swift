@@ -24,14 +24,10 @@ struct PagedListStatus<Item: Identifiable & Hashable>: View {
         case .empty:
             emptyState
         case .content, .paging:
-            // A refresh over posts already on screen: one placeholder at the top
-            // shows where the new posts will land (the edge glow / pull indicator
-            // shows the fetch itself).
-            if list.isRefreshing {
-                PostSkeleton(mediaHeight: 90)
-                    .transition(.opacity)
-                    .padding(.vertical, 4)
-            }
+            // Nothing on purpose: a refresh over posts already on screen shows the
+            // status pill (`PullToRefresh`), never a placeholder row — a skeleton
+            // there read as a blank gap, and reserved layout it could not fill.
+            EmptyView()
         }
     }
 
@@ -83,18 +79,20 @@ extension View {
         self
             .crownScrollFocus(active: active)
             .background(Color.black)
-            .modifier(OptionalPullToRefresh(isRefreshing: list.isRefreshing, action: onRefresh))
+            .modifier(OptionalPullToRefresh(isRefreshing: list.isRefreshing, failed: list.error != nil,
+                                            action: onRefresh))
             .postPresentation(profile: profile, media: media)
     }
 }
 
 private struct OptionalPullToRefresh: ViewModifier {
     var isRefreshing: Bool
+    var failed = false
     var action: (() async -> Void)?
 
     @ViewBuilder func body(content: Content) -> some View {
         if let action {
-            content.pullToRefresh(isRefreshing: isRefreshing, action: action)
+            content.pullToRefresh(isRefreshing: isRefreshing, failed: failed, action: action)
         } else {
             content
         }
