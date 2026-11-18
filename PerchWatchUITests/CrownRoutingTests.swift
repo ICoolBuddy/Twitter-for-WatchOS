@@ -275,14 +275,15 @@ final class CrownRoutingTests: XCTestCase {
             // Record only: no touch needed to rotate, then close.
             self.rotate()
             self.settle()
-            guard self.closeViewer() else {
-                return .blocked("the viewer's close button was not tappable")
+            let x = self.coverXNote()
+            guard let how = self.closeViewer() else {
+                return .blocked("the viewer would not close (swipe down / X), \(x)")
             }
             self.settle()
             guard !self.element("media.viewer").exists else {
                 return .blocked("the viewer did not close")
             }
-            return .ready("photo viewer opened (crown there zooms, not measured), closed")
+            return .ready("photo viewer opened, \(x), closed by \(how)")
         }
     }
 
@@ -302,14 +303,15 @@ final class CrownRoutingTests: XCTestCase {
             }
             self.rotate()
             self.settle()
-            guard self.closeViewer() else {
-                return .blocked("the viewer's close button was not tappable")
+            let x = self.coverXNote()
+            guard let how = self.closeViewer() else {
+                return .blocked("the viewer would not close (swipe down / X), \(x)")
             }
             self.settle()
             guard !self.element("media.viewer").exists else {
                 return .blocked("the viewer did not close")
             }
-            return .ready("video viewer opened (crown there is the volume control / scrub), closed")
+            return .ready("video viewer opened, \(x), closed by \(how)")
         }
     }
 
@@ -446,14 +448,15 @@ final class CrownRoutingTests: XCTestCase {
             }
             self.rotate()
             self.settle()
-            guard self.closeViewer() else {
-                return .blocked("the viewer's close button was not tappable")
+            let x = self.coverXNote()
+            guard let how = self.closeViewer() else {
+                return .blocked("the viewer would not close (swipe down / X), \(x)")
             }
             self.settle()
             guard !self.element("media.viewer").exists else {
                 return .blocked("the viewer did not close")
             }
-            return .ready("GIF viewer opened, closed")
+            return .ready("GIF viewer opened, \(x), closed by \(how)")
         }
     }
 
@@ -480,6 +483,51 @@ final class CrownRoutingTests: XCTestCase {
                 return .blocked("the hamburger did not open the menu (\(self.pagerNote()))")
             }
             return .ready("post, back via \(how), hamburger")
+        }
+    }
+
+    /// S24 (device bug 2026-11-18): open a post, open its photo, close the viewer
+    /// (swipe down), then ONE back tap must pop the post -> crown on `feed.forYou`.
+    /// On the device the first back tap after the viewer did nothing.
+    func test25_S24_postMediaThenBack() { postMediaThenBack("S24", preferX: false) }
+
+    /// S24b: S24, closing the viewer with watchOS' X when it has one.
+    func test26_S24b_postMediaXThenBack() { postMediaThenBack("S24b", preferX: true) }
+
+    private func postMediaThenBack(_ id: String, preferX: Bool) {
+        scenario(id, probe: "feed.forYou") {
+            guard self.tap("post.open." + FixtureID.photoPost) else {
+                return .blocked("the first post's text link was not tappable")
+            }
+            guard self.probe("post").waitForExistence(timeout: 10) else {
+                return .blocked("the post page did not open")
+            }
+            self.settle()
+            guard self.tapHittable("media.tile." + FixtureID.photoPost + ".0"),
+                  self.element("media.viewer").waitForExistence(timeout: 10) else {
+                return .blocked("the post page's photo did not open the viewer")
+            }
+            self.settle()
+            let x = self.coverXNote()
+            guard let how = self.closeViewer(preferX: preferX) else {
+                return .blocked("the viewer would not close (\(x))")
+            }
+            self.settle()
+            guard self.probe("post").exists else {
+                return .blocked("closing the viewer left the post page")
+            }
+            let first = self.tapSystemBack()
+            self.settle()
+            if self.probe("post").exists {
+                let second = self.tapSystemBack()
+                self.settle()
+                let popped = !self.probe("post").exists
+                return .blocked("BUG first back tap ignored (\(first)); second tap \(popped ? "popped" : "also ignored") (\(second)); \(x), closed by \(how)")
+            }
+            guard self.onScreen("feed.forYou") else {
+                return .blocked("back landed on the wrong page (\(self.pagerNote()))")
+            }
+            return .ready("post, photo, \(x), closed by \(how), one back tap (\(first))")
         }
     }
 
@@ -775,47 +823,61 @@ final class CrownRoutingTests: XCTestCase {
         return element("media.viewer").waitForExistence(timeout: 10)
     }
 
-    /// The viewer hides its chrome after 1.2 s (`MediaViewer.showControls`); a tap
-    /// brings it back, so retry with a tap in between.
-    ///
-    /// The faded chrome stays in the accessibility tree and looks hittable, but it is
-    /// not hit-testable: a tap on it falls through to the photo (which zooms). So read
-    /// the button's value ("visible"/"hidden"), reveal the chrome with a tap on the
-    /// media when it is hidden, and tap the button only while it is visible. Verified
-    /// by the button going away.
-    private func closeViewer() -> Bool {
+    /// Closes the viewer and says how: `swipe` (drag down, the viewer's own way out)
+    /// or `X` (watchOS' cover button, only when `preferX` or the swipe did nothing).
+    /// `nil` = it would not close.
+    private func closeViewer(preferX: Bool = false) -> String? {
         let viewer = element("media.viewer")
-        let close = app.buttons["media.close"]
-        for _ in 0..<5 {
-            guard viewer.exists else { return true }
-            if close.exists {
-                // Overlay viewer (inside a sheet): its own close button.
-                if (close.value as? String) != "visible" {
-                    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)).tap()
-                    Thread.sleep(forTimeInterval: 0.3)
-                }
-                let f = close.frame
-                if (close.value as? String) == "visible", f.minX.isFinite, f.minY.isFinite, f.width > 0 {
-                    app.coordinate(withNormalizedOffset: .zero)
-                        .withOffset(CGVector(dx: f.midX, dy: f.midY)).tap()
-                }
-            } else if let system = systemCoverClose() {
-                // Root viewer (fullScreenCover): watchOS' close button.
+        for attempt in 0..<4 {
+            guard viewer.exists else { return attempt == 0 ? "already closed" : "swipe" }
+            if preferX || attempt >= 2, let system = systemCoverClose() {
                 system.tap()
-            } else {
-                // Where watchOS draws the cover's X (top left), if it is not exposed.
-                app.coordinate(withNormalizedOffset: CGVector(dx: 0.16, dy: 0.14)).tap()
+                Thread.sleep(forTimeInterval: 0.8)
+                if !viewer.exists { return "X" }
+                continue
             }
+            swipeDownViewer()
             Thread.sleep(forTimeInterval: 0.8)
+            if !viewer.exists { return "swipe" }
         }
-        return !viewer.exists
+        return viewer.exists ? nil : "swipe"
+    }
+
+    /// A downward drag over the middle of the media (more than the viewer's 60 pt).
+    private func swipeDownViewer() {
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95))
+        start.press(forDuration: 0.05, thenDragTo: end)
+    }
+
+    /// "X visible" / "X hidden": whether watchOS draws its close button on the cover.
+    private func coverXNote() -> String {
+        systemCoverClose() == nil ? "X hidden" : "X visible"
+    }
+
+    /// Taps the first on-screen, hittable copy of `identifier` (a pushed screen can
+    /// leave the feed's copy of the same post in the tree underneath).
+    private func tapHittable(_ identifier: String, attempts: Int = 6) -> Bool {
+        for _ in 0..<attempts {
+            let screen = app.frame
+            for candidate in app.descendants(matching: .any).matching(identifier: identifier).allElementsBoundByIndex
+            where candidate.exists && candidate.isHittable {
+                let mid = CGPoint(x: candidate.frame.midX, y: candidate.frame.midY)
+                guard screen.contains(mid) else { continue }
+                candidate.tap()
+                return true
+            }
+            app.swipeUp()
+            Thread.sleep(forTimeInterval: 0.4)
+        }
+        return false
     }
 
     /// The close (X) button watchOS draws on a `fullScreenCover`, if any.
     private func systemCoverClose() -> XCUIElement? {
         for label in ["Close", "Dismiss", "Cancel"] {
             for b in app.buttons.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex
-            where b.exists && b.identifier != "media.close" && b.isHittable {
+            where b.exists && b.isHittable {
                 return b
             }
         }
