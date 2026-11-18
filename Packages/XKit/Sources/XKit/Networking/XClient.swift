@@ -82,7 +82,7 @@ public actor LiveXClient: XClient {
         let op: Operation = kind == .forYou ? .homeTimeline : .homeLatestTimeline
         // The web client POSTs home timelines.
         let json = try await graphQL(op, variables: .object(v), forcePost: true)
-        return XParser.timeline(json)
+        return try parsedPage(json)
     }
 
     public func tweetDetail(id: String, cursor: String?) async throws -> ThreadPage {
@@ -192,7 +192,7 @@ public actor LiveXClient: XClient {
         if includeReplies { v["withCommunity"] = true }
         if let cursor { v["cursor"] = .string(cursor) }
         let json = try await graphQL(includeReplies ? .userTweetsAndReplies : .userTweets, variables: .object(v))
-        return XParser.timeline(json)
+        return try parsedPage(json)
     }
 
     public func setFollowing(_ follow: Bool, userId: String) async throws {
@@ -218,14 +218,14 @@ public actor LiveXClient: XClient {
         if let cursor { v["cursor"] = .string(cursor) }
         // SearchTimeline is one of the endpoints that requires a transaction id.
         let json = try await graphQL(.searchTimeline, variables: .object(v))
-        return XParser.timeline(json)
+        return try parsedPage(json)
     }
 
     public func bookmarks(cursor: String?) async throws -> TimelinePage {
         var v: [String: JSON] = ["count": .number(Double(Self.pageSize)), "includePromotedContent": false]
         if let cursor { v["cursor"] = .string(cursor) }
         let json = try await graphQL(.bookmarks, variables: .object(v))
-        return XParser.timeline(json)
+        return try parsedPage(json)
     }
 
     public func likes(userId: String, cursor: String?) async throws -> TimelinePage {
@@ -239,7 +239,7 @@ public actor LiveXClient: XClient {
         ]
         if let cursor { v["cursor"] = .string(cursor) }
         let json = try await graphQL(.likes, variables: .object(v))
-        return XParser.timeline(json)
+        return try parsedPage(json)
     }
 
     // MARK: DMs (legacy REST)
@@ -454,6 +454,14 @@ public actor LiveXClient: XClient {
         let m = try await refresh()
         if await store.material != m { await store.setMaterial(m) }
         return m
+    }
+
+    /// A timeline response without `instructions` is a schema change: report it, so the
+    /// UI keeps the posts it has (and the offline cache) instead of showing an empty feed.
+    private func parsedPage(_ json: JSON) throws -> TimelinePage {
+        let page = XParser.timeline(json)
+        if page.instructionsFound == false { throw XError.decoding("timeline response with no instructions") }
+        return page
     }
 
     private func ms(since d: Date) -> Int { Int(Date().timeIntervalSince(d) * 1000) }

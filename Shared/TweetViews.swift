@@ -6,12 +6,22 @@ import WatchKit
 #endif
 
 /// Navigation destinations shared by both apps.
+/// Navigation payload whose identity is its id. `Route` values are NavigationLink
+/// values (Hashable): hashing a whole post/user meant the route changed whenever a like
+/// count or follower count did, while the link sat in the view tree.
+struct IdentifiedRoute<Value: Identifiable>: Hashable {
+    let value: Value
+    init(_ value: Value) { self.value = value }
+    static func == (l: Self, r: Self) -> Bool { l.value.id == r.value.id }
+    func hash(into h: inout Hasher) { h.combine(value.id) }
+}
+
 enum Route: Hashable {
-    case post(XTweet)
+    case post(IdentifiedRoute<XTweet>)
     case user(String)          // screen name
     case userId(String)
     /// A user's posts as a feed (notification digests such as "new posts from @x").
-    case userFeed(XUser)
+    case userFeed(IdentifiedRoute<XUser>)
     case notifications
     case search
     case bookmarks

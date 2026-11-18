@@ -130,7 +130,7 @@ struct FeedPostView: View {
                     mediaBlock
                 }
                 if let q = t.quotedTweet?.value {
-                    NavigationLink(value: Route.post(q)) {
+                    NavigationLink(value: Route.post(IdentifiedRoute(q))) {
                         QuotedTweetView(tweet: q)
                     }
                     .buttonStyle(.swipeSafe)
@@ -316,7 +316,7 @@ struct FeedPostView: View {
     @ViewBuilder
     private var textView: some View {
         if linkToPost {
-            NavigationLink(value: Route.post(t)) {
+            NavigationLink(value: Route.post(IdentifiedRoute(t))) {
                 textBody
             }
             .buttonStyle(.swipeSafe)

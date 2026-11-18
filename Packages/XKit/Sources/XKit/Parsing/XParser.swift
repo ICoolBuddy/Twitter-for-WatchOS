@@ -16,8 +16,12 @@ public enum XParser {
 
     // MARK: Timeline
 
+    /// `instructionsFound == false` means the response had no `instructions` at all: a
+    /// schema change, not an empty timeline (callers must not treat it as "no posts").
     public static func timeline(_ json: JSON) -> TimelinePage {
-        let instructions = findInstructions(json["data"]) ?? findInstructions(json) ?? []
+        guard let instructions = findInstructions(json["data"]) ?? findInstructions(json) else {
+            return TimelinePage(items: [], instructionsFound: false)
+        }
         return timeline(instructions: instructions)
     }
 
@@ -27,7 +31,8 @@ public enum XParser {
         var bottom: String?
         var seen = Set<String>()
 
-        func add(_ item: TimelineItem) {
+        func add(_ item: TimelineItem, entryId: String = "") {
+            let item = withEntryIdentity(item, entryId: entryId)
             guard !seen.contains(item.id) else { return }
             seen.insert(item.id)
             items.append(item)
@@ -44,7 +49,7 @@ public enum XParser {
                 if isCursor(ic) {
                     assignCursor(ic, top: &top, bottom: &bottom)
                 } else if let item = timelineItem(from: ic) {
-                    add(item)
+                    add(item, entryId: entryId)
                 }
             case "TimelineTimelineModule":
                 var tweets: [XTweet] = []
@@ -56,7 +61,7 @@ public enum XParser {
                         tweets.append(contentsOf: item.tweets)
                     }
                 }
-                if tweets.count == 1 { add(.tweet(tweets[0])) }
+                if tweets.count == 1 { add(.tweet(tweets[0]), entryId: entryId) }
                 else if tweets.count > 1 { add(.conversation(tweets)) }
             case "TimelineTimelineCursor":
                 assignCursor(content, top: &top, bottom: &bottom)
@@ -74,13 +79,24 @@ public enum XParser {
                 handle(entry: ins["entry"])
             case "TimelineAddToModule":
                 for mi in ins["moduleItems"].array {
-                    if let item = timelineItem(from: mi["item"]["itemContent"]) { add(item) }
+                    if let item = timelineItem(from: mi["item"]["itemContent"]) {
+                        add(item, entryId: mi["entryId"].string ?? "")
+                    }
                 }
             default:
                 break
             }
         }
-        return TimelinePage(items: items, topCursor: top, bottomCursor: bottom)
+        return TimelinePage(items: items, topCursor: top, bottomCursor: bottom, instructionsFound: true)
+    }
+
+    /// Tombstones have no id of their own (it is a hash of the message text, which X sends
+    /// identically for every unavailable post), so without the entry id several
+    /// "unavailable" rows collapse into one.
+    static func withEntryIdentity(_ item: TimelineItem, entryId: String) -> TimelineItem {
+        guard case .tweet(var t) = item, t.isTombstone, !entryId.isEmpty else { return item }
+        t.id = "tombstone-" + stableHash(t.tombstoneText ?? "") + "-" + stableHash(entryId)
+        return .tweet(t)
     }
 
     static func isCursor(_ ic: JSON) -> Bool {
@@ -190,8 +206,13 @@ public enum XParser {
         var urls: [JSON]
         var alreadyDecoded = false
         if let noteText = note["text"].string {
-            text = noteText
-            urls = note["entity_set"]["urls"].array
+            // A note's own entity_set can be thin; merging the tweet-level urls is harmless
+            // (replacing a t.co that is not in the text is a no-op). Same union as twscrape.
+            urls = note["entity_set"]["urls"].array + v("entities")["urls"].array
+            // Note results carry no display_text_range: strip a long reply's leading
+            // mentions the way display_text_range does for short ones.
+            text = stripLeadingReplyMentions(noteText, entitySet: note["entity_set"],
+                                             inReplyTo: v("in_reply_to_screen_name").string)
         } else {
             // Decode HTML entities *before* slicing: X escapes `&`, `<`, `>` in
             // `full_text`, and slicing the longer escaped string with
@@ -390,15 +411,21 @@ public enum XParser {
         var ancestors: [XTweet] = []
         var focal: XTweet?
         var replies: [TimelineItem] = []
-        var cursors: [String: String] = [:]
+        var cursors: [String: String] = [:]          // entry level: the page cursor
+        var moduleCursors: [String: String] = [:]    // inside a conversation module: fallback
         var seen = Set<String>()
 
-        func takeCursor(_ c: JSON) {
+        func takeCursor(_ c: JSON, fallback: Bool = false) {
             guard let kind = c["cursorType"].string, let value = c["value"].string, !value.isEmpty else { return }
-            if cursors[kind] == nil { cursors[kind] = value }
+            if fallback {
+                if moduleCursors[kind] == nil { moduleCursors[kind] = value }
+            } else if cursors[kind] == nil {
+                cursors[kind] = value
+            }
         }
 
-        func consume(_ item: TimelineItem) {
+        func consume(_ item: TimelineItem, entryId: String = "") {
+            let item = withEntryIdentity(item, entryId: entryId)
             guard seen.insert(item.id).inserted else { return }
             if focal == nil, item.tweets.contains(where: { $0.id == focalId }) {
                 if case .conversation(let chain) = item,
@@ -433,17 +460,18 @@ public enum XParser {
                 if isCursor(ic) {
                     takeCursor(ic)
                 } else if let item = timelineItem(from: ic) {
-                    consume(item)
+                    consume(item, entryId: entryId)
                 }
             case "TimelineTimelineModule":
                 var tweets: [XTweet] = []
                 for mi in content["items"].array {
                     let ic = mi["item"]["itemContent"]
-                    // Cursors inside a module ("show more in this thread") are not page cursors.
-                    if isCursor(ic) { continue }
+                    // A cursor inside a module belongs to that conversation ("show more
+                    // replies in this thread"): only a fallback page cursor.
+                    if isCursor(ic) { takeCursor(ic, fallback: true); continue }
                     if let item = timelineItem(from: ic) { tweets.append(contentsOf: item.tweets) }
                 }
-                if tweets.count == 1 { consume(.tweet(tweets[0])) }
+                if tweets.count == 1 { consume(.tweet(tweets[0]), entryId: entryId) }
                 else if tweets.count > 1 { consume(.conversation(tweets)) }
             case "TimelineTimelineCursor":
                 takeCursor(content)
@@ -462,20 +490,24 @@ public enum XParser {
             case "TimelineAddToModule":
                 for mi in ins["moduleItems"].array {
                     let ic = mi["item"]["itemContent"]
-                    if isCursor(ic) { continue }
-                    if let item = timelineItem(from: ic) { consume(item) }
+                    if isCursor(ic) { takeCursor(ic, fallback: true); continue }
+                    if let item = timelineItem(from: ic) { consume(item, entryId: mi["entryId"].string ?? "") }
                 }
             default:
                 break
             }
         }
 
-        // Reply pagination: ShowMoreThreads, then ShowMoreThreadsPrompt, then Bottom.
-        var bottom: String?
-        for kind in ["ShowMoreThreads", "ShowMoreThreadsPrompt", "Bottom"] where cursors[kind] != nil {
-            bottom = cursors[kind]
-            break
-        }
+        // Reply pagination: the page cursor is the one X puts at entry level
+        // (ShowMoreThreads, then ShowMoreThreadsPrompt, then Bottom; twikit pages this way).
+        // A module's own cursor is used only when the page has none (twscrape finds a
+        // ShowMoreThreads cursor anywhere in the response).
+        let order = ["ShowMoreThreads", "ShowMoreThreadsPrompt", "Bottom"]
+        let bottom = order.lazy.compactMap { cursors[$0] }.first
+            ?? order.lazy.compactMap { moduleCursors[$0] }.first
+        // The same ancestor can arrive standalone and inside a module (different item ids).
+        var seenAncestors = Set<String>()
+        ancestors = ancestors.filter { seenAncestors.insert($0.id).inserted }
         return ThreadPage(focal: focal, ancestors: ancestors, replies: replies, bottomCursor: bottom)
     }
 
@@ -497,7 +529,8 @@ public enum XParser {
             let ic = content["itemContent"]
             let itemType = ic["itemType"].string ?? ic["__typename"].string ?? ""
             let isUnread = unreadAbove.map { compareSortIndex(sortIndex, $0) > 0 } ?? false
-            let id = entry["entryId"].string ?? UUID().uuidString
+            // A random fallback id would change on every refresh (no dedupe, rows rebuilt).
+            let id = entry["entryId"].string ?? ic["id"].string ?? UUID().uuidString
             guard !seen.contains(id) else { return }
             switch itemType {
             case "TimelineNotification":
@@ -547,13 +580,24 @@ public enum XParser {
 
     /// Works for both `ViewerBadgeCounts` GraphQL and the legacy REST badge_count JSON.
     public static func badgeCounts(_ json: JSON) -> XBadgeCounts {
+        // Exact names first (ViewerBadgeCounts and the REST badge_count both use them); the
+        // substring heuristic stays as a fallback for unknown shapes. Arrays are walked too.
+        let notifKeys: Set<String> = ["ntab_unread_count", "notifications", "notification_count",
+                                      "unread_notification_count"]
+        let dmKeys: Set<String> = ["dm_unread_count", "dms", "unread_dm_count", "messages"]
         var notif = 0, dm = 0
         func walk(_ j: JSON, depth: Int) {
             guard depth < 8 else { return }
+            if case .array(let a) = j {
+                for x in a { walk(x, depth: depth + 1) }
+                return
+            }
             for (k, v) in j.object {
                 let key = k.lowercased()
                 if let n = v.int {
-                    if key.contains("ntab") || key == "notifications" || key.contains("notification") { notif = max(notif, n) }
+                    if notifKeys.contains(key) { notif = max(notif, n) }
+                    else if dmKeys.contains(key) { dm = max(dm, n) }
+                    else if key.contains("ntab") || key.contains("notification") { notif = max(notif, n) }
                     else if key.contains("dm") || key.contains("message") || key.contains("chat") { dm = max(dm, n) }
                 } else {
                     walk(v, depth: depth + 1)
@@ -592,6 +636,33 @@ public enum XParser {
         var h: UInt64 = 1469598103934665603
         for b in s.utf8 { h = (h ^ UInt64(b)) &* 1099511628211 }
         return String(h, radix: 36)
+    }
+
+    /// Cuts the leading `@mention`s of a long reply the way `display_text_range` does for a
+    /// short one: only while they start at the cursor *and* the first is the reply target,
+    /// using the note's own mention indices. A post that merely starts with a mention keeps it.
+    static func stripLeadingReplyMentions(_ text: String, entitySet: JSON, inReplyTo: String?) -> String {
+        guard let replyTo = inReplyTo?.lowercased(), !replyTo.isEmpty else { return text }
+        let mentions: [(name: String, start: Int, end: Int)] = entitySet["user_mentions"].array.compactMap { m in
+            guard let name = m["screen_name"].string else { return nil }
+            let idx = m["indices"].array.compactMap(\.int)
+            guard idx.count == 2, idx[0] >= 0, idx[1] > idx[0] else { return nil }
+            return (name.lowercased(), idx[0], idx[1])
+        }.sorted { $0.start < $1.start }
+
+        let scalars = Array(text.unicodeScalars)
+        var cut = 0
+        var stripped = false
+        for m in mentions where m.start == cut {
+            if !stripped, m.name != replyTo { return text }
+            stripped = true
+            cut = min(m.end, scalars.count)
+            while cut < scalars.count, scalars[cut].value == 32 { cut += 1 }
+        }
+        guard stripped, cut > 0 else { return text }
+        var out = String.UnicodeScalarView()
+        out.append(contentsOf: scalars[cut...])
+        return String(out)
     }
 
     public static func decodeEntities(_ s: String) -> String {

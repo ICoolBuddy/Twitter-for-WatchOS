@@ -40,6 +40,14 @@ public struct XUser: Codable, Hashable, Sendable, Identifiable {
 
 public enum XMediaType: String, Codable, Sendable {
     case photo, video, gif = "animated_gif"
+
+    /// X adds media kinds over time. Live parsing degrades unknown kinds to `.photo`
+    /// (XParser.media); decoding a cached page must not be stricter, or one new kind makes
+    /// the whole cached thread/feed undecodable.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = XMediaType(rawValue: raw) ?? .photo
+    }
 }
 
 public struct XVideoVariant: Codable, Hashable, Sendable {
@@ -167,7 +175,8 @@ public struct XTweet: Codable, Hashable, Sendable, Identifiable {
 
 /// Box to allow recursive value types (repost/quote nesting).
 public final class XTweetBox: Codable, Hashable, @unchecked Sendable {
-    public var value: XTweet
+    /// Immutable: that is what makes the `@unchecked Sendable` true (the box is shared).
+    public let value: XTweet
     public init(_ value: XTweet) { self.value = value }
     public static func == (l: XTweetBox, r: XTweetBox) -> Bool { l.value == r.value }
     public func hash(into h: inout Hasher) { h.combine(value) }
@@ -184,7 +193,9 @@ public enum TimelineItem: Codable, Hashable, Sendable, Identifiable {
     public var id: String {
         switch self {
         case .tweet(let t): return "t-" + t.id
-        case .conversation(let ts): return "c-" + ts.map(\.id).joined(separator: "-")
+        // The chain head, not the whole chain: X re-sends a conversation with more tweets,
+        // and the row must keep its identity so a refresh replaces it instead of adding it twice.
+        case .conversation(let ts): return "c-" + (ts.first?.id ?? "")
         case .user(let u): return "u-" + u.id
         }
     }
@@ -202,9 +213,14 @@ public struct TimelinePage: Codable, Sendable, Equatable {
     public var items: [TimelineItem]
     public var topCursor: String?
     public var bottomCursor: String?
+    /// false when the response had no `instructions` array at all: a schema break, not an
+    /// empty timeline. Optional so cached pages from older builds still decode.
+    public var instructionsFound: Bool?
 
-    public init(items: [TimelineItem], topCursor: String? = nil, bottomCursor: String? = nil) {
+    public init(items: [TimelineItem], topCursor: String? = nil, bottomCursor: String? = nil,
+                instructionsFound: Bool? = nil) {
         self.items = items; self.topCursor = topCursor; self.bottomCursor = bottomCursor
+        self.instructionsFound = instructionsFound
     }
 
     public var tweets: [XTweet] { items.flatMap(\.tweets) }

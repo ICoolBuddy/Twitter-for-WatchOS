@@ -24,8 +24,11 @@ public enum DMParser {
 
     static func users(_ j: JSON) -> [String: XUser] {
         var out: [String: XUser] = [:]
+        // Not used by any screen yet (no DM UI; the fixtures are hand-made). Reuse the
+        // tolerant user parser (flat and 2026-05 `core.*` shapes), falling back to the old
+        // flat fields and the dictionary key for the id.
         for (id, u) in j.object {
-            out[id] = XUser(
+            out[id] = XParser.user(u) ?? XUser(
                 id: u["id_str"].string ?? id,
                 name: XParser.decodeEntities(u["name"].string ?? ""),
                 screenName: u["screen_name"].string ?? "",

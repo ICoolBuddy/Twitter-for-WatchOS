@@ -18,14 +18,20 @@ public struct SyncPayload: Codable, Sendable, Equatable {
     public var config: EndpointConfig?
     public var material: TransactionMaterial?
     public var remoteOverrideURL: String?
+    /// True when `remoteOverrideURL` is the sender's current value, so `nil` means "cleared".
+    /// Absent in payloads from older builds, where `nil` means "don't change it".
+    public var remoteOverrideIsAuthoritative: Bool?
     public var sentAt: Date
 
     public init(command: Command, credentials: XCredentials? = nil, accounts: [XAccount]? = nil,
                 config: EndpointConfig? = nil, material: TransactionMaterial? = nil,
-                remoteOverrideURL: String? = nil, sentAt: Date = Date()) {
+                remoteOverrideURL: String? = nil, remoteOverrideIsAuthoritative: Bool? = nil,
+                sentAt: Date = Date()) {
         self.command = command; self.credentials = credentials; self.accounts = accounts
         self.config = config; self.material = material
-        self.remoteOverrideURL = remoteOverrideURL; self.sentAt = sentAt
+        self.remoteOverrideURL = remoteOverrideURL
+        self.remoteOverrideIsAuthoritative = remoteOverrideIsAuthoritative
+        self.sentAt = sentAt
     }
 
     public func encoded() throws -> Data { try JSONEncoder.iso.encode(self) }
@@ -56,7 +62,11 @@ public struct SyncPayload: Codable, Sendable, Equatable {
             }
             if let config { await store.mergeConfig(config) }
             if let material { await store.setMaterial(material) }
-            if let remoteOverrideURL { await store.setRemoteOverrideURL(URL(string: remoteOverrideURL)) }
+            if remoteOverrideIsAuthoritative == true {
+                await store.setRemoteOverrideURL(remoteOverrideURL.flatMap(URL.init(string:)))
+            } else if let remoteOverrideURL {
+                await store.setRemoteOverrideURL(URL(string: remoteOverrideURL))
+            }
         }
     }
 }

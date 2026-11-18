@@ -26,7 +26,8 @@ final class PhoneSync: NSObject, ObservableObject, SyncChannel {
         if accounts.isEmpty { return SyncPayload(command: .logout) }
         return SyncPayload(command: .update, credentials: await store.credentials, accounts: accounts,
                            config: await store.config, material: await store.material,
-                           remoteOverrideURL: await store.remoteOverrideURL?.absoluteString)
+                           remoteOverrideURL: await store.remoteOverrideURL?.absoluteString,
+                           remoteOverrideIsAuthoritative: true)
     }
 
     func syncNow() {

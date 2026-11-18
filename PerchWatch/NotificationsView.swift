@@ -114,7 +114,7 @@ struct NotificationRow: View {
 
             if let t = notification.tweet {
                 // Tapping the notification (text or snippet) opens the post page.
-                NavigationLink(value: Route.post(t)) {
+                NavigationLink(value: Route.post(IdentifiedRoute(t))) {
                     VStack(alignment: .leading, spacing: 4) {
                         textLabel
                         tweetSnippet(t)
@@ -140,7 +140,7 @@ struct NotificationRow: View {
                 // Digest notifications ("new post notifications from @user") have
                 // no tweet: open that account's posts as a feed instead.
                 if let user = notification.users.first {
-                    NavigationLink(value: Route.userFeed(user)) {
+                    NavigationLink(value: Route.userFeed(IdentifiedRoute(user))) {
                         textLabel
                             .contentShape(Rectangle())
                     }

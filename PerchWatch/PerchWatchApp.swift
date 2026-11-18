@@ -232,14 +232,14 @@ struct RouteView: View {
 
     var body: some View {
         switch route {
-        case .post(let t):
-            PostDetailView(tweet: t)
+        case .post(let route):
+            PostDetailView(tweet: route.value)
         case .user(let screenName):
             ProfileScreen(target: ProfileTarget(screenName: screenName))
         case .userId(let id):
             ProfileScreen(target: ProfileTarget(userId: id))
-        case .userFeed(let user):
-            UserFeedView(user: user)
+        case .userFeed(let route):
+            UserFeedView(user: route.value)
         case .profileMe:
             if let id = app.activeAccount?.user?.id ?? app.viewer?.id {
                 ProfileScreen(target: ProfileTarget(userId: id))

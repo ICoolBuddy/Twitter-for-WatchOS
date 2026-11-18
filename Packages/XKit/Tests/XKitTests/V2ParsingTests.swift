@@ -241,3 +241,112 @@ final class V2ParsingTests: XCTestCase {
         XCTAssertEqual(page.replies.flatMap(\.tweets).map(\.id), ["201", "202"])
     }
 }
+
+// MARK: - Review fixes (parse agent: PARSE-1/2/3, PP-1/2/3/4/8)
+
+extension V2ParsingTests {
+    /// A cursor inside a conversation module is only a fallback page cursor (PP-4).
+    func testModuleCursorIsOnlyAFallbackPageCursor() throws {
+        let moduleWithCursor = """
+        {"entryId":"conversationthread-102","content":{"entryType":"TimelineTimelineModule","items":[
+          {"item":{"itemContent":{"itemType":"TimelineTweet","tweet_results":{"result":\(tweet("102", replyTo: "100"))}}}},
+          {"item":{"itemContent":{"itemType":"TimelineTimelineCursor","cursorType":"ShowMoreThreads","value":"MODULE"}}}]}}
+        """
+        let onlyModule = XParser.thread(try threadJSON([entry("tweet-100", tweet("100")), moduleWithCursor]),
+                                        focalId: "100")
+        XCTAssertEqual(onlyModule.bottomCursor, "MODULE")
+        let withPage = XParser.thread(try threadJSON([entry("tweet-100", tweet("100")), moduleWithCursor,
+                                                      cursor("Bottom", "PAGE")]), focalId: "100")
+        XCTAssertEqual(withPage.bottomCursor, "PAGE")
+    }
+
+    /// Several unavailable posts keep one row each (PARSE-3).
+    func testTombstonesKeepOneRowEach() throws {
+        let tomb = #"{"__typename":"TweetTombstone","tombstone":{"text":{"text":"This post is unavailable."}}}"#
+        let page = XParser.timeline(try threadJSON([entry("tweet-1", tomb), entry("tweet-2", tomb)]))
+        XCTAssertEqual(page.items.count, 2)
+        XCTAssertNotEqual(page.items[0].id, page.items[1].id)
+    }
+
+    /// A response with no instructions is a schema break, not an empty timeline (PP-1).
+    func testTimelineWithoutInstructionsIsFlagged() throws {
+        let page = XParser.timeline(try JSON(data: Data(#"{"data":{"home":{}}}"#.utf8)))
+        XCTAssertEqual(page.instructionsFound, false)
+        XCTAssertEqual(XParser.timeline(try threadJSON([])).instructionsFound, true)
+    }
+
+    /// A conversation keeps its identity when X re-sends it with more tweets (PP-2).
+    func testConversationIdentityIsTheChainHead() {
+        let a = XTweet(id: "1", text: "", author: .unknown)
+        let b = XTweet(id: "2", text: "", author: .unknown)
+        let c = XTweet(id: "3", text: "", author: .unknown)
+        XCTAssertEqual(TimelineItem.conversation([a, b]).id, TimelineItem.conversation([a, b, c]).id)
+    }
+
+    /// Long posts: the body and its entities live in `note_tweet` (PARSE-2).
+    func testNoteTweetUsesFullTextAndItsOwnEntities() throws {
+        let json = try JSON(data: Data(#"""
+        {"__typename":"Tweet","rest_id":"300","legacy":null,
+         "core":{"user_results":{"result":{"__typename":"User","rest_id":"1",
+           "core":{"screen_name":"a","name":"A"}}}},
+         "full_text":"The short preview…",
+         "note_tweet":{"note_tweet_results":{"result":{
+           "text":"The whole long post https://t.co/L",
+           "entity_set":{"urls":[{"url":"https://t.co/L","expanded_url":"https://example.com/long"}]}}}}}
+        """#.utf8))
+        let t = try XCTUnwrap(XParser.tweet(json))
+        XCTAssertTrue(t.text.contains("The whole long post"), "note text, not the truncated preview")
+        XCTAssertTrue(t.text.hasSuffix("https://example.com/long"), "note entity_set urls are expanded")
+    }
+
+    /// Long reply: the leading reply mention is hidden, as for short replies (PP-3).
+    func testNoteTweetStripsReplyMention() throws {
+        let json = try JSON(data: Data(#"""
+        {"__typename":"Tweet","rest_id":"310","legacy":null,
+         "core":{"user_results":{"result":{"__typename":"User","rest_id":"1",
+           "core":{"screen_name":"a","name":"A"}}}},
+         "in_reply_to_screen_name":"bob","in_reply_to_status_id_str":"100",
+         "full_text":"@bob The short preview…",
+         "note_tweet":{"note_tweet_results":{"result":{
+           "text":"@bob The whole long reply",
+           "entity_set":{"user_mentions":[{"screen_name":"bob","id_str":"2","indices":[0,4]}]}}}}}
+        """#.utf8))
+        XCTAssertEqual(try XCTUnwrap(XParser.tweet(json)).text, "The whole long reply")
+    }
+
+    /// A long post that starts with a mention but is not a reply to them keeps it (PP-3).
+    func testNoteTweetKeepsMentionWhenNotAReply() throws {
+        let json = try JSON(data: Data(#"""
+        {"__typename":"Tweet","rest_id":"311","legacy":null,
+         "core":{"user_results":{"result":{"__typename":"User","rest_id":"1",
+           "core":{"screen_name":"a","name":"A"}}}},
+         "full_text":"@bob look at this…",
+         "note_tweet":{"note_tweet_results":{"result":{
+           "text":"@bob look at this thread",
+           "entity_set":{"user_mentions":[{"screen_name":"bob","id_str":"2","indices":[0,4]}]}}}}}
+        """#.utf8))
+        XCTAssertEqual(try XCTUnwrap(XParser.tweet(json)).text, "@bob look at this thread")
+    }
+
+    /// An unknown media kind must not make a cached page undecodable (PP-8).
+    func testUnknownMediaTypeDecodesAsPhoto() throws {
+        let t = try JSONDecoder().decode(XMediaType.self, from: Data(#""future_kind""#.utf8))
+        XCTAssertEqual(t, .photo)
+    }
+
+    /// Clearing the override on the iPhone clears it on the Watch (PARSE-1).
+    func testAuthoritativeNilOverrideClearsIt() async {
+        let store = XSessionStore(keychain: KeychainStore(service: "test-\(UUID().uuidString)"), directory: nil)
+        await SyncPayload(command: .update, remoteOverrideURL: "https://example.com/e.json").apply(to: store)
+        let set = await store.remoteOverrideURL
+        XCTAssertNotNil(set)
+        await SyncPayload(command: .update, remoteOverrideURL: nil, remoteOverrideIsAuthoritative: true).apply(to: store)
+        let cleared = await store.remoteOverrideURL
+        XCTAssertNil(cleared)
+        // An older payload without the flag leaves it alone.
+        await SyncPayload(command: .update, remoteOverrideURL: "https://example.com/e.json").apply(to: store)
+        await SyncPayload(command: .update).apply(to: store)
+        let kept = await store.remoteOverrideURL
+        XCTAssertNotNil(kept)
+    }
+}
