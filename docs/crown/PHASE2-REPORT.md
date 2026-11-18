@@ -80,3 +80,25 @@ recovers after pops even on A; only the feed `ScrollView`s lose the crown.
 
 R works but resets the feed to the top after every pop/swipe (new scroll view identity), so
 plain T has to be measured on the media scenarios before choosing (round 3).
+
+## Round 3 — deciding runs (GitHub Actions, 2 cold launches each)
+
+| Scenario | T (system pager) — run 44311773405 | TM (system pager + viewer as `fullScreenCover`) — runs 44317472654 / 44321791777 / 44324654680 |
+|---|---|---|
+| S2 swipe → Following | ✅ 2/2 | ✅ 2/2 |
+| S5 menu → toolbar → feed | ✅ 2/2 | — |
+| S10 post → Back | ✅ 2/2 | ✅ 2/2 |
+| S12 photo viewer → close | ❌ 0/2 | ✅ 2/2 |
+| S14 video viewer → close | ❌ 0/2 | ✅ 2/2 |
+| S21 GIF viewer → close | — | ✅ 2/2 |
+| S23 Bookmarks → swipe pop | ✅ 2/2 | — |
+
+Result: the system pager fixes swipes, toolbar buttons, pops and the sheet; closing the media
+viewer additionally needs the viewer to be a real presentation (an overlay that disappears is
+not a moment where watchOS re-picks the crown's scroll view). TM is the smallest change that
+passes every measured scenario and keeps the feed's scroll position (TR passes too but resets
+it). Trade-off: a `fullScreenCover` shows watchOS' own close (X) button and the clock in the
+viewer (see the `media` screenshot), which the overlay viewer had hidden.
+
+Still unmeasured (harness): Likes/Notifications pushed from the menu (row taps), media opened
+inside the profile sheet.
