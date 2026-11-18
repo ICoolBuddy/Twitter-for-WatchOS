@@ -1,0 +1,163 @@
+# Codemagic (codemagic.io) — same jobs as .github/workflows/build.yml and crown.yml, for
+# when GitHub Actions minutes run out. Personal accounts get 500 free macOS M2 minutes a
+# month (real minutes, no 10x multiplier). Builds are unsigned: no Apple certificate here.
+#
+#   perch-ipa    unsigned IPA (iOS app + embedded Watch app), ~3-5 min. Runs on push to
+#                `redesign` and the Claude session branch, or start it by hand.
+#   perch-crown  Digital Crown routing UI tests in the watchOS simulator. Manual only
+#                (~15-20 min). Edit CROWN_VARIANT / CROWN_ONLY below, or override them
+#                when starting the build.
+
+definitions:
+  scripts:
+    - &show_xcode
+      name: Show Xcode and SDKs
+      script: |
+        xcodebuild -version
+        xcodebuild -showsdks | grep -Ei 'iphoneos|watchos' || true
+    - &install_xcodegen
+      name: Install XcodeGen
+      script: brew install xcodegen
+    - &generate_project
+      name: Generate project
+      script: xcodegen generate
+
+workflows:
+  perch-ipa:
+    name: Perch unsigned IPA
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: latest
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: redesign
+          include: true
+        - pattern: claude/perch-apple-watch-x-client-jl9lf5
+          include: true
+      cancel_previous_builds: true
+    scripts:
+      - *show_xcode
+      - *install_xcodegen
+      - *generate_project
+      - name: XKit unit tests
+        script: |
+          cd Packages/XKit
+          swift test 2>&1 | tail -40
+          exit ${PIPESTATUS[0]}
+      - name: Archive (unsigned)
+        script: |
+          mkdir -p build
+          set +e
+          xcodebuild archive \
+            -project Perch.xcodeproj \
+            -scheme Perch \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Perch.xcarchive \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            > build/xcodebuild.log 2>&1
+          STATUS=$?
+          set -e
+          grep -E ': error:|error: |\*\* ARCHIVE' build/xcodebuild.log | sort -u | head -80 || true
+          if [ $STATUS -ne 0 ]; then tail -60 build/xcodebuild.log; exit $STATUS; fi
+          test -d build/Perch.xcarchive/Products/Applications/Perch.app
+      - name: Package IPA
+        script: |
+          rm -rf build/Payload && mkdir -p build/Payload
+          cp -R build/Perch.xcarchive/Products/Applications/Perch.app build/Payload/
+          (cd build && zip -qry Perch-unsigned.ipa Payload)
+          ls -la build/Perch-unsigned.ipa
+      - name: Verify IPA contents
+        script: |
+          set -e
+          APP=build/Payload/Perch.app
+          WATCH=$APP/Watch/PerchWatch.app
+          [ -d "$WATCH" ] || { echo "Watch app missing at Payload/Perch.app/Watch/PerchWatch.app"; exit 1; }
+          BIN="$WATCH/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$WATCH/Info.plist")"
+          lipo -info "$BIN"
+          lipo -archs "$BIN" | tr ' ' '\n' | grep -qx arm64 || { echo "Watch binary lacks arm64"; exit 1; }
+          IOS_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist")
+          COMPANION=$(/usr/libexec/PlistBuddy -c 'Print :WKCompanionAppBundleIdentifier' "$WATCH/Info.plist")
+          [ "$COMPANION" = "$IOS_ID" ] || { echo "WKCompanionAppBundleIdentifier mismatch"; exit 1; }
+          echo "OK: $IOS_ID with embedded Watch app"
+    artifacts:
+      - build/Perch-unsigned.ipa
+      - build/xcodebuild.log
+
+  perch-crown:
+    name: Perch crown routing tests
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      xcode: latest
+      vars:
+        # Letters from PerchWatch/CrownLab.swift ("A" = shipped code, "T" = system pager).
+        CROWN_VARIANT: "T"
+        # Scenario ids from PerchWatchUITests/CrownRoutingTests.swift ("" = all).
+        CROWN_ONLY: "S2,S5,S7,S8,S10,S12,S14,S16,S20,S21,S23"
+        CROWN_ITERATIONS: "2"
+    scripts:
+      - *show_xcode
+      - *install_xcodegen
+      - *generate_project
+      - name: Pick and boot a watch simulator
+        script: |
+          if ! xcrun simctl list runtimes | grep -qi watchos; then
+            echo "No watchOS runtime installed: downloading it"
+            xcodebuild -downloadPlatform watchOS
+          fi
+          UDID=$(python3 - <<'PY'
+          import json, re, subprocess
+          def j(*a): return json.loads(subprocess.run(["xcrun", "simctl", *a, "-j"], check=True, capture_output=True, text=True).stdout)
+          rts = [r for r in j("list", "runtimes")["runtimes"] if r.get("isAvailable") and "watch" in r["identifier"].lower()]
+          rts.sort(key=lambda r: tuple(int(n) for n in re.findall(r"\d+", r.get("version", "0"))))
+          rt = rts[-1]["identifier"]
+          devs = j("list", "devices", "available")["devices"].get(rt, [])
+          rank = lambda i: 0 if "46mm" in i else 1
+          if devs:
+              devs.sort(key=lambda d: rank(d["deviceTypeIdentifier"]))
+              print(devs[0]["udid"])
+          else:
+              types = [t for t in j("list", "devicetypes")["devicetypes"] if "watch" in t["identifier"].lower()]
+              types.sort(key=lambda t: rank(t["identifier"]))
+              print(subprocess.run(["xcrun", "simctl", "create", "Perch Crown", types[0]["identifier"], rt],
+                                   check=True, capture_output=True, text=True).stdout.strip())
+          PY
+          )
+          echo "Simulator: $UDID"
+          echo "UDID=$UDID" >> $CM_ENV
+          xcrun simctl boot "$UDID" 2>/dev/null || true
+          xcrun simctl bootstatus "$UDID" -b
+      - name: Crown routing UI tests
+        ignore_failure: true
+        script: |
+          mkdir -p build
+          export TEST_RUNNER_CROWN_VARIANT="$CROWN_VARIANT"
+          export TEST_RUNNER_CROWN_ONLY="$CROWN_ONLY"
+          export TEST_RUNNER_CROWN_ITERATIONS="$CROWN_ITERATIONS"
+          set +e
+          xcodebuild test \
+            -project Perch.xcodeproj \
+            -scheme PerchWatchCrown \
+            -configuration Debug \
+            -destination "platform=watchOS Simulator,id=$UDID" \
+            -derivedDataPath build/DerivedData \
+            -skipPackagePluginValidation \
+            -parallel-testing-enabled NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            ARCHS=arm64 \
+            > build/crown.log 2>&1
+          echo "xcodebuild test exit: $?"
+          grep -E ': error:|error: ' build/crown.log | sort -u | head -40 || true
+          grep -E 'CROWNDEBUG' build/crown.log | head -20 || true
+          grep -oE 'CROWN S[0-9A-Za-z]+ [0-9]+/[0-9]+ [A-Z]+.*' build/crown.log > build/crown-lines.txt || true
+          echo "--- CROWN lines ($CROWN_VARIANT) ---"
+          cat build/crown-lines.txt
+          [ -s build/crown-lines.txt ] || { tail -80 build/crown.log; exit 1; }
+    artifacts:
+      - build/crown-lines.txt
+      - build/crown.log
