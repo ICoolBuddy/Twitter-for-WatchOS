@@ -61,5 +61,10 @@ struct LaunchIntroView: View {
     private func finish() {
         guard visible else { return }
         withAnimation(.easeOut(duration: 0.25)) { visible = false }
+        // Every crown request made while this covered the app went nowhere: hand
+        // the crown back to the screen that is now on display.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            CrownFocusMark.shared.mark()
+        }
     }
 }

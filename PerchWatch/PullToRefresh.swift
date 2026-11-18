@@ -29,10 +29,12 @@ struct PullToRefresh: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .overlay(alignment: .top) {
+            // A toast at the bottom: the top belongs to the clock and the title,
+            // and a pill there covered them (and the pull itself).
+            .overlay(alignment: .bottom) {
                 if showsIndicator {
                     RefreshStatus(isRefreshing: isRefreshing, failed: failed)
-                        .padding(.top, 2)
+                        .padding(.bottom, 4)
                         .allowsHitTesting(false)
                 }
             }
@@ -94,10 +96,10 @@ struct RefreshStatus: View {
     var body: some View {
         // A ZStack (not a bare `if`) so the observer below stays alive while the
         // pill is hidden — otherwise it could never notice the refresh ending.
-        ZStack(alignment: .top) {
+        ZStack(alignment: .bottom) {
             if isRefreshing || finished {
                 pill
-                    .transition(.asymmetric(insertion: .move(edge: .top).combined(with: .opacity),
+                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
                                             removal: .opacity))
             }
         }
@@ -118,38 +120,38 @@ struct RefreshStatus: View {
     }
 
     private var pill: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             if isRefreshing {
-                ProgressView()
                 Text("Refreshing")
-                    .font(.system(size: 11, weight: .medium))
                 TimelineView(.periodic(from: .now, by: 0.5)) { _ in
                     let rate = TransferMonitor.shared.snapshot().bytesPerSecond
                     // Sub-kilobyte traffic is mostly headers: say nothing.
                     if rate >= 500 {
                         Text("· " + TransferMonitor.formatRate(rate))
-                            .font(.system(size: 11, weight: .medium).monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.white.opacity(0.55))
                     }
                 }
             } else if lastFailed {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.orange)
                 Text("Couldn't update")
-                    .font(.system(size: 11, weight: .medium))
             } else {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.green)
                 Text("Updated")
-                    .font(.system(size: 11, weight: .medium))
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.white.opacity(0.1)))
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(.white.opacity(0.9))
+        .padding(.horizontal, 9)
+        .padding(.vertical, 3)
+        // The app's own pill look (viewer counter, volume HUD): a flat black
+        // capsule, no material — the system spinner that came with a material
+        // background was a big grey disc on watchOS.
+        .background(Color.black.opacity(0.6), in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.12)))
     }
 }
 

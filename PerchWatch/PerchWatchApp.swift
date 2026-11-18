@@ -125,6 +125,14 @@ struct WatchRootView: View {
         .onChange(of: app.canBrowse) { _, canBrowse in
             if !canBrowse { nav.path = [] }
         }
+        // A push or a pop moves the crown to a different screen. The reveal
+        // animation takes ~0.3 s; until it is done the focus system ignores the
+        // request, so the hand-over is announced once it has finished.
+        .onChange(of: nav.path) { _, _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                CrownFocusMark.shared.mark()
+            }
+        }
     }
 }
 
@@ -237,6 +245,11 @@ struct RootPager: View {
                     dragAxis = nil
                     SwipeGuard.end()
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) { dragX = 0 }
+                    // The pages were scroll-disabled for that drag: the crown is
+                    // free again once the scroll views are back.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        CrownFocusMark.shared.mark()
+                    }
                 }
             }
         }
@@ -272,6 +285,11 @@ struct RootPager: View {
         // The page is the source of truth for the swipe; the stored kind follows
         // it so the menu checkmark, background refresh and account switch agree.
         .onChange(of: page) { _, value in
+            // The page slide is a 0.2–0.28 s animation; ask for the crown once it
+            // has settled, otherwise the request lands while the pages move.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                CrownFocusMark.shared.mark()
+            }
             guard value != 0 else { return }
             lastFeed = value
             let kind = value == 2 ? HomeKind.following : HomeKind.forYou
@@ -325,6 +343,14 @@ struct RootPager: View {
                 withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
                     page = target
                     dragX = 0
+                }
+                // A drag that settled back on the same page changes nothing, so
+                // `onChange(of: page)` says nothing either — but the scroll views
+                // were disabled for it and the crown has to come back.
+                if target == page {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        CrownFocusMark.shared.mark()
+                    }
                 }
             }
     }

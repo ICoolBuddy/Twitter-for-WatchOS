@@ -74,14 +74,17 @@ struct CrownScrollFocus: ViewModifier {
     @Environment(\.screenIsTop) private var screenIsTop
     @FocusState private var focused: Bool
     @ObservedObject private var presenter = MediaPresenter.shared
-    @State private var visible = false
     /// Live values for the asynchronous requests: this is a value type, so a
     /// delayed closure would otherwise read the flags it was created with — the
     /// stale `active` that made an off-screen page steal the crown.
     @State private var claim = CrownClaim()
 
+    /// The one rule. Deliberately *not* keyed on `onAppear`/`onDisappear`: a
+    /// NavigationStack pop does not reliably call them again on the screen it
+    /// uncovers (the feed came back with the crown dead), while `screenIsTop`
+    /// and the pager's `active` are values the navigation state owns.
     private var ownsCrown: Bool {
-        active && screenIsTop && visible
+        active && screenIsTop
             && presenter.target == nil && !presenter.isTransitioning
     }
 
@@ -90,21 +93,18 @@ struct CrownScrollFocus: ViewModifier {
         claim.allowed = ownsCrown
         return content
             .focused($focused)
-            .onAppear {
-                visible = true
-                apply()
-            }
-            .onDisappear {
-                visible = false
-                focused = false
-            }
+            .onAppear { apply() }
+            .onDisappear { focused = false }
             .onChange(of: ownsCrown) { _, _ in apply() }
-            // A sheet just closed over this screen: same ownership, but the
-            // system moved focus to the sheet and did not bring it back.
-            .background { CrownFocusReclaim(enabled: true) { apply() } }
+            // Every presentation (viewer, sheet, account picker) and every
+            // navigation change (page, push, pop) says "the crown is free now".
+            .background { CrownFocusReclaim { apply() } }
     }
 
     private func apply() {
+        // Fresh, not "whatever the last body pass saw": this also runs from
+        // `onAppear`, before the next body evaluation.
+        claim.allowed = ownsCrown
         guard ownsCrown else {
             focused = false
             return
@@ -139,10 +139,9 @@ private final class CrownClaim {
     var allowed = false
 }
 
-/// Takes the crown back after a presentation goes away. Its own view so observing
-/// the signal never re-renders the screen's content.
+/// Takes the crown back after a presentation or a navigation change. Its own view
+/// so observing the signal never re-renders the screen's content.
 private struct CrownFocusReclaim: View {
-    let enabled: Bool
     let action: () -> Void
 
     @ObservedObject private var mark = CrownFocusMark.shared
@@ -151,9 +150,7 @@ private struct CrownFocusReclaim: View {
         Color.clear
             .frame(width: 0, height: 0)
             .accessibilityHidden(true)
-            .onChange(of: mark.generation) { _, _ in
-                if enabled { action() }
-            }
+            .onChange(of: mark.generation) { _, _ in action() }
     }
 }
 
