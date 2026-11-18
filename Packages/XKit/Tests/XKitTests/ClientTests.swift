@@ -331,7 +331,9 @@ extension ClientTests {
         let store = await makeStore()
         let stub = StubTransport([.init(status: 200, body: Data(#"{"data":{}}"#.utf8))])
         let client = LiveXClient(store: store, transport: stub, log: RequestLog(), limiter: RateLimiter(minimumGap: 0))
-        _ = try await client.homeTimeline(.forYou, cursor: "CURSOR")
+        // Only the request shape matters here; the stub's reply has no timeline in it,
+        // which the client (correctly) reports as a schema break.
+        _ = try? await client.homeTimeline(.forYou, cursor: "CURSOR")
         let req = try XCTUnwrap(stub.requests.first)
         let body = try JSON(data: XCTUnwrap(req.httpBody))
         XCTAssertEqual(body["variables"]["cursor"].string, "CURSOR")
