@@ -35,6 +35,9 @@ struct HomeView: View {
     /// False only for a freshly created page (the system pager can drop an
     /// off-screen page and build it again): that one restores `place` on appear.
     @State private var hasAppeared = false
+    /// Black over the list while a restore lands (a frame or two), so a page that
+    /// comes back never shows the top first and then jumps to the reader's place.
+    @State private var coverWhileRestoring = false
 
     /// The top of the list: a zero-height anchor laid out before any row, so a refresh
     /// can scroll up without waiting for the new first post to exist.
@@ -61,6 +64,9 @@ struct HomeView: View {
                 .padding(.horizontal, Metrics.horizontalPadding)
             }
             .background(Color.black)
+            .overlay {
+                if coverWhileRestoring { Color.black.allowsHitTesting(false) }
+            }
             .onScrollGeometryChange(for: CGSize.self) {
                 CGSize(width: $0.contentInsets.top, height: $0.containerSize.height)
             } action: { _, g in
@@ -111,7 +117,6 @@ struct HomeView: View {
             .onChange(of: isActive, initial: true) { _, active in
                 visibility.isActive = active
                 // Leaving this feed (page swipe, menu, pushed screen): keep the place.
-                if !active { place.save() }
                 // Arriving on this feed: warm what it is about to show.
                 if active, !list.isEmpty { ImageLoader.shared.prefetchFeed(list.items.displayTweets) }
             }
@@ -192,8 +197,10 @@ struct HomeView: View {
                 // impressions come from real row frames. (onScrollTargetVisibilityChange
                 // reported rows ~1000 pt above the viewport here: measured 2026-11-18.)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .scrollView) } action: { frame in
+                    // A page created a moment ago starts at the top: its rows must not
+                    // overwrite the place before `restore` has run (`hasAppeared`).
                     place.rowMoved(item, frame: frame, isFirst: item.id == list.items.first?.id,
-                                   active: visibility.isActive)
+                                   active: visibility.isActive && hasAppeared)
                 }
             }
             PagingFooter(list: list)
@@ -207,7 +214,9 @@ struct HomeView: View {
     /// (the new list has not measured the rows above it, so one scroll is not exact).
     private func restore(_ proxy: ScrollViewProxy) {
         guard let id = place.savedTopID, list.items.contains(where: { $0.id == id }) else { return }
-        place.beginRestore { id, anchor in proxy.scrollTo(id, anchor: anchor) }
+        coverWhileRestoring = true
+        place.beginRestore({ id, anchor in proxy.scrollTo(id, anchor: anchor) },
+                           done: { coverWhileRestoring = false })
     }
 
     #if DEBUG
@@ -310,6 +319,9 @@ final class FeedPlace {
     let seen = FeedSeen()
 
     /// One row's frame in the scroll view's visible coordinates changed.
+    /// Called when a restore finished (or gave up).
+    private var restoreDone: (() -> Void)?
+
     func rowMoved(_ item: TimelineItem, frame: CGRect, isFirst: Bool, active: Bool) {
         let top = topInset
         if let r = restoring, r.id == item.id {
@@ -326,28 +338,37 @@ final class FeedPlace {
             liveDepth = top - frame.minY
         } else if isFirst, frame.minY > top + 0.5 {
             liveTopID = nil          // the top of the feed (label/anchor) is showing
+            liveDepth = 0
         }
-    }
-
-    /// The reader leaves the feed: remember the row on top and how far into it.
-    func save() {
-        guard restoring == nil else { return }
+        // Saved continuously, not when the feed is left: the system pager can drop
+        // the page in the same update that makes it inactive, so a "save on leave"
+        // never ran (device: back at the top, later at a long-gone post).
         savedTopID = liveTopID
         savedDepth = liveDepth
     }
 
+    private func finishRestore() {
+        restoring = nil
+        let done = restoreDone
+        restoreDone = nil
+        done?()
+    }
+
     /// Starts an exact restore: the saved row is scrolled to anchor 0 (its top at
     /// the viewport top), then `correct` measures and re-aims.
-    func beginRestore(_ scroll: @escaping (String, UnitPoint) -> Void) {
-        guard let id = savedTopID else { return }
+    func beginRestore(_ scroll: @escaping (String, UnitPoint) -> Void, done: @escaping () -> Void) {
+        guard let id = savedTopID else { done(); return }
         scrollToRow = scroll
+        restoreDone?()
+        restoreDone = done
         restoring = (id, 0, 0, nil, 0, nil)
         liveTopID = id
         liveDepth = savedDepth
         DispatchQueue.main.async { scroll(id, UnitPoint(x: 0.5, y: 0)) }
-        // Belt: a row that never reports a frame must not freeze place tracking.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            if self?.restoring?.id == id { self?.restoring = nil }
+        // Belt: a row that never reports a frame must not freeze place tracking
+        // (or leave the list covered).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            if self?.restoring?.id == id { self?.finishRestore() }
         }
     }
 
@@ -363,8 +384,8 @@ final class FeedPlace {
         let desired = topInset - savedDepth
         let error = rowTop - desired
         if abs(error) <= 1.5 || r.tries >= 4 {
-            restoring = nil
             liveDepth = topInset - rowTop
+            finishRestore()
             return
         }
         let next: CGFloat
