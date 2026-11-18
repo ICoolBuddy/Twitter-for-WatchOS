@@ -66,7 +66,20 @@ struct HomeView: View {
                 // overwrite where the reader was.
                 guard visibility.isActive else { return }
                 let visible = Set(ids)
-                if let top = list.items.first(where: { visible.contains($0.id) })?.id {
+                let top = list.items.first(where: { visible.contains($0.id) })?.id
+                // A restore in flight: a LazyVStack scrolled to a row it has not
+                // measured yet lands short (measured: y 1989 -> 760), so aim again
+                // each time it reports where it really is, a few times at most.
+                if let target = place.restoringID {
+                    if top == target || place.restoreTries >= 4 {
+                        place.restoringID = nil
+                    } else {
+                        place.restoreTries += 1
+                        DispatchQueue.main.async { proxy.scrollTo(target, anchor: .top) }
+                        return
+                    }
+                }
+                if let top {
                     place.liveTopID = top
                 } else if visible.contains(Self.topAnchor) {
                     place.liveTopID = nil
@@ -166,6 +179,8 @@ struct HomeView: View {
     private func restore(_ proxy: ScrollViewProxy) {
         guard let id = place.savedTopID, list.items.contains(where: { $0.id == id }) else { return }
         place.liveTopID = id
+        place.restoringID = id
+        place.restoreTries = 0
         DispatchQueue.main.async { proxy.scrollTo(id, anchor: .top) }
     }
 
@@ -238,6 +253,9 @@ final class FeedPlace {
     /// `liveTopID` at the moment the reader left the feed: what a rebuilt scroll
     /// view returns to.
     var savedTopID: String?
+    /// A restore that has not landed on its post yet, and how often it re-aimed.
+    var restoringID: String?
+    var restoreTries = 0
     /// The account/login the shared list was configured for (`HomeView.taskKey`).
     var configuredFor: String?
     /// The account changed since the feed was first configured: the next refresh

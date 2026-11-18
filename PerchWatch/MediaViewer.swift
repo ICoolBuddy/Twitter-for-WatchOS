@@ -74,7 +74,10 @@ struct MediaViewer: View {
             #endif
         }
         .background(Color.black)
-        .simultaneousGesture(dismissDrag)
+        // EXPERIMENT (photo swipe-down, 2026-11-18): variant H makes the close drag
+        // high-priority. `.subviews` = this gesture off, the children's still on.
+        .simultaneousGesture(dismissDrag, including: MediaLab.has("H") ? .subviews : .all)
+        .highPriorityGesture(dismissDrag, including: MediaLab.has("H") ? .all : .subviews)
         .modifier(CoverChrome(hidden: inCover))
         .accessibilityAction(named: "Close") { close() }
         .onChange(of: selection, initial: true) { _, index in
@@ -263,14 +266,14 @@ private struct MediaPhotoPage: View {
                 .scaleEffect(zoom)
                 .offset(clamped(offset, in: geo.size))
                 .gesture(panGesture(in: geo.size), including: zoom > 1 ? GestureMask.all : GestureMask())
-                .onTapGesture { toggleZoom() }
+                .onTapGesture { if !MediaLab.has("T") { toggleZoom() } }
                 .onAppear { container = geo.size }
                 .onChange(of: geo.size) { _, size in container = size }
         }
         // Only the page on screen may take the crown, and never once the viewer
         // has started closing: an off-screen page must not swallow it, and the
         // crown has to be free again while the viewer fades out.
-        .focusable(isActive && !closing)
+        .focusable(isActive && !closing && !MediaLab.has("N"))
         .focused($crownFocused)
         .onChange(of: isActive) { _, active in
             if active {
@@ -490,6 +493,19 @@ private struct CoverChrome: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// EXPERIMENT switches for the photo swipe-down measurement (crown.yml `variants`,
+/// `-crownVariant`). DEBUG reads the launch argument; Release is always "A".
+/// Remove once a winner ships.
+enum MediaLab {
+    static func has(_ letter: Character) -> Bool {
+        #if DEBUG
+        return (UserDefaults.standard.string(forKey: "crownVariant") ?? "A").contains(letter)
+        #else
+        return false
+        #endif
     }
 }
 
