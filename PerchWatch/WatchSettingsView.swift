@@ -19,6 +19,7 @@ struct WatchSettingsView: View {
                     NavigationLink(value: Route.profileMe) {
                         UserRow(user: u)
                     }
+                    .buttonStyle(.swipeSafeRow)
                 } else if app.isLoggedIn {
                     Label("Logged in", systemImage: "checkmark.circle")
                 } else {
@@ -50,6 +51,7 @@ struct WatchSettingsView: View {
             Section("iPhone") {
                 Text(sync.statusText).font(.caption2)
                 Button {
+                    guard !SwipeGuard.isActive else { return }
                     sync.syncNow()
                 } label: {
                     Text("Sync from iPhone").frame(maxWidth: .infinity)
@@ -61,6 +63,7 @@ struct WatchSettingsView: View {
                     .font(.caption2)
                 Text("Key: \(app.materialSummary)").font(.caption2)
                 Button {
+                    guard !SwipeGuard.isActive else { return }
                     run { try await app.refreshEndpoints(scrape: true) }
                 } label: {
                     Text(working ? "Working…" : "Refresh endpoints")
@@ -68,6 +71,7 @@ struct WatchSettingsView: View {
                 }
                 .disabled(working)
                 Button {
+                    guard !SwipeGuard.isActive else { return }
                     run { try await app.refreshMaterial() }
                 } label: {
                     Text("Refresh signing key")
@@ -84,8 +88,10 @@ struct WatchSettingsView: View {
             }
             Section {
                 NavigationLink("Request log", value: Route.debugLog)
+                    .buttonStyle(.swipeSafeRow)
                 if app.isLoggedIn {
                     Button(role: .destructive) {
+                        guard !SwipeGuard.isActive else { return }
                         confirmLogout = true
                     } label: {
                         Text("Log out").frame(maxWidth: .infinity)

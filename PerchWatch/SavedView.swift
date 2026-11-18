@@ -34,7 +34,7 @@ struct SavedView: View {
                     } label: {
                         SavedRow(post: post, downloading: store.saving.contains(post.id))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.swipeSafe)
                     PostSeparator()
                 }
             }
@@ -147,6 +147,7 @@ private struct SavedDetailView: View {
                 }
 
                 Button(role: .destructive) {
+                    guard !SwipeGuard.isActive else { return }
                     SavedStore.shared.remove(post.id)
                     dismiss()
                 } label: {

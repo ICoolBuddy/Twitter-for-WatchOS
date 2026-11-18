@@ -78,7 +78,7 @@ struct SearchView: View {
             query = q
             run()
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.swipeSafe)
         .padding(.bottom, 6)
         .accessibilityLabel(query.isEmpty ? "Search" : "Search: \(query)")
     }
@@ -105,7 +105,7 @@ struct SearchView: View {
                 .padding(.vertical, 4)
                 .background(product == p ? Color.white : Color.white.opacity(0.1), in: Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.swipeSafe)
     }
 
     private func run() {

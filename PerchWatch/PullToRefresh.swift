@@ -7,12 +7,11 @@ import SwiftUI
 /// points per detent, so those small increases are accumulated too — rotating
 /// the crown a lot refreshes as well.
 ///
-/// The visible glow lives in `EdgeGlow` (HomeView); this only reports
-/// progress and triggers the action. No haptics (refreshing must be silent).
+/// This only triggers the action; there is no pull indicator. The edge glow
+/// (`EdgeGlow`, HomeView) shows the fetch itself. No haptics (refreshing must
+/// be silent).
 struct PullToRefresh: ViewModifier {
     let isRefreshing: Bool
-    /// 0…1 — how close the reader is to a refresh (finger pull or crown travel).
-    var progress: Binding<CGFloat>?
     let action: () async -> Void
 
     /// A full finger pull (points of overscroll).
@@ -20,12 +19,8 @@ struct PullToRefresh: ViewModifier {
     /// Total crown rubber-band travel that counts as "rotated a lot".
     static let crownThreshold: CGFloat = 90
 
-    @State private var pull: CGFloat = 0
-    @State private var crown: CGFloat = 0
-    /// Re-armed once the content has settled back near the top, so one pull = one refresh.
-    @State private var armed = true
-    /// Reference box: keeping the previous offset in a class means tracking it
-    /// does not re-render the scroll view on every frame.
+    /// Reference box: all per-frame tracking state lives in a class, so
+    /// following the overscroll never re-renders the scroll view.
     @State private var tracker = OverscrollTracker()
 
     func body(content: Content) -> some View {
@@ -36,64 +31,53 @@ struct PullToRefresh: ViewModifier {
             } action: { _, overscroll in
                 update(overscroll)
             }
-            // Never leave the bar half full: clear it when the refresh starts
-            // (the loading bar takes over) and when it ends.
+            // A refresh that starts (from here or elsewhere) consumes the
+            // gesture: the reader must return to the top before the next one.
             .onChange(of: isRefreshing) { _, refreshing in
-                if pull != 0 { pull = 0 }
                 tracker.last = 0
                 if refreshing {
-                    if crown != 0 { crown = 0 }
-                    if armed { armed = false }
+                    tracker.crown = 0
+                    tracker.armed = false
                 }
-                report()
             }
     }
 
     private func update(_ overscroll: CGFloat) {
-        let value = max(0, overscroll)
-        if value != pull { pull = value }
-
+        let t = tracker
         if overscroll > 0 {
             // Each upward nudge at the top adds to the running total, so many
             // small crown rubber-bands can add up to a full pull.
-            let delta = overscroll - tracker.last
-            if delta > 0, crown < Self.crownThreshold {
-                crown = min(Self.crownThreshold, crown + delta)
-            }
-        } else if overscroll < -20, crown != 0 {
+            let delta = overscroll - t.last
+            if delta > 0 { t.crown = min(Self.crownThreshold, t.crown + delta) }
+        } else if overscroll < -20 {
             // Really scrolled away: start counting from zero again.
-            crown = 0
+            t.crown = 0
         }
-        tracker.last = overscroll
+        t.last = overscroll
 
-        if overscroll < 6, !armed { armed = true }
-        let ready = overscroll >= Self.threshold || crown >= Self.crownThreshold
-        let sinceTrigger = Date().timeIntervalSince(tracker.triggered)
-        if armed, !isRefreshing, ready, sinceTrigger > 1 {
-            armed = false
-            tracker.triggered = Date()
-            if crown != 0 { crown = 0 }
+        if overscroll < 6 { t.armed = true }
+        let ready = overscroll >= Self.threshold || t.crown >= Self.crownThreshold
+        if t.armed, !isRefreshing, ready, Date().timeIntervalSince(t.triggered) > 1 {
+            t.armed = false
+            t.triggered = Date()
+            t.crown = 0
             Task { await action() }
         }
-        report()
-    }
-
-    private func report() {
-        guard let progress else { return }
-        let p = min(1, max(pull / Self.threshold, crown / Self.crownThreshold))
-        if abs(progress.wrappedValue - p) > 0.01 { progress.wrappedValue = p }
     }
 }
 
 /// Mutable box so per-frame tracker state does not invalidate SwiftUI views.
 private final class OverscrollTracker {
     var last: CGFloat = 0
+    /// Accumulated crown rubber-band travel at the top.
+    var crown: CGFloat = 0
+    /// Re-armed once the content is back near the top: one pull = one refresh.
+    var armed = true
     var triggered = Date.distantPast
 }
 
 extension View {
-    func pullToRefresh(isRefreshing: Bool, progress: Binding<CGFloat>? = nil,
-                       action: @escaping () async -> Void) -> some View {
-        modifier(PullToRefresh(isRefreshing: isRefreshing, progress: progress, action: action))
+    func pullToRefresh(isRefreshing: Bool, action: @escaping () async -> Void) -> some View {
+        modifier(PullToRefresh(isRefreshing: isRefreshing, action: action))
     }
 }

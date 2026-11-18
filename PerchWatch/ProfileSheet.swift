@@ -193,6 +193,7 @@ struct ProfileContent: View {
     private var followButton: some View {
         if let u = user, !isSelf {
             Button {
+                guard !SwipeGuard.isActive else { return }
                 toggleFollow(u)
             } label: {
                 HStack(spacing: 4) {

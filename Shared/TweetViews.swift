@@ -334,7 +334,7 @@ struct PostActionRow: View {
                         .foregroundStyle(.orange)
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.swipeSafe)
                 .frame(maxWidth: .infinity)
                 .transition(.opacity)
             } else if let replyStatus {
@@ -356,7 +356,7 @@ struct PostActionRow: View {
         }, onSubmit: { text in
             send(text)
         })
-        .buttonStyle(.plain)
+        .buttonStyle(.swipeSafe)
         .frame(maxWidth: .infinity)
         .disabled(sendingReply)
         .accessibilityLabel("Reply")
@@ -366,7 +366,7 @@ struct PostActionRow: View {
         } label: {
             glyph("bubble.left", active: false, color: .secondary, count: tweet.replyCount + sentReplies)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.swipeSafe)
         .frame(maxWidth: .infinity)
         .accessibilityLabel("Reply")
         #endif
@@ -378,7 +378,7 @@ struct PostActionRow: View {
         } label: {
             glyph("arrow.2.squarepath", active: s.retweeted, color: .green, count: s.retweetCount)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.swipeSafe)
         .frame(maxWidth: .infinity)
         .accessibilityLabel(s.retweeted ? "Undo repost" : "Repost")
     }
@@ -389,7 +389,7 @@ struct PostActionRow: View {
         } label: {
             glyph(s.liked ? "heart.fill" : "heart", active: s.liked, color: .pink, count: s.likeCount)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.swipeSafe)
         .frame(maxWidth: .infinity)
         .accessibilityLabel(s.liked ? "Unlike" : "Like")
     }
@@ -400,7 +400,7 @@ struct PostActionRow: View {
         } label: {
             glyph(s.bookmarked ? "bookmark.fill" : "bookmark", active: s.bookmarked, color: .blue, count: nil)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.swipeSafe)
         .frame(maxWidth: .infinity)
         .accessibilityLabel(s.bookmarked ? "Remove bookmark" : "Bookmark")
     }
@@ -509,13 +509,17 @@ struct ErrorStateView: View {
                 #if os(watchOS)
                 Text("Open Perch on your iPhone and log in again.")
                     .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                Button("Sync from iPhone") { app.sync?.syncNow(); message = "Requested…" }
+                Button("Sync from iPhone") {
+                    guard !SwipeGuard.isActive else { return }
+                    app.sync?.syncNow(); message = "Requested…"
+                }
                     .frame(maxWidth: .infinity)
                 #else
                 Text("Log in again from the Account section.").font(.caption).foregroundStyle(.secondary)
                 #endif
             case .refreshEndpoints:
                 Button(working ? "Refreshing…" : "Refresh endpoints") {
+                    guard !SwipeGuard.isActive else { return }
                     Task {
                         working = true
                         defer { working = false }
@@ -536,7 +540,10 @@ struct ErrorStateView: View {
                 EmptyView()
             case .retry:
                 if let retry {
-                    Button("Retry") { Task { await retry() } }
+                    Button("Retry") {
+                        guard !SwipeGuard.isActive else { return }
+                        Task { await retry() }
+                    }
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -580,7 +587,7 @@ struct PagingFooter: View {
                         .font(.system(size: 13, weight: .semibold))
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.swipeSafe)
                 .foregroundStyle(Color.accentColor)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 4)
@@ -600,7 +607,11 @@ struct LoadMoreRow: View {
         if isLoading {
             ProgressView().frame(maxWidth: .infinity)
         } else if !reachedEnd {
-            Button("Load more", action: action).frame(maxWidth: .infinity)
+            Button("Load more") {
+                guard !SwipeGuard.isActive else { return }
+                action()
+            }
+            .frame(maxWidth: .infinity)
         }
     }
 }

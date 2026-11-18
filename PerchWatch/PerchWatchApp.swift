@@ -150,7 +150,7 @@ struct RootPager: View {
         .background(Color.black)
         // One glow for the whole pager (not per page), so a refresh that is
         // still running stays visible after swiping to the other feed or the menu.
-        .overlay { RootGlow(page: page) }
+        .overlay { RootGlow() }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button {

@@ -21,8 +21,6 @@ struct HomeView: View {
     /// After an account switch: show skeletons (not the previous session's
     /// cached posts) until the new account's first page has arrived.
     @State private var awaitingFresh = false
-    /// 0…1: how far a pull/crown turn is towards a refresh (drives the edge glow).
-    @State private var pullProgress: CGFloat = 0
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
 
@@ -34,8 +32,10 @@ struct HomeView: View {
         return list.isLoading || startedFor != taskKey
     }
 
-    private var glowLoading: Bool {
-        (list.isRefreshing || list.isLoading) && !list.isEmpty
+    /// The feed is talking to the network: a refresh (pull, crown, on open,
+    /// after an account switch) or the next page. This alone drives the edge glow.
+    private var fetching: Bool {
+        list.isRefreshing || list.isLoading
     }
 
     private var taskKey: String {
@@ -59,12 +59,13 @@ struct HomeView: View {
             .crownScrollFocus(active: isActive)
             .background(Color.black)
             // Loading look: a soft glow around the screen edge (Pigeon-style),
-            // drawn once by `RootGlow` over the whole pager; this page reports
-            // its pull progress and loading state to `FeedActivity`.
-            .onChange(of: pullProgress) { _, p in FeedActivity.shared.setPull(p, for: kind) }
-            .onChange(of: glowLoading) { _, loading in FeedActivity.shared.setLoading(loading, for: kind) }
-            .onDisappear { FeedActivity.shared.setPull(0, for: kind) }
-            .pullToRefresh(isRefreshing: list.isRefreshing, progress: $pullProgress) {
+            // drawn once by `RootGlow` over the whole pager. It follows network
+            // activity only; pulling or turning the crown merely triggers a
+            // refresh (an overscroll-driven glow stayed lit at the top of the
+            // feed with nothing loading). `initial` so a load already running
+            // when the page appears is reported too.
+            .onChange(of: fetching, initial: true) { _, on in FeedActivity.shared.setLoading(on, for: kind) }
+            .pullToRefresh(isRefreshing: list.isRefreshing) {
                 await refresh(proxy, merge: false)
             }
             .task(id: taskKey) {
@@ -72,7 +73,11 @@ struct HomeView: View {
                 await start(proxy)
             }
             .postPresentation(profile: $profileTarget, media: $mediaTarget)
-            .onDisappear { list.cancel() }
+            .onDisappear {
+                list.cancel()
+                // A cancelled load must not leave the glow pulsing.
+                FeedActivity.shared.setLoading(false, for: kind)
+            }
         }
     }
 
@@ -233,28 +238,21 @@ final class FeedActivity: ObservableObject {
     func markContentReady() {
         if !firstContentReady { firstContentReady = true }
     }
-    @Published private(set) var pull: [HomeKind: CGFloat] = [:]
 
     func setLoading(_ on: Bool, for kind: HomeKind) {
-        if on { loading.insert(kind) } else { loading.remove(kind) }
-    }
-
-    func setPull(_ value: CGFloat, for kind: HomeKind) {
-        if pull[kind] != value { pull[kind] = value }
+        if on, !loading.contains(kind) { loading.insert(kind) }
+        if !on, loading.contains(kind) { loading.remove(kind) }
     }
 }
 
-/// The pager-wide glow. Its own view so per-frame pull updates only redraw it,
-/// not the pager. Loading anywhere (either feed) shows the pulse on every page;
-/// the pull fill follows the feed on screen.
+/// The pager-wide glow. Its own view so loading changes only redraw it, not
+/// the pager. Fetching in either feed shows the pulse on every page, so a
+/// refresh still running after a swipe stays visible.
 struct RootGlow: View {
-    let page: Int
     @ObservedObject private var activity = FeedActivity.shared
 
     var body: some View {
-        let kind: HomeKind? = page == 1 ? .forYou : (page == 2 ? .following : nil)
-        EdgeGlow(progress: kind.flatMap { activity.pull[$0] } ?? 0,
-                 loading: !activity.loading.isEmpty)
+        EdgeGlow(loading: !activity.loading.isEmpty)
     }
 }
 
@@ -270,16 +268,14 @@ enum DisplayShape {
     }
 }
 
-/// Loading look: a thin ring around the screen edge (Pigeon-style). It
-/// brightens as a pull/crown turn fills up and pulses softly while the feed
-/// loads. There is no progress text.
+/// Loading look: a thin ring around the screen edge (Pigeon-style) that pulses
+/// softly while a feed fetches, and is invisible otherwise. No progress text.
 ///
 /// Drawn as one plain stroke (no full-screen blur, which is costly on the
 /// Watch GPU). The loading animation lives in its own subview that is removed
 /// when loading ends, so it stops for good instead of leaking a repeat-forever
 /// animation into the feed's layout.
 struct EdgeGlow: View {
-    var progress: CGFloat = 0
     var loading: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -308,8 +304,7 @@ struct EdgeGlow: View {
                 .truncatingRemainder(dividingBy: Self.period) / Self.period
             return 0.25 + 0.55 * (0.5 - 0.5 * cos(phase * 2 * .pi))
         }
-        guard progress > 0.03 else { return 0 }
-        return 0.25 + 0.6 * Double(min(1, max(0, progress)))
+        return 0
     }
 }
 

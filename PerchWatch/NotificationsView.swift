@@ -96,7 +96,7 @@ struct NotificationRow: View {
                     .accessibilityHidden(true)
                 ForEach(Array(notification.users.prefix(3))) { u in
                     Button { onOpenProfile?(u) } label: { Avatar(user: u, size: 24) }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.swipeSafe)
                         .accessibilityLabel("Open @\(u.screenName) profile")
                 }
                 if notification.users.count > 3 {
@@ -122,7 +122,7 @@ struct NotificationRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.swipeSafe)
 
                 if !t.media.isEmpty, let onMedia {
                     Button {
@@ -132,7 +132,7 @@ struct NotificationRow: View {
                         MediaThumb(media: t.media[0], extraCount: t.media.count - 1, maxHeight: 90)
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.swipeSafe)
                     .frame(maxWidth: .infinity)
                     .accessibilityLabel("Open media")
                 }
@@ -144,7 +144,7 @@ struct NotificationRow: View {
                         textLabel
                             .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.swipeSafe)
                 } else {
                     textLabel
                 }

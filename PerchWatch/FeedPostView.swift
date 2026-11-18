@@ -133,7 +133,7 @@ struct FeedPostView: View {
                     NavigationLink(value: Route.post(q)) {
                         QuotedTweetView(tweet: q)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.swipeSafe)
                 }
                 if showDate, !compact {
                     HStack(spacing: 5) {
@@ -159,18 +159,16 @@ struct FeedPostView: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 8) {
             Button {
-                guard !SwipeGuard.isActive else { return }
                 onOpenProfile?(t.author)
             } label: {
                 Avatar(user: t.author, size: compact ? 28 : Metrics.avatar)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.swipeSafe)
             .accessibilityLabel("Open @\(t.author.screenName) profile")
 
             VStack(alignment: .leading, spacing: 1) {
                 Button {
-                    guard !SwipeGuard.isActive else { return }
-                onOpenProfile?(t.author)
+                    onOpenProfile?(t.author)
                 } label: {
                     HStack(spacing: 3) {
                         Text(t.author.name)
@@ -185,7 +183,7 @@ struct FeedPostView: View {
                         }
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.swipeSafe)
                 .accessibilityLabel("Open \(t.author.name)'s profile")
 
                 HStack(spacing: 3) {
@@ -235,7 +233,7 @@ struct FeedPostView: View {
                 MediaThumb(media: m, extraCount: media.count - 1,
                            localURL: SavedStore.shared.localPhoto(tweetID: t.id, index: 0))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.swipeSafe)
             .frame(maxWidth: .infinity)
             .accessibilityLabel("Open media")
         }
@@ -257,7 +255,7 @@ struct FeedPostView: View {
                 .clipped()
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.swipeSafe)
         .frame(maxWidth: .infinity)
         .accessibilityLabel(m.altText ?? "Image \(index + 1) of \(media.count)")
     }
@@ -310,7 +308,7 @@ struct FeedPostView: View {
             )
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.swipeSafe)
         .frame(maxWidth: .infinity)
         .accessibilityLabel("Show more of this post")
     }
@@ -321,7 +319,7 @@ struct FeedPostView: View {
             NavigationLink(value: Route.post(t)) {
                 textBody
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.swipeSafe)
         } else {
             textBody
         }
@@ -362,14 +360,13 @@ struct TimelineItemRows: View {
             }
         case .user(let u):
             Button {
-                guard !SwipeGuard.isActive else { return }
                 onOpenProfile?(u)
             } label: {
                 UserRow(user: u)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.swipeSafe)
             .padding(.vertical, 6)
         }
     }

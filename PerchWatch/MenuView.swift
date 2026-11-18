@@ -31,6 +31,7 @@ struct MenuView: View {
                 NavigationLink(value: Route.search) {
                     Label("Search", systemImage: "magnifyingglass")
                 }
+                .buttonStyle(.swipeSafeRow)
             }
 
             Section {
@@ -47,18 +48,22 @@ struct MenuView: View {
                         }
                     }
                 }
+                .buttonStyle(.swipeSafeRow)
 
                 NavigationLink(value: Route.likes) {
                     Label("Likes", systemImage: "heart")
                 }
+                .buttonStyle(.swipeSafeRow)
 
                 NavigationLink(value: Route.bookmarks) {
                     Label("Bookmarks", systemImage: "bookmark")
                 }
+                .buttonStyle(.swipeSafeRow)
 
                 NavigationLink(value: Route.saved) {
                     Label("Saved", systemImage: "arrow.down.circle")
                 }
+                .buttonStyle(.swipeSafeRow)
             }
 
             if posts.pendingCount > 0 {
@@ -73,6 +78,7 @@ struct MenuView: View {
                 NavigationLink(value: Route.settings) {
                     Label("Settings", systemImage: "gearshape")
                 }
+                .buttonStyle(.swipeSafeRow)
             }
         }
         .crownScrollFocus(active: isActive)
@@ -100,6 +106,7 @@ struct MenuView: View {
         } onSubmit: { text in
             publish(text)
         }
+        .buttonStyle(.swipeSafeRow)
         .disabled(posting)
         if let failedPost, !posting {
             Button {
@@ -109,6 +116,7 @@ struct MenuView: View {
                     .font(.caption2)
                     .foregroundStyle(.orange)
             }
+            .buttonStyle(.swipeSafeRow)
         }
     }
 
@@ -163,7 +171,7 @@ struct MenuView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.swipeSafe)
             .frame(maxWidth: .infinity)
         } else if let viewer = app.viewer {
             Button {
@@ -182,7 +190,7 @@ struct MenuView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.swipeSafe)
             .frame(maxWidth: .infinity)
         } else {
             Text("No account").foregroundStyle(.secondary)
@@ -237,7 +245,7 @@ struct AccountPicker: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.swipeSafe)
                     .frame(maxWidth: .infinity)
                     .disabled(switching != nil)
                 }

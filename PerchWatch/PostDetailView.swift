@@ -70,7 +70,7 @@ struct PostDetailView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.swipeSafe)
                     .foregroundStyle(Color.accentColor)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
@@ -99,6 +99,7 @@ struct PostDetailView: View {
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button {
+                    guard !SwipeGuard.isActive else { return }
                     saved.toggle(focal)
                 } label: {
                     Image(systemName: saved.isSaved(focal.id) ? "arrow.down.circle.fill" : "arrow.down.circle")
