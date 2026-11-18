@@ -794,12 +794,32 @@ final class CrownRoutingTests: XCTestCase {
             // The video page's own controls overlay the corner, so XCUITest calls the
             // button "not hittable" even while it is visible: tap its coordinates.
             if (close.value as? String) == "visible" {
-                close.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                // Inside a fullScreenCover (crown-lab M) XCUITest can report an infinite
+                // frame: a coordinate tap there throws, so use the element tap instead.
+                let f = close.frame
+                if f.minX.isFinite, f.minY.isFinite, f.width.isFinite, f.width > 0 {
+                    close.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                } else if close.isHittable {
+                    close.tap()
+                } else if let system = systemCoverClose() {
+                    system.tap()
+                }
                 Thread.sleep(forTimeInterval: 0.6)
                 if !close.exists { return true }
             }
         }
         return !close.exists
+    }
+
+    /// The close (X) button watchOS draws on a `fullScreenCover`, if any.
+    private func systemCoverClose() -> XCUIElement? {
+        for label in ["Close", "Dismiss", "Cancel"] {
+            for b in app.buttons.matching(NSPredicate(format: "label == %@", label)).allElementsBoundByIndex
+            where b.exists && b.identifier != "media.close" && b.isHittable {
+                return b
+            }
+        }
+        return nil
     }
 
     // MARK: Crown
