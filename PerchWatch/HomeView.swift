@@ -33,6 +33,8 @@ struct HomeView: View {
     /// False only for a freshly created page (the system pager can drop an
     /// off-screen page and build it again): that one restores `place` on appear.
     @State private var hasAppeared = false
+    /// EXPERIMENT (variant O): restore by content offset instead of by post id.
+    @State private var offsetPosition = ScrollPosition(idType: String.self)
 
     /// The top of the list: a zero-height anchor laid out before any row, so a refresh
     /// can scroll up without waiting for the new first post to exist.
@@ -59,7 +61,22 @@ struct HomeView: View {
                 .padding(.horizontal, Metrics.horizontalPadding)
             }
             .background(Color.black)
+            .modifier(OffsetRestore(position: $offsetPosition, active: MediaLab.has("O")))
+            .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, y in
+                if visibility.isActive, place.restoringY == nil { place.liveY = y }
+            }
             .id(returnToken)
+            #if DEBUG
+            .overlay(alignment: .topTrailing) {
+                Text(verbatim: "place")
+                    .font(.system(size: 1))
+                    .foregroundStyle(.clear)
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+                    .accessibilityIdentifier("place." + (kind == .forYou ? "forYou" : "following"))
+                    .accessibilityValue(placeDebug)
+            }
+            #endif
             .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.3) { ids in
                 // Only while this feed is the one being read: a page leaving the
                 // screen (or a rebuilt one, which starts at the top) must not
@@ -115,7 +132,10 @@ struct HomeView: View {
             .onChange(of: isActive, initial: true) { _, active in
                 visibility.isActive = active
                 // Leaving this feed (page swipe, menu, pushed screen): keep the place.
-                if !active { place.savedTopID = place.liveTopID }
+                if !active {
+                    place.savedTopID = place.liveTopID
+                    place.savedY = place.liveY
+                }
                 // Arriving on this feed: warm what it is about to show.
                 if active, !list.isEmpty { ImageLoader.shared.prefetchFeed(list.items.displayTweets) }
             }
@@ -177,12 +197,28 @@ struct HomeView: View {
     /// Scrolls a new scroll view back to the post that was on top when the reader
     /// left this feed. Nothing to do on the very first appearance (no saved place).
     private func restore(_ proxy: ScrollViewProxy) {
+        if MediaLab.has("O") {
+            guard let y = place.savedY, y > 1 else { return }
+            place.restoringY = y
+            DispatchQueue.main.async {
+                offsetPosition.scrollTo(y: y)
+                DispatchQueue.main.async { place.restoringY = nil }
+            }
+            return
+        }
         guard let id = place.savedTopID, list.items.contains(where: { $0.id == id }) else { return }
         place.liveTopID = id
         place.restoringID = id
         place.restoreTries = 0
         DispatchQueue.main.async { proxy.scrollTo(id, anchor: .top) }
     }
+
+    #if DEBUG
+    /// Restore evidence for the place tests (refreshed on each body pass).
+    private var placeDebug: String {
+        "saved=\(place.savedTopID ?? "-") live=\(place.liveTopID ?? "-") tries=\(place.restoreTries) savedY=\(Int(place.savedY ?? -1)) liveY=\(Int(place.liveY ?? -1))"
+    }
+    #endif
 
     private func configure() {
         let key = taskKey
@@ -253,6 +289,10 @@ final class FeedPlace {
     /// `liveTopID` at the moment the reader left the feed: what a rebuilt scroll
     /// view returns to.
     var savedTopID: String?
+    /// Content offset, for the offset-based restore experiment (variant O).
+    var liveY: CGFloat?
+    var savedY: CGFloat?
+    var restoringY: CGFloat?
     /// A restore that has not landed on its post yet, and how often it re-aimed.
     var restoringID: String?
     var restoreTries = 0
@@ -261,6 +301,16 @@ final class FeedPlace {
     /// The account changed since the feed was first configured: the next refresh
     /// replaces the list instead of merging into it.
     var accountChanged = false
+}
+
+/// EXPERIMENT (variant O): the scroll view gets a `ScrollPosition` only in that variant.
+private struct OffsetRestore: ViewModifier {
+    @Binding var position: ScrollPosition
+    let active: Bool
+
+    func body(content: Content) -> some View {
+        if active { content.scrollPosition($position) } else { content }
+    }
 }
 
 /// Whether a feed page is the one on screen, readable from closures stored earlier.

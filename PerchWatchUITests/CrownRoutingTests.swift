@@ -585,7 +585,9 @@ final class CrownRoutingTests: XCTestCase {
             }
             let kept = abs(after.y - before.y) < 150
             let place = String(format: "y %.0f -> %.0f", before.y, after.y)
-            guard kept else { return .blocked("BUG place lost: \(place)") }
+            let key = feed == "feed.forYou" ? "place.forYou" : "place.following"
+            let evidence = (self.element(key).value as? String) ?? "no place marker"
+            guard kept else { return .blocked("BUG place lost: \(place) [\(evidence)]") }
             return .ready("place kept: \(place)")
         }
     }

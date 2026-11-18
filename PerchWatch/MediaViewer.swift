@@ -273,7 +273,7 @@ private struct MediaPhotoPage: View {
         // Only the page on screen may take the crown, and never once the viewer
         // has started closing: an off-screen page must not swallow it, and the
         // crown has to be free again while the viewer fades out.
-        .focusable(isActive && !closing && !MediaLab.has("N"))
+        .modifier(PhotoFocus(enabled: isActive && !closing))
         .focused($crownFocused)
         .onChange(of: isActive) { _, active in
             if active {
@@ -506,6 +506,24 @@ enum MediaLab {
         #else
         return false
         #endif
+    }
+}
+
+/// EXPERIMENT: how the photo page is focusable (crown zoom) — N none, E `.edit`,
+/// V `.activate`, default plain `.focusable`. Plain focus swallowed swipe-down.
+private struct PhotoFocus: ViewModifier {
+    let enabled: Bool
+
+    func body(content: Content) -> some View {
+        if MediaLab.has("N") {
+            content.focusable(false)
+        } else if MediaLab.has("E") {
+            content.focusable(enabled, interactions: .edit)
+        } else if MediaLab.has("V") {
+            content.focusable(enabled, interactions: .activate)
+        } else {
+            content.focusable(enabled)
+        }
     }
 }
 
