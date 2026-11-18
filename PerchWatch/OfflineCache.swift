@@ -9,6 +9,15 @@ import XKit
 /// first out), because Watch storage is small.
 enum OfflineCache {
     static let maxFiles = 200
+    /// Cached threads and profiles carry per-account state (liked, reposted, bookmarked,
+    /// following), so they are stored per account (`<account>-thread-<id>.json`), like
+    /// the timeline caches. Set from `AppModel.onActiveAccountChange`.
+    nonisolated(unsafe) private static var namespace = "none"
+
+    static func setNamespace(_ accountId: String?) {
+        let next = accountId ?? "none"
+        if next != namespace { namespace = next }
+    }
     private static var directory: URL? {
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         else { return nil }
@@ -20,7 +29,7 @@ enum OfflineCache {
     }
 
     private static func url(_ name: String) -> URL? {
-        directory?.appendingPathComponent(name + ".json")
+        directory?.appendingPathComponent(namespace + "-" + name + ".json")
     }
 
     static func save<T: Encodable>(_ value: T, name: String) {
@@ -56,7 +65,18 @@ enum OfflineCache {
         DiskWriter.trim(dir, prefix: "", keep: maxFiles)
     }
 
-    /// Logout: cached threads/profiles belong to the old session.
+    /// An account was removed: nothing it cached may be read again.
+    static func clear(accountId: String) {
+        guard let dir = directory else { return }
+        let prefix = accountId + "-"
+        DiskWriter.queue.async {
+            let fm = FileManager.default
+            guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return }
+            for f in files where f.lastPathComponent.hasPrefix(prefix) { try? fm.removeItem(at: f) }
+        }
+    }
+
+    /// Logout: cached threads/profiles of every account belong to the old session.
     static func clear() {
         guard let dir = directory else { return }
         DiskWriter.queue.async { try? FileManager.default.removeItem(at: dir) }
@@ -70,6 +90,14 @@ enum OfflineCache {
             let legacy = caches.appendingPathComponent("perch-video", isDirectory: true)
             if FileManager.default.fileExists(atPath: legacy.path) {
                 try? FileManager.default.removeItem(at: legacy)
+            }
+            // Pre-namespace files ("thread-…", "user-…", "handle-…") carry whichever
+            // account's state cached them; they are unreadable now, so drop them.
+            if let dir = directory,
+               let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
+                for f in files where ["thread-", "user-", "handle-"].contains(where: { f.lastPathComponent.hasPrefix($0) }) {
+                    try? FileManager.default.removeItem(at: f)
+                }
             }
         }
     }

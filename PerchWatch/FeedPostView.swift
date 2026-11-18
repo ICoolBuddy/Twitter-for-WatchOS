@@ -48,8 +48,6 @@ struct PostPresentation: ViewModifier {
     @Binding var profile: ProfileTarget?
     @Binding var media: MediaTarget?
 
-    @ObservedObject private var presenter = MediaPresenter.shared
-
     func body(content: Content) -> some View {
         content
             .sheet(item: $profile) { target in
@@ -58,7 +56,7 @@ struct PostPresentation: ViewModifier {
             .onChange(of: media?.id) { _, _ in
                 guard let target = media else { return }
                 media = nil
-                presenter.show(target)
+                MediaPresenter.shared.show(target)
             }
     }
 }
@@ -125,7 +123,8 @@ struct FeedPostView: View {
                         .font(.system(size: lineFont))
                         .foregroundStyle(.secondary)
                 }
-                if !t.text.isEmpty { textBlock }
+                // The long-text estimate scans the string: once per body pass.
+                if !t.text.isEmpty { textBlock(clamped: isClamped) }
                 if !compact, !t.media.isEmpty {
                     mediaBlock
                 }
@@ -278,10 +277,10 @@ struct FeedPostView: View {
     private var isClamped: Bool { clampLongText && isLong && !expanded }
 
     @ViewBuilder
-    private var textBlock: some View {
+    private func textBlock(clamped: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            textView
-            if isClamped {
+            textView(clamped: clamped)
+            if clamped {
                 showMoreButton
             }
         }
@@ -314,23 +313,23 @@ struct FeedPostView: View {
     }
 
     @ViewBuilder
-    private var textView: some View {
+    private func textView(clamped: Bool) -> some View {
         if linkToPost {
             NavigationLink(value: Route.post(IdentifiedRoute(t))) {
-                textBody
+                textBody(clamped: clamped)
             }
             .buttonStyle(.swipeSafe)
         } else {
-            textBody
+            textBody(clamped: clamped)
         }
     }
 
-    private var textBody: some View {
+    private func textBody(clamped: Bool) -> some View {
         Text(t.text)
             .font(bodyFont)
             .foregroundStyle(.primary)
             .multilineTextAlignment(.leading)
-            .lineLimit(isClamped ? 14 : nil)
+            .lineLimit(clamped ? 14 : nil)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())

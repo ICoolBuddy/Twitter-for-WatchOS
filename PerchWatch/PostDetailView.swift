@@ -1,24 +1,26 @@
 import SwiftUI
 import XKit
 
-/// Full post: ancestors, focal post (full text, all media, quote), then replies
-/// that auto-load when scrolling near the bottom. The focal post is not a link
-/// to itself.
+/// Full post: ancestors, focal post (full text, all media, quote), then replies that
+/// auto-load when scrolling near the bottom. The focal post is not a link to itself.
+///
+/// Replies page through the same `PagedList` as every other list (retry, end of list,
+/// generation guard), instead of a hand-written copy of it that had drifted (a failed
+/// reply page had no Retry, and a cached thread got the full error wall).
 struct PostDetailView: View {
     let tweet: XTweet
     @EnvironmentObject private var app: AppModel
 
-    @State private var thread: ThreadPage?
-    @State private var replies: [TimelineItem] = []
-    @State private var cursor: String?
-    @State private var error: XError?
-    @State private var loading = false
+    /// The thread head (focal + ancestors) of the first page; replies live in `list`.
+    @StateObject private var head = ThreadHead()
+    @StateObject private var list = PagedList<TimelineItem>(maxItems: 300, fetch: { _ in ([], nil, nil) })
+    @State private var configured = false
 
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
 
-    private var focal: XTweet { thread?.focal ?? tweet.displayed }
-    private var ancestors: [XTweet] { thread?.ancestors ?? [] }
+    private var focal: XTweet { head.thread?.focal ?? tweet.displayed }
+    private var ancestors: [XTweet] { head.thread?.ancestors ?? [] }
 
     var body: some View {
         ScrollView {
@@ -36,17 +38,19 @@ struct PostDetailView: View {
                              onOpenProfile: { profileTarget = ProfileTarget(user: $0) },
                              onMedia: { mediaTarget = $0 })
 
-                if let error, replies.isEmpty {
-                    ErrorStateView(error: error) { await load() }
+                // Only a first load with nothing to show (no cached thread) is an error
+                // wall; with a cached thread a failure is the footer's "message + Retry".
+                if case .failed(let e) = list.phase, head.thread == nil {
+                    ErrorStateView(error: e) { await list.refresh() }
                         .padding(.vertical, 8)
                 }
 
-                if !replies.isEmpty {
+                if !list.isEmpty {
                     HStack(spacing: 6) {
                         Text("Replies")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.secondary)
-                        if loading { ProgressView() }
+                        if list.isRefreshing { ProgressView() }
                         Spacer(minLength: 0)
                     }
                     .padding(.top, 8)
@@ -55,40 +59,21 @@ struct PostDetailView: View {
 
                 PostSeparator()
 
-                if loading && replies.isEmpty {
+                if list.isEmpty, list.isFetching {
                     ProgressView()
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 20)
                 }
 
-                if replies.isEmpty, cursor != nil, !loading, focal.replyCount > 0 {
-                    Button {
-                        Task { await loadMore() }
-                    } label: {
-                        Text("Load replies")
-                            .font(.system(size: 13, weight: .semibold))
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.swipeSafe)
-                    .foregroundStyle(Color.accentColor)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                }
-
-                ForEach(replies) { item in
+                ForEach(list.items) { item in
                     TimelineItemRows(item: item,
                                      onOpenProfile: { profileTarget = ProfileTarget(user: $0) },
                                      onMedia: { mediaTarget = $0 })
-                        .onAppear { prefetch(item) }
+                        .paginates(list, with: item)
                     PostSeparator()
                 }
 
-                if let error, !replies.isEmpty {
-                    Text(error.localizedDescription)
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                        .padding(.vertical, 4)
-                }
+                PagingFooter(list: list)
             }
             .padding(.horizontal, Metrics.horizontalPadding)
         }
@@ -99,83 +84,56 @@ struct PostDetailView: View {
             ToolbarItem(placement: .confirmationAction) { SaveButton(tweet: focal) }
         }
         .task {
-            if thread == nil {
-                await seedFromCache()
-                await load()
+            guard !configured else { return }
+            configured = true
+            configure()
+            // What was on screen last time this post was opened (offline support).
+            if let cached = await OfflineCache.thread(id: tweet.displayed.id) {
+                if head.thread == nil { head.thread = cached }
+                list.seed(cached.replies)
             }
+            await list.refresh(merge: !list.isEmpty)
         }
         .postPresentation(profile: $profileTarget, media: $mediaTarget)
         .swipeBack()
     }
 
-    /// What was on screen last time this post was opened (offline support).
-    private func seedFromCache() async {
-        guard thread == nil, let cached = await OfflineCache.thread(id: tweet.displayed.id),
-              thread == nil else { return }
-        thread = cached
-        replies = cached.replies
-        cursor = cached.bottomCursor
-        ImageLoader.shared.prefetchFeed(cached.replies.displayTweets)
-    }
-
-    private func saveToCache() {
-        let page = ThreadPage(focal: thread?.focal ?? tweet.displayed,
-                              ancestors: thread?.ancestors ?? [],
-                              replies: replies,
-                              bottomCursor: cursor)
-        OfflineCache.save(page, id: tweet.displayed.id)
-    }
-
-    private func load() async {
-        guard !loading else { return }
-        loading = true
-        error = nil
-        do {
-            let t = try await app.client.tweetDetail(id: tweet.displayed.id, cursor: nil)
-            thread = t
-            replies = t.replies
-            cursor = t.bottomCursor
-            OfflineCache.save(t, id: tweet.displayed.id)
-            ImageLoader.shared.prefetchFeed(replies.displayTweets)
-        } catch is CancellationError {
-        } catch {
-            // With a cached thread on screen this is not an error wall, just
-            // "you are offline".
-            if thread == nil { self.error = XError.from(error) }
+    private func configure() {
+        let client = app.client
+        let id = tweet.displayed.id
+        let replyCount = tweet.displayed.replyCount
+        let head = self.head
+        list.fetch = { cursor in
+            var page = try await client.tweetDetail(id: id, cursor: cursor)
+            if cursor == nil {
+                await MainActor.run { head.thread = page }
+                // X sometimes answers the first page with no replies but a cursor:
+                // follow it once, so "Load replies" is never a manual step.
+                if page.replies.isEmpty, replyCount > 0, let next = page.bottomCursor {
+                    let more = try await client.tweetDetail(id: id, cursor: next)
+                    page.replies = more.replies
+                    page.bottomCursor = more.bottomCursor == next ? nil : more.bottomCursor
+                }
+            }
+            return (page.replies, page.bottomCursor, nil)
         }
-        loading = false
-        // Replies auto-load: if the first page brought none, fetch the next one
-        // (only when X says there are replies and there is a cursor).
-        if replies.isEmpty, cursor != nil, focal.replyCount > 0 {
-            await loadMore()
+        let fallbackFocal = tweet.displayed
+        // `weak`: the list keeps these closures, so a strong capture would leak it.
+        list.onPage = { [weak list = self.list] items in
+            ImageLoader.shared.prefetchFeed(items.displayTweets)
+            // Keep the offline copy current with every page (encoded off the main thread).
+            guard let list, head.thread != nil else { return }
+            OfflineCache.save(ThreadPage(focal: head.thread?.focal ?? fallbackFocal,
+                                         ancestors: head.thread?.ancestors ?? [],
+                                         replies: list.items, bottomCursor: nil), id: id)
         }
     }
+}
 
-    /// Replies auto-load: called from each reply row's `onAppear`.
-    private func prefetch(_ item: TimelineItem) {
-        guard cursor != nil, !loading else { return }
-        guard let idx = replies.firstIndex(where: { $0.id == item.id }) else { return }
-        guard idx >= replies.count - 4 else { return }
-        Task { await loadMore() }
-    }
-
-    private func loadMore() async {
-        guard let c = cursor, !loading else { return }
-        loading = true
-        defer { loading = false }
-        do {
-            let t = try await app.client.tweetDetail(id: tweet.displayed.id, cursor: c)
-            let ids = Set(replies.map(\.id))
-            let fresh = t.replies.filter { !ids.contains($0.id) }
-            replies.append(contentsOf: fresh)
-            cursor = (t.bottomCursor == c || fresh.isEmpty) ? nil : t.bottomCursor
-            saveToCache()
-            ImageLoader.shared.prefetchFeed(t.replies.displayTweets)
-        } catch is CancellationError {
-        } catch {
-            self.error = XError.from(error)
-        }
-    }
+/// The thread head of a post page, set from the first reply page's fetch.
+@MainActor
+final class ThreadHead: ObservableObject {
+    @Published var thread: ThreadPage?
 }
 
 /// Only this button observes the saved store: as an `@ObservedObject` of the whole post

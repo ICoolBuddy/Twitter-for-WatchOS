@@ -302,7 +302,9 @@ final class PostStateStore: ObservableObject {
     }
 
     private func updatePendingCount() {
-        pendingCount = queue.filter(belongsToActive).count
+        // @Published re-renders every observer on any write, equal or not.
+        let n = queue.filter(belongsToActive).count
+        if n != pendingCount { pendingCount = n }
     }
 }
 

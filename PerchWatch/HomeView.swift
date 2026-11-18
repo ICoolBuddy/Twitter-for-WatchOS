@@ -54,13 +54,15 @@ struct HomeView: View {
             .background(Color.black)
             // The edge glow is drawn by `RootGlow` straight from the lists; pulling
             // or turning the crown only triggers the refresh.
-            .pullToRefresh(isRefreshing: list.isRefreshing) {
+            .pullToRefresh(isRefreshing: list.isRefreshing, showsIndicator: false) {
                 await refresh(merge: false)
                 // A refresh the reader asked for brings the new posts into view.
                 proxy.scrollTo(Self.topAnchor, anchor: .top)
             }
             .task(id: taskKey) {
                 configure()
+                // The disk cache is read off the main thread, before the first fetch.
+                list.seed(await TimelineDiskCache.loadAsync(app.homeCacheScope(kind)))
                 await start()
             }
             .postPresentation(profile: $profileTarget, media: $mediaTarget)
@@ -156,7 +158,6 @@ struct HomeView: View {
             ImageLoader.shared.prefetchFeed(items.displayTweets)
         }
         list.skip = { $0.isFiller }
-        list.seed(TimelineDiskCache.load(scope))
     }
 
     /// Show the cached feed immediately; only go to the network when "Refresh when

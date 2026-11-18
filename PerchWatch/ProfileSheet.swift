@@ -304,7 +304,8 @@ struct ProfileContent: View {
             TimelineDiskCache.save(items, scope: .profile(userId: userId))
         }
         list.skip = { $0.isFiller }
-        list.seed(TimelineDiskCache.load(.profile(userId: userId)))
+        // Off the main thread; a seed that lands after the first network page is a no-op.
+        Task { [list] in list.seed(await TimelineDiskCache.loadAsync(.profile(userId: userId))) }
     }
 
     private func toggleFollow(_ u: XUser) {

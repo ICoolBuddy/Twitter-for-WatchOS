@@ -26,6 +26,9 @@ struct PerchWatchApp: App {
             SavedStore.shared.purge()
             ImageLoader.shared.purgeAll()
         }
+        // Cached threads/profiles are per account; a removed account's go with it.
+        AppModel.shared.onActiveAccountChange = { OfflineCache.setNamespace($0) }
+        AppModel.shared.onAccountRemoved = { OfflineCache.clear(accountId: $0) }
         ComplicationPublisher.start()
         #if DEBUG
         // Screenshot harness: install the fixture session in the same main-actor turn

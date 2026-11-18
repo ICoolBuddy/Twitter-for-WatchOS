@@ -108,8 +108,8 @@ Each item has an id (R1…). Mention the ids you completed in your report.
   Reply = `TextFieldLink` styled like the other glyphs: tapping it opens the keyboard immediately;
   on submit call `client.createTweet(text:replyTo:)`; show a small transient "Sent" / "Failed" label
   (no sheet, no cancel button). Delete `ReplyComposer.swift` and its presentation.
-- **R12 Long content**: feed text longer than 280 characters or more than 8 lines is clamped to
-  8 lines with a centred-left "Show more" text button under it that expands **in place** (per-post
+- **R12 Long content**: feed text longer than 500 characters or more than 14 lines (raised in 3f4b2f9)
+  is clamped to 14 lines with a centred "Show more" capsule under it that expands **in place** (per-post
   `@State`). Absurdly tall images (aspectRatio < 0.45) are scaled to fit a max height of
   `WKInterfaceDevice.current().screenBounds.height * 1.3`, centred, aspect preserved (no crop) —
   normal tall phone screenshots (≥ 0.45) stay full width.

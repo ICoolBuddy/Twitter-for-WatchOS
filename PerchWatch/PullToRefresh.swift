@@ -12,6 +12,8 @@ import SwiftUI
 /// be silent).
 struct PullToRefresh: ViewModifier {
     let isRefreshing: Bool
+    /// The home feeds have their own indicators (edge glow, placeholder post).
+    var showsIndicator = true
     let action: () async -> Void
 
     /// A full finger pull (points of overscroll).
@@ -25,6 +27,21 @@ struct PullToRefresh: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            // The refresh itself is the indicator (pushed lists have no edge glow):
+            // derived from `isRefreshing`, not from the pull.
+            .overlay(alignment: .top) {
+                if isRefreshing, showsIndicator {
+                    HStack(spacing: 5) {
+                        ProgressView()
+                        Text("Refreshing…").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+                }
+            }
             .onScrollGeometryChange(for: CGFloat.self) { geo in
                 // Positive while the content is dragged down past its top edge.
                 -(geo.contentOffset.y + geo.contentInsets.top)
@@ -77,7 +94,8 @@ private final class OverscrollTracker {
 }
 
 extension View {
-    func pullToRefresh(isRefreshing: Bool, action: @escaping () async -> Void) -> some View {
-        modifier(PullToRefresh(isRefreshing: isRefreshing, action: action))
+    func pullToRefresh(isRefreshing: Bool, showsIndicator: Bool = true,
+                       action: @escaping () async -> Void) -> some View {
+        modifier(PullToRefresh(isRefreshing: isRefreshing, showsIndicator: showsIndicator, action: action))
     }
 }

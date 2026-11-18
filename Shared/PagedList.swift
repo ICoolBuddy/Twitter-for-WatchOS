@@ -335,6 +335,13 @@ enum TimelineDiskCache {
         return p.items
     }
 
+    /// `load` off the main thread (screens seed from it while they open).
+    static func loadAsync(_ scope: TimelineCacheScope) async -> [TimelineItem] {
+        await withCheckedContinuation { continuation in
+            DiskWriter.queue.async { continuation.resume(returning: load(scope)) }
+        }
+    }
+
     /// Logout: every cached timeline (home timelines of every account, visited profiles).
     static func clearAll() {
         remove { $0.hasPrefix(TimelineCacheScope.homePrefix) || $0.hasPrefix(TimelineCacheScope.profilePrefix) }

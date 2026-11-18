@@ -47,6 +47,10 @@ final class AppModel: ObservableObject {
     weak var sync: SyncChannel?
     /// Platform hook run on logout (the Watch clears its offline caches).
     var onLogout: (() -> Void)?
+    /// The active account changed (or was first read): per-account caches switch.
+    var onActiveAccountChange: ((String?) -> Void)?
+    /// An account was removed: its per-account caches must go.
+    var onAccountRemoved: ((String) -> Void)?
     /// The account `viewer` belongs to (nil = no viewer).
     private var viewerAccountId: String?
     private var viewerTask: Task<Void, Never>?
@@ -111,6 +115,7 @@ final class AppModel: ObservableObject {
         // queues of accounts that no longer exist are dropped.
         posts.setAccount(activeAccountId)
         posts.dropQueues(notIn: Set(newAccounts.map(\.id)))
+        onActiveAccountChange?(activeAccountId)
         let creds = await store.credentials
         let wasLoggedIn = isLoggedIn
         if isLoggedIn != (creds != nil) { isLoggedIn = creds != nil }
@@ -201,6 +206,7 @@ final class AppModel: ObservableObject {
         await store.removeAccount(id)
         TimelineDiskCache.clear(account: id)
         posts.dropQueue(accountId: id)
+        onAccountRemoved?(id)
         if wasActive {
             badge = XBadgeCounts(notifications: 0, dms: 0)
             lastBadgeFetch = .distantPast

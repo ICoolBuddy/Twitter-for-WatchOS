@@ -210,8 +210,15 @@ struct MediaThumb: View {
     }
 
     #if os(watchOS)
-    /// Same URL + decode size the prefetcher warms, so the feed hits the memory cache.
-    private var image: (url: URL, maxPixel: Int) { ImageLoader.feedImage(for: media) }
+    /// Same URL + decode size the prefetcher warms, so the feed hits the memory cache. A
+    /// capped thumbnail (quote, notification: 80–90 pt tall) decodes smaller: the feed
+    /// size of a tall screenshot is up to 1400 px, megabytes of the 24 MB cache. Same URL,
+    /// so the disk cache is still shared.
+    private var image: (url: URL, maxPixel: Int) {
+        let base = ImageLoader.feedImage(for: media)
+        guard let maxHeight else { return base }
+        return (base.url, min(base.maxPixel, max(200, Int(maxHeight * 2.5))))
+    }
     #else
     /// Tall images (screenshots) are shown full width, so their long side needs far more
     /// pixels than a landscape photo: use X's 1200 px "medium" and decode at width / ratio.
@@ -372,14 +379,11 @@ struct PostActionRow: View {
         .disabled(sendingReply)
         .accessibilityLabel("Reply")
         #else
-        // TextFieldLink is watchOS-only. The iPhone app has no reply composer here.
-        Button {
-        } label: {
-            glyph("bubble.left", active: false, color: .secondary, count: tweet.replyCount + sentReplies)
-        }
-        .buttonStyle(.swipeSafe)
-        .frame(maxWidth: .infinity)
-        .accessibilityLabel("Reply")
+        // TextFieldLink is watchOS-only and the iPhone has no reply composer: show the
+        // count, not a button that does nothing.
+        glyph("bubble.left", active: false, color: .secondary, count: tweet.replyCount + sentReplies)
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel("\(tweet.replyCount + sentReplies) replies")
         #endif
     }
 
