@@ -341,6 +341,45 @@ final class FeedPlace {
     var accountChanged = false
 }
 
+/// The posts a reader has seen in one home feed, kept the way x.com's web client
+/// keeps them: `pending` = seen since the last home request (sent as `seenTweetIds`,
+/// then cleared), `known` = every row seen this session, so a refresh never puts one
+/// back on top as new. Main thread only (visibility callbacks and `MainActor.run`).
+final class FeedSeen {
+    private var pending: [String] = []
+    private var pendingSet: Set<String> = []
+    private var known: Set<String> = []
+    /// Bounds: X's own tracker sends what was seen since the last request (a few
+    /// dozen); `known` only has to cover a session of reading.
+    private static let maxPending = 100
+    private static let maxKnown = 3000
+
+    func mark(_ item: TimelineItem) {
+        // Only the first time a row is seen: it was already reported after that.
+        guard known.insert(item.id).inserted else { return }
+        if known.count > Self.maxKnown { known.removeAll(keepingCapacity: true); known.insert(item.id) }
+        for tweet in item.tweets {
+            let id = tweet.displayed.id
+            guard pending.count < Self.maxPending, pendingSet.insert(id).inserted else { continue }
+            pending.append(id)
+        }
+    }
+
+    func wasSeen(_ item: TimelineItem) -> Bool { known.contains(item.id) }
+
+    /// The ids for the next request; cleared, as the web client does after sending.
+    func drain() -> [String] {
+        defer { pending.removeAll(); pendingSet.removeAll() }
+        return pending
+    }
+
+    func reset() {
+        pending.removeAll()
+        pendingSet.removeAll()
+        known.removeAll()
+    }
+}
+
 /// Whether a feed page is the one on screen, readable from closures stored earlier.
 final class PageVisibility {
     var isActive = true
