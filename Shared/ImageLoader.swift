@@ -201,15 +201,6 @@ final class ImageLoader: @unchecked Sendable {
 
     func purge() { cache.removeAllObjects() }
 
-    /// Logout: the cached bytes came from the signed-out account's feed.
-    func purgeAll() {
-        cache.removeAllObjects()
-        guard let dir = diskDir else { return }
-        DiskWriter.queue.async {
-            try? FileManager.default.removeItem(at: dir)
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        }
-    }
 
     private func key(_ url: URL, _ px: Int) -> NSString { "\(px)|\(url.absoluteString)" as NSString }
 

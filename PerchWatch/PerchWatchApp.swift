@@ -19,13 +19,10 @@ struct PerchWatchApp: App {
         // Read the saved index now, not on the first feed row that asks for a local photo
         // (a file read + JSON decode in the middle of a frame).
         _ = SavedStore.shared
-        // Logout signs out both devices: cached threads/profiles, saved posts and the
-        // image cache belonged to that account. (Switching accounts keeps them.)
-        AppModel.shared.onLogout = {
-            OfflineCache.clear()
-            SavedStore.shared.purge()
-            ImageLoader.shared.purgeAll()
-        }
+        // Logout clears the cached threads/profiles (they carry the account's like/follow
+        // state). Saved posts and the image cache stay: the user decided (2026-11-18)
+        // that downloads they made on purpose survive a logout.
+        AppModel.shared.onLogout = { OfflineCache.clear() }
         // Cached threads/profiles are per account; a removed account's go with it.
         AppModel.shared.onActiveAccountChange = { OfflineCache.setNamespace($0) }
         AppModel.shared.onAccountRemoved = { OfflineCache.clear(accountId: $0) }

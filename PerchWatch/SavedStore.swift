@@ -214,16 +214,6 @@ final class SavedStore: ObservableObject {
         update(working)
     }
 
-    /// Logout: the index and every attachment belonged to the signed-out account.
-    func purge() {
-        saving.removeAll()
-        items = []
-        let dir = directory
-        DiskWriter.queue.async {
-            try? FileManager.default.removeItem(at: dir)
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        }
-    }
 
     private func update(_ post: SavedPost) {
         guard let i = items.firstIndex(where: { $0.id == post.id }) else { return }
