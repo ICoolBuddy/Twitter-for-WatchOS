@@ -11,6 +11,11 @@ struct HomeView: View {
     let kind: HomeKind
     /// This page is the one the root pager shows (crown focus follows it).
     var isActive: Bool = true
+    /// Bumped by `RootPager` when this feed is swiped back to. The scroll view gets a
+    /// new identity so it *appears* again — watchOS hands the Digital Crown to a
+    /// scroll view that appears, not to one a page swipe merely brings back (crown
+    /// routing test S3) — and the reader is put back on the post they were reading.
+    var returnToken = 0
 
     @EnvironmentObject private var app: AppModel
     @AppStorage(PerchSettings.autoRefreshOnOpen) private var autoRefreshOnOpen = true
@@ -25,6 +30,8 @@ struct HomeView: View {
     /// `isActive` struct property later: this box carries the live value.
     @State private var visibility = PageVisibility()
     @State private var profileTarget: ProfileTarget?
+    /// The first post on screen, so a rebuilt scroll view can return to it.
+    @State private var topVisibleID: String?
     @State private var mediaTarget: MediaTarget?
 
     /// The top of the list: a zero-height anchor laid out before any row, so a refresh
@@ -48,9 +55,19 @@ struct HomeView: View {
                     timelineLabel
                     content
                 }
+                .scrollTargetLayout()
                 .padding(.horizontal, Metrics.horizontalPadding)
             }
             .background(Color.black)
+            .id(returnToken)
+            .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.3) { ids in
+                topVisibleID = ids.first
+            }
+            .onChange(of: returnToken) { _, _ in
+                // Read before the new scroll view reports its own (top) rows.
+                guard let id = topVisibleID, id != Self.topAnchor else { return }
+                DispatchQueue.main.async { proxy.scrollTo(id, anchor: .top) }
+            }
             // The edge glow is drawn by `RootGlow` straight from the lists; pulling
             // or turning the crown only triggers the refresh.
             .pullToRefresh(isRefreshing: list.isRefreshing, failed: list.error != nil) {

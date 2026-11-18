@@ -207,14 +207,23 @@ struct RootPager: View {
     /// The feed page to return to from the menu (1 = For You, 2 = Following).
     @State private var lastFeed = 1
     @State private var didStart = false
+    /// See `HomeView.returnToken`: bumped when a feed is swiped back to.
+    @State private var forYouReturn = 0
+    @State private var followingReturn = 0
+    /// Feeds already shown once (the first appearance gets the crown by itself).
+    @State private var shownFeeds: Set<Int> = []
+    /// The next page change comes from a button, not a swipe (buttons were fine).
+    @State private var programmaticChange = false
 
     var body: some View {
         TabView(selection: $page) {
             MenuView(onPick: { kind in goFeed(kind) })
                 .tag(0)
-            HomeView(kind: .forYou, isActive: rootActive && page == 1, list: forYou)
+            HomeView(kind: .forYou, isActive: rootActive && page == 1, returnToken: forYouReturn,
+                     list: forYou)
                 .tag(1)
-            HomeView(kind: .following, isActive: rootActive && page == 2, list: following)
+            HomeView(kind: .following, isActive: rootActive && page == 2, returnToken: followingReturn,
+                     list: following)
                 .tag(2)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
@@ -241,11 +250,21 @@ struct RootPager: View {
             didStart = true
             page = kindRaw == HomeKind.following.rawValue ? 2 : 1
             lastFeed = page
+            shownFeeds.insert(page)
         }
         // The page is the source of truth for the swipe; the stored kind follows
         // it so the menu checkmark, background refresh and account switch agree.
         .onChange(of: page) { _, value in
+            let swiped = !programmaticChange
+            programmaticChange = false
             guard value != 0 else { return }
+            if swiped && shownFeeds.contains(value) {
+                // After the swipe has settled.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    if value == 1 { forYouReturn += 1 } else { followingReturn += 1 }
+                }
+            }
+            shownFeeds.insert(value)
             lastFeed = value
             let kind = value == 2 ? HomeKind.following : HomeKind.forYou
             if kindRaw != kind.rawValue { kindRaw = kind.rawValue }
@@ -264,6 +283,8 @@ struct RootPager: View {
     }
 
     private func go(_ target: Int) {
+        guard target != page else { return }
+        programmaticChange = true
         withAnimation(.easeInOut(duration: 0.2)) { page = target }
     }
 }
