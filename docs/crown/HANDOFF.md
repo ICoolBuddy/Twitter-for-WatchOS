@@ -29,3 +29,22 @@ full-screen photo-GIF-video. Installed build on devices: `e7cdf0c` (redesign).
    a real presentation; check whether tapped Buttons keep crown focus). Smallest change passing all scenarios.
 5. Merge into `redesign`, CI green, then on the laptop: `perch-sideload fetch` (check run id vs git log) and
    `perch-sideload wsign`. Signature expires 2026-11-25.
+
+## Update 2026-11-18 ~15:00 UTC (cloud session, branch `claude/perch-apple-watch-x-client-jl9lf5`)
+
+That branch is a fast-forward of `crown-lab` plus the phase-2 work; `crown-lab` and `redesign`
+are untouched.
+
+- Baseline + experiments measured: see `docs/crown/PHASE2-REPORT.md`.
+- **Fix (commit a5ebc66):** `RootPager` is the system `TabView(.page)` pager (horizontal, same
+  pages/look); the root media viewer is a `fullScreenCover` (user decision: system X + clock
+  rather than the overlay look). Experiment switches (`CrownLab.swift`) removed.
+- Final verification runs: Crown matrix (variant A = shipped) on S1–S6, S10–S12, S14, S16,
+  S18, S19, S21–S23, plus `Watch screens` (screenshots) on the branch.
+- Known gaps: Likes/Notifications pushes from the menu are not measured (harness row taps);
+  media opened inside the profile sheet still uses the overlay host (not measured).
+- GitHub Actions: the repo is public, so Actions minutes are free again; `crown.yml` is
+  manual-only, `build.yml` skips docs-only pushes. `codemagic.yaml` exists as a fallback.
+
+Next: user OK → merge into `redesign`, CI green, then on the laptop `perch-sideload fetch`
+(check run id vs git log) and `perch-sideload wsign`. Signature expires 2026-11-25.
