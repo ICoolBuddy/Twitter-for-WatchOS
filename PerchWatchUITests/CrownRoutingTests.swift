@@ -798,7 +798,10 @@ final class CrownRoutingTests: XCTestCase {
                 // frame: a coordinate tap there throws, so use the element tap instead.
                 let f = close.frame
                 if f.minX.isFinite, f.minY.isFinite, f.width.isFinite, f.width > 0 {
-                    close.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                    // An absolute screen point: the element is not resolved again at tap
+                    // time (the video chrome can hide in between, which threw INFINITY).
+                    app.coordinate(withNormalizedOffset: .zero)
+                        .withOffset(CGVector(dx: f.midX, dy: f.midY)).tap()
                 } else if close.isHittable {
                     close.tap()
                 } else if let system = systemCoverClose() {
