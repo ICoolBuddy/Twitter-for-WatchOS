@@ -21,44 +21,27 @@ struct TimelineListView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                if list.isEmpty && list.isLoading {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 30)
-                } else if let e = list.error, list.isEmpty {
-                    ErrorStateView(error: e) { await list.refresh() }
-                        .padding(.vertical, 8)
-                } else if list.isEmpty && !list.isLoading {
-                    Text(emptyText)
-                        .font(.system(size: 15))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 30)
-                }
+                PagedListStatus(list: list, emptyText: emptyText)
 
                 ForEach(list.items) { item in
                     TimelineItemRows(item: item,
                                      onOpenProfile: { profileTarget = ProfileTarget(user: $0) },
                                      onMedia: { mediaTarget = $0 })
-                        .onAppear { list.loadMoreIfNeeded(current: item) }
+                        .paginates(list, with: item)
                     PostSeparator()
                 }
 
-                PagingFooter(isLoading: list.isLoading && !list.isEmpty && !list.isRefreshing,
-                             error: list.isEmpty ? nil : list.error, retry: { list.retryMore() })
+                PagingFooter(list: list)
             }
             .padding(.horizontal, Metrics.horizontalPadding)
         }
-        .crownScrollFocus()
-        .background(Color.black)
+        .pagedListChrome(list, onRefresh: { await list.refresh() },
+                         profile: $profileTarget, media: $mediaTarget)
         .navigationTitle(title)
-        .pullToRefresh(isRefreshing: list.isRefreshing) { await list.refresh() }
         .task(id: taskKey) {
-            await app.loadViewer()
             configure()
             await list.loadIfNeeded()
         }
-        .postPresentation(profile: $profileTarget, media: $mediaTarget)
         .swipeBack()
     }
 
@@ -66,8 +49,10 @@ struct TimelineListView: View {
         kind == .likes ? "No likes yet." : "No bookmarks yet."
     }
 
+    /// Includes the viewer id: Likes needs it, and AppModel loads it on its own, so the
+    /// list reconfigures when it arrives instead of every screen fetching it.
     private var taskKey: String {
-        "\(kind.rawValue)-\(app.isLoggedIn)-\(app.activeAccountId ?? "none")"
+        "\(kind.rawValue)-\(app.isLoggedIn)-\(app.activeAccountId ?? "none")-\(app.viewer?.id ?? "")"
     }
 
     private func configure() {

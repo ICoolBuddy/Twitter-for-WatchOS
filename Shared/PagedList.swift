@@ -7,6 +7,17 @@ import XKit
 final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
     typealias Page = (items: [Item], cursor: String?, top: String?)
 
+    /// What a list screen shows. Derived from the list's own state, so screens no longer
+    /// recombine `isEmpty`/`isLoading`/`isRefreshing`/`error` each in their own way.
+    enum Phase: Equatable {
+        case idle          // nothing attempted yet
+        case loading       // first page in flight, nothing to show
+        case content       // items on screen
+        case paging        // next page in flight (items on screen)
+        case empty         // a page finished, nothing in it
+        case failed(XError)
+    }
+
     /// Start loading the next page when a row this close to the end appears.
     static var prefetchDistance: Int { 8 }
 
@@ -17,11 +28,14 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
     @Published private(set) var reachedEnd = false
     @Published var error: XError?
     @Published private(set) var topCursor: String?
-    /// How many posts the last merge refresh put above the old ones (for a
-    /// "new posts" pill). 0 after a normal refresh.
-    @Published private(set) var lastMergeAdded = 0
     /// When the last refresh succeeded (for an "updated 5m ago" line).
     @Published private(set) var lastUpdated: Date?
+    /// True once a refresh for the current configuration finished (success or error);
+    /// false after `reset()`. A cancelled refresh does not count, so the next
+    /// appearance retries.
+    @Published private(set) var hasLoadedFirstPage = false
+    /// Paging stopped at the memory cap (`maxItems * 2`), not because X has no more.
+    @Published private(set) var stoppedAtCap = false
 
     private var cursor: String?
     private var loadTask: Task<Void, Never>?
@@ -29,6 +43,9 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
     /// Bumped by every refresh and reset so late results from an older account
     /// or timeline kind are thrown away instead of overwriting the new list.
     private var generation = 0
+    /// Which operation the current `error` came from, so Retry repeats *that*.
+    private enum Failed { case refresh, more }
+    private var lastFailure: Failed?
     var fetch: (String?) async throws -> Page
     /// Called with the first page after a successful refresh (for disk caching
     /// and for clearing the notification badge).
@@ -46,11 +63,27 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
 
     var isEmpty: Bool { items.isEmpty }
 
+    /// Any network work for this list (refresh or next page).
+    var isFetching: Bool { isLoading || isRefreshing }
+
+    var phase: Phase {
+        if let error, items.isEmpty { return .failed(error) }
+        if items.isEmpty { return hasLoadedFirstPage ? .empty : (isLoading ? .loading : .idle) }
+        return (isLoading && !isRefreshing) ? .paging : .content
+    }
+
+    /// The end of the list is on screen: X has no more, or paging stopped at the cap.
+    var showsEnd: Bool { reachedEnd && !items.isEmpty && !isLoading && error == nil }
+
+    /// Shows cached rows before the first fetch. The same row filter as for network
+    /// pages applies (any cache writer may have stored filler), and only the first
+    /// screenful is warmed: the disk cache is deeper than the screen, and the network
+    /// pages that follow warm the rest.
     func seed(_ cached: [Item]) {
-        if items.isEmpty {
-            items = cached
-            if !cached.isEmpty { onPage?(cached) }
-        }
+        guard items.isEmpty else { return }
+        let usable = cached.filter { skip?($0) != true }
+        items = usable
+        if !usable.isEmpty { onPage?(Array(usable.prefix(8))) }
     }
 
     /// Clears everything, including the cursor. Used when the account or the
@@ -63,11 +96,13 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
         cursor = nil
         topCursor = nil
         reachedEnd = false
+        stoppedAtCap = false
         error = nil
+        lastFailure = nil
         isLoading = false
         isRefreshing = false
-        lastMergeAdded = 0
         lastUpdated = nil
+        hasLoadedFirstPage = false
     }
 
     func loadIfNeeded() async {
@@ -97,50 +132,77 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
             // already on screen (and used to end the infinite scroll).
             let keepCursor = merge && !items.isEmpty && cursor != nil
             if merge, !items.isEmpty {
-                let known = Set(items.map(\.id))
-                let added = fresh.filter { !known.contains($0.id) }
-                if !added.isEmpty { items.insert(contentsOf: added, at: 0) }
-                lastMergeAdded = added.count
+                items = merged(items, with: fresh)
             } else {
                 items = fresh
-                lastMergeAdded = 0
             }
             if !keepCursor {
                 cursor = page.cursor
                 reachedEnd = page.cursor == nil || page.items.isEmpty
+                stoppedAtCap = false
             }
             topCursor = page.top
             lastUpdated = Date()
+            lastFailure = nil
+            hasLoadedFirstPage = true
             onFirstPage?(fresh, page.top)
             onPage?(fresh)
         } catch is CancellationError {
         } catch {
             let e = XError.from(error)
             if case .network(let m) = e, m == "Cancelled" { return }
-            if gen == generation { self.error = e }
+            guard gen == generation else { return }
+            lastFailure = .refresh
+            self.error = e
+            hasLoadedFirstPage = true
         }
+    }
+
+    /// Same identity = the fresh value replaces the old row in place (fresh data, same
+    /// position); new rows go on top. One `@Published` write.
+    private func merged(_ old: [Item], with fresh: [Item]) -> [Item] {
+        var index: [Item.ID: Int] = [:]
+        index.reserveCapacity(old.count)
+        for (i, item) in old.enumerated() { index[item.id] = i }
+        var result = old
+        var added: [Item] = []
+        for item in fresh {
+            if let i = index[item.id] { result[i] = item } else { added.append(item) }
+        }
+        if !added.isEmpty { result.insert(contentsOf: added, at: 0) }
+        return result
     }
 
     /// Call from a row's `onAppear`; loads the next page when the row is near the end.
     func loadMoreIfNeeded(current item: Item) {
-        guard !isLoading, !reachedEnd, error == nil, cursor != nil else { return }
+        guard !isLoading, !isRefreshing, !reachedEnd, error == nil else { return }
         guard let idx = items.firstIndex(where: { $0.id == item.id }),
               idx >= items.count - Self.prefetchDistance else { return }
+        if cursor == nil {
+            // Rows seeded from the disk have no cursor of their own (e.g. "Refresh when
+            // opening" is off): the first page is how paging starts, instead of a dead end.
+            isLoading = true                       // claimed before the task runs
+            Task { await refresh(merge: !items.isEmpty) }
+            return
+        }
         loadMore()
     }
 
     func loadMore() {
         guard !isLoading, !reachedEnd, let cursor else { return }
         isLoading = true
+        // Sampled when the load is armed, not when the task body starts: a reset in
+        // between must make this page stale.
+        let gen = generation
         loadTask = Task { [weak self] in
             guard let self else { return }
-            await self.loadMore(cursor: cursor)
+            await self.loadMore(cursor: cursor, generation: gen)
         }
     }
 
-    private func loadMore(cursor start: String) async {
-        let gen = generation
+    private func loadMore(cursor start: String, generation gen: Int) async {
         defer { if gen == generation { isLoading = false } }
+        guard gen == generation else { return }
         var next = start
         // A page can be made only of posts we already show (after a merge, or
         // after a disk seed with no cursor of its own) or of filtered filler.
@@ -151,16 +213,25 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
                 let page = try await fetch(next)
                 try Task.checkCancellation()
                 guard gen == generation else { return }
-                let existing = Set(items.map(\.id))
-                let fresh = page.items.filter { skip?($0) != true && !existing.contains($0.id) }
-                items.append(contentsOf: fresh)
+                var index: [Item.ID: Int] = [:]
+                index.reserveCapacity(items.count)
+                for (i, item) in items.enumerated() { index[item.id] = i }
+                var current = items
+                var fresh: [Item] = []
+                for item in page.items where skip?(item) != true {
+                    // A row we already show (e.g. a conversation that grew) is refreshed
+                    // in place instead of being skipped as a duplicate.
+                    if let i = index[item.id] { current[i] = item } else { fresh.append(item) }
+                }
+                current.append(contentsOf: fresh)
+                items = current
                 if !fresh.isEmpty { onPage?(fresh) }
                 self.cursor = page.cursor
                 topCursor = page.top ?? topCursor
                 // Never drop rows above the viewport while paging: removing leading
                 // items moves everything up and reads as the feed jumping. Instead stop
-                // paging at twice the window, which keeps memory bounded.
-                if items.count >= maxItems * 2 { reachedEnd = true; return }
+                // paging at twice the window (memory) and say so at the end of the list.
+                if items.count >= maxItems * 2 { reachedEnd = true; stoppedAtCap = true; return }
                 guard let moved = page.cursor, moved != next, !page.items.isEmpty else {
                     reachedEnd = true
                     return
@@ -174,19 +245,20 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
         } catch {
             let e = XError.from(error)
             if case .network(let m) = e, m == "Cancelled" { return }
-            if gen == generation { self.error = e }
+            guard gen == generation else { return }
+            lastFailure = .more
+            self.error = e
         }
     }
 
-    /// "Tap to retry" after a failed page: clears the error and loads on.
+    /// "Tap to retry": repeats the operation that failed (a failed refresh is refreshed
+    /// again, not answered with an older page).
     func retryMore() {
         error = nil
-        if cursor != nil, !reachedEnd { loadMore() } else { Task { await refresh(merge: !items.isEmpty) } }
+        let retryRefresh = lastFailure == .refresh || cursor == nil || reachedEnd
+        lastFailure = nil
+        if retryRefresh { Task { await refresh(merge: !items.isEmpty) } } else { loadMore() }
     }
-
-    func clearMergeCount() { lastMergeAdded = 0 }
-
-    func update(_ transform: (inout [Item]) -> Void) { transform(&items) }
 
     func cancel() { loadTask?.cancel() }
 
@@ -216,38 +288,69 @@ enum DiskWriter {
     }
 }
 
-/// Last home timeline on disk so the app opens instantly (and offline).
+/// Which cached timeline a file holds. The one place that names cache files, so
+/// clearing (logout, account removal) cannot miss a kind of file.
+enum TimelineCacheScope: Hashable {
+    case home(account: String, kind: HomeKind)
+    case profile(userId: String)
+
+    static let homePrefix = "perch-home-"
+    static let profilePrefix = "perch-profile-"
+
+    var fileName: String {
+        switch self {
+        case .home(let account, let kind): return "\(Self.homePrefix)\(account)-\(kind.rawValue).json"
+        case .profile(let userId): return "\(Self.profilePrefix)\(userId).json"
+        }
+    }
+}
+
+/// Last timelines on disk so the app opens instantly (and offline).
 enum TimelineDiskCache {
-    static func url(_ name: String) -> URL? {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("perch-\(name).json")
+    private static var directory: URL? {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
     }
 
-    static func save(_ items: [TimelineItem], name: String) {
-        guard let url = url(name) else { return }
+    static func url(_ scope: TimelineCacheScope) -> URL? {
+        directory?.appendingPathComponent(scope.fileName)
+    }
+
+    /// Never replaces a cache with an empty page: an empty or unreadable response must
+    /// not destroy the offline feed.
+    static func save(_ items: [TimelineItem], scope: TimelineCacheScope) {
+        guard let url = url(scope), !items.isEmpty else { return }
         let page = TimelinePage(items: Array(items.prefix(40)))
         DiskWriter.queue.async {
             if let d = try? JSONEncoder().encode(page) { try? d.write(to: url, options: .atomic) }
             // Profile timelines are one file per visited user: keep the newest few.
-            if name.hasPrefix("profile-") {
-                DiskWriter.trim(url.deletingLastPathComponent(), prefix: "perch-profile-", keep: 30)
+            if case .profile = scope {
+                DiskWriter.trim(url.deletingLastPathComponent(), prefix: TimelineCacheScope.profilePrefix, keep: 30)
             }
         }
     }
 
-    static func load(name: String) -> [TimelineItem] {
-        guard let url = url(name), let d = try? Data(contentsOf: url),
+    static func load(_ scope: TimelineCacheScope) -> [TimelineItem] {
+        guard let url = url(scope), let d = try? Data(contentsOf: url),
               let p = try? JSONDecoder().decode(TimelinePage.self, from: d) else { return [] }
         return p.items
     }
 
-    /// Removes every cached home timeline (`perch-home-*`), for every account.
-    static func clear() {
-        guard let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first,
-              let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
-        else { return }
-        for f in files where f.lastPathComponent.hasPrefix("perch-home-") {
-            try? FileManager.default.removeItem(at: f)
+    /// Logout: every cached timeline (home timelines of every account, visited profiles).
+    static func clearAll() {
+        remove { $0.hasPrefix(TimelineCacheScope.homePrefix) || $0.hasPrefix(TimelineCacheScope.profilePrefix) }
+    }
+
+    /// An account was removed: its home timelines.
+    static func clear(account: String) {
+        remove { $0.hasPrefix("\(TimelineCacheScope.homePrefix)\(account)-") }
+    }
+
+    private static func remove(where match: @escaping (String) -> Bool) {
+        guard let dir = directory else { return }
+        DiskWriter.queue.async {
+            let fm = FileManager.default
+            guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return }
+            for f in files where match(f.lastPathComponent) { try? fm.removeItem(at: f) }
         }
     }
 }

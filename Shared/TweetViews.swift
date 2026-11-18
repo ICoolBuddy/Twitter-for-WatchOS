@@ -310,7 +310,8 @@ struct CountsRow: View {
 struct PostActionRow: View {
     let tweet: XTweet
 
-    @EnvironmentObject private var app: AppModel
+    // Not AppModel: observing it re-rendered every visible row on unrelated changes
+    // (badge, busy message). The store carries the client.
     @EnvironmentObject private var posts: PostStateStore
 
     @State private var sendingReply = false
@@ -384,7 +385,7 @@ struct PostActionRow: View {
 
     private func repostButton(_ s: PostStateStore.State) -> some View {
         Button {
-            posts.toggleRetweet(tweet, client: app.client)
+            posts.toggleRetweet(tweet)
         } label: {
             glyph("arrow.2.squarepath", active: s.retweeted, color: .green, count: s.retweetCount)
         }
@@ -395,7 +396,7 @@ struct PostActionRow: View {
 
     private func likeButton(_ s: PostStateStore.State) -> some View {
         Button {
-            posts.toggleLike(tweet, client: app.client)
+            posts.toggleLike(tweet)
         } label: {
             glyph(s.liked ? "heart.fill" : "heart", active: s.liked, color: .pink, count: s.likeCount)
         }
@@ -406,7 +407,7 @@ struct PostActionRow: View {
 
     private func bookmarkButton(_ s: PostStateStore.State) -> some View {
         Button {
-            posts.toggleBookmark(tweet, client: app.client)
+            posts.toggleBookmark(tweet)
         } label: {
             glyph(s.bookmarked ? "bookmark.fill" : "bookmark", active: s.bookmarked, color: .blue, count: nil)
         }
@@ -441,7 +442,7 @@ struct PostActionRow: View {
     /// by `TextFieldLink`. The result is a small label under the row for ~2 s.
     private func send(_ text: String) {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty, !sendingReply else { return }
+        guard !body.isEmpty, !sendingReply, let client = posts.client else { return }
         let replyTo = tweet.id
         sendingReply = true
         statusToken += 1
@@ -449,7 +450,7 @@ struct PostActionRow: View {
         replyStatus = "Sending…"
         Task {
             do {
-                _ = try await app.client.createTweet(text: body, replyTo: replyTo)
+                _ = try await client.createTweet(text: body, replyTo: replyTo)
                 Haptics.success()
                 sendingReply = false
                 failedReply = nil
@@ -584,27 +585,28 @@ struct ErrorStateView: View {
     }
 }
 
-/// Bottom of an infinitely scrolling list: a spinner while the next page loads,
-/// and after a failed page the error with a retry button (paging used to stop
-/// silently after one network blip).
-struct PagingFooter: View {
-    let isLoading: Bool
-    let error: XError?
-    let retry: () -> Void
+/// Bottom of an infinitely scrolling list, read from the list's own state: a spinner
+/// while the next page loads, the error with Retry after a failed page (paging used to
+/// stop silently after one network blip), and a visible end once there is nothing more
+/// (X has no older posts, or paging stopped at the memory cap).
+struct PagingFooter<Item: Identifiable & Hashable>: View {
+    @ObservedObject var list: PagedList<Item>
 
     var body: some View {
-        if isLoading {
+        if list.phase == .paging {
             ProgressView()
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
-        } else if let error {
+        } else if let error = list.error, !list.isEmpty {
             VStack(spacing: 4) {
                 Text(error.localizedDescription)
                     .font(.caption2)
                     .foregroundStyle(.orange)
                     .multilineTextAlignment(.center)
                     .lineLimit(3)
-                Button(action: retry) {
+                Button {
+                    list.retryMore()
+                } label: {
                     Label("Retry", systemImage: "arrow.clockwise")
                         .font(.system(size: 13, weight: .semibold))
                         .frame(maxWidth: .infinity)
@@ -616,6 +618,22 @@ struct PagingFooter: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
+        } else if list.showsEnd {
+            VStack(spacing: 2) {
+                Image(systemName: "checkmark.circle")
+                    .font(.system(size: 14))
+                Text("That's everything")
+                    .font(.system(size: 12, weight: .semibold))
+                if list.stoppedAtCap {
+                    Text("Pull down at the top for newer posts.")
+                        .font(.system(size: 11))
+                        .multilineTextAlignment(.center)
+                }
+            }
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .accessibilityElement(children: .combine)
         }
     }
 }

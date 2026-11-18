@@ -77,9 +77,7 @@ struct PhoneRootView: View {
             }
             .task {
                 overrideURL = app.remoteOverrideURL?.absoluteString ?? ""
-                await app.loadViewer()
             }
-            .onChange(of: app.isLoggedIn) { _, _ in Task { await app.loadViewer() } }
         }
     }
 
@@ -136,7 +134,6 @@ struct PhoneRootView: View {
             guard !isActive else { return }
             Task { @MainActor in
                 await app.switchAccount(to: account.id)
-                await app.loadViewer()
                 sync.syncNow()
             }
         } label: {

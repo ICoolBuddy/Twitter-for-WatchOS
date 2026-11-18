@@ -57,9 +57,10 @@ struct PullToRefresh: ViewModifier {
 
         if overscroll < 6 { t.armed = true }
         let ready = overscroll >= Self.threshold || t.crown >= Self.crownThreshold
-        if t.armed, !isRefreshing, ready, Date().timeIntervalSince(t.triggered) > 1 {
+        // `armed` (one pull per gesture) and `isRefreshing` (nothing to trigger while a
+        // refresh runs) are the whole rule.
+        if t.armed, !isRefreshing, ready {
             t.armed = false
-            t.triggered = Date()
             t.crown = 0
             Task { await action() }
         }
@@ -73,7 +74,6 @@ private final class OverscrollTracker {
     var crown: CGFloat = 0
     /// Re-armed once the content is back near the top: one pull = one refresh.
     var armed = true
-    var triggered = Date.distantPast
 }
 
 extension View {

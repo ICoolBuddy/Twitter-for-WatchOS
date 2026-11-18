@@ -15,28 +15,18 @@ struct HomeView: View {
     @EnvironmentObject private var app: AppModel
     @AppStorage(PerchSettings.autoRefreshOnOpen) private var autoRefreshOnOpen = true
 
-    @StateObject private var list = PagedList<TimelineItem>(maxItems: 200, fetch: { _ in ([], nil, nil) })
+    /// Owned by `RootPager`, which also draws the edge glow from it.
+    @ObservedObject var list: PagedList<TimelineItem>
     @State private var configuredFor: String?
-    @State private var startedFor: String?
-    /// After an account switch: show skeletons (not the previous session's
-    /// cached posts) until the new account's first page has arrived.
-    @State private var awaitingFresh = false
+    /// The account changed since this page was first configured: the next refresh
+    /// replaces the list instead of merging into it.
+    @State private var accountChanged = false
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
 
-    /// Skeletons instead of "No posts yet" or stale posts: while the first
-    /// load runs, before it has even started, and after an account switch.
-    private var showsSkeleton: Bool {
-        if awaitingFresh, list.error == nil { return true }
-        guard list.isEmpty, list.error == nil else { return false }
-        return list.isLoading || startedFor != taskKey
-    }
-
-    /// The feed is talking to the network: a refresh (pull, crown, on open,
-    /// after an account switch) or the next page. This alone drives the edge glow.
-    private var fetching: Bool {
-        list.isRefreshing || list.isLoading
-    }
+    /// The top of the list: a zero-height anchor laid out before any row, so a refresh
+    /// can scroll up without waiting for the new first post to exist.
+    private static let topAnchor = "perch-feed-top"
 
     private var taskKey: String {
         "\(kind.rawValue)-\(app.isLoggedIn)-\(app.activeAccountId ?? "none")"
@@ -51,6 +41,7 @@ struct HomeView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    Color.clear.frame(height: 0).id(Self.topAnchor)
                     timelineLabel
                     content
                 }
@@ -58,26 +49,19 @@ struct HomeView: View {
             }
             .crownScrollFocus(active: isActive)
             .background(Color.black)
-            // Loading look: a soft glow around the screen edge (Pigeon-style),
-            // drawn once by `RootGlow` over the whole pager. It follows network
-            // activity only; pulling or turning the crown merely triggers a
-            // refresh (an overscroll-driven glow stayed lit at the top of the
-            // feed with nothing loading). `initial` so a load already running
-            // when the page appears is reported too.
-            .onChange(of: fetching, initial: true) { _, on in FeedActivity.shared.setLoading(on, for: kind) }
+            // The edge glow is drawn by `RootGlow` straight from the lists; pulling
+            // or turning the crown only triggers the refresh.
             .pullToRefresh(isRefreshing: list.isRefreshing) {
-                await refresh(proxy, merge: false)
+                await refresh(merge: false)
+                // A refresh the reader asked for brings the new posts into view.
+                proxy.scrollTo(Self.topAnchor, anchor: .top)
             }
             .task(id: taskKey) {
                 configure()
-                await start(proxy)
+                await start()
             }
             .postPresentation(profile: $profileTarget, media: $mediaTarget)
-            .onDisappear {
-                list.cancel()
-                // A cancelled load must not leave the glow pulsing.
-                FeedActivity.shared.setLoading(false, for: kind)
-            }
+            .onDisappear { list.cancel() }
         }
     }
 
@@ -111,22 +95,16 @@ struct HomeView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let e = list.error, list.isEmpty {
-            ErrorStateView(error: e) { await list.refresh() }
-                .padding(.vertical, 16)
-        } else if showsSkeleton {
-            VStack(spacing: 12) {
-                PostSkeleton(mediaHeight: 130)
-                PostSkeleton(mediaHeight: 110)
-                PostSkeleton(mediaHeight: 150)
-            }
-            .padding(.vertical, 4)
-        } else if list.isEmpty {
-            emptyState
-        } else {
-            // A refresh the reader asked for: a placeholder post at the top
+        // Skeletons until the first page for this account/timeline has loaded; a seeded
+        // cache (the new account's own after a switch, too) shows immediately instead.
+        PagedListStatus(list: list, emptyText: "No posts yet",
+                        emptyHint: "Pull down or turn the crown to refresh.",
+                        loading: .postSkeletons)
+            .padding(.vertical, list.phase == .empty ? 10 : 0)
+        if !list.isEmpty {
+            // A refresh over posts already on screen: a placeholder post at the top
             // shows where the new posts will appear (with the edge glow).
-            if list.isRefreshing && !awaitingFresh {
+            if list.isRefreshing && list.hasLoadedFirstPage {
                 PostSkeleton(mediaHeight: 90)
                     .transition(.opacity)
                 PostSeparator()
@@ -136,101 +114,71 @@ struct HomeView: View {
                     TimelineItemRows(item: item,
                                      onOpenProfile: { profileTarget = ProfileTarget(user: $0) },
                                      onMedia: { mediaTarget = $0 })
-                        .onAppear { list.loadMoreIfNeeded(current: item) }
+                        .paginates(list, with: item)
                     if item.id != list.items.last?.id { PostSeparator() }
                 }
                 .id(item.id)
             }
-            PagingFooter(isLoading: list.isLoading && !list.isRefreshing,
-                         error: list.error, retry: { list.retryMore() })
+            PagingFooter(list: list)
         }
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "bird")
-                .font(.title2)
-                .foregroundStyle(.secondary)
-            Text("No posts yet")
-                .font(.system(size: 15, weight: .semibold))
-            Text("Pull down or turn the crown to refresh.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
     }
 
     private func configure() {
         let key = taskKey
         guard configuredFor != key else { return }
         // Not the first configure of this page: the account (or login) changed.
-        awaitingFresh = configuredFor != nil
+        accountChanged = configuredFor != nil
         configuredFor = key
         list.reset()
 
         let client = app.client
         let k = kind
-        let cacheName = app.timelineCacheName(k)
+        let scope = app.homeCacheScope(k)
         list.fetch = { cursor in
             let p = try await client.homeTimeline(k, cursor: cursor)
             return (p.items, p.bottomCursor, p.topCursor)
         }
         list.onFirstPage = { items, _ in
-            TimelineDiskCache.save(items, name: cacheName)
+            TimelineDiskCache.save(items, scope: scope)
         }
         list.onPage = { items in
             ImageLoader.shared.prefetchFeed(items.displayTweets)
         }
         list.skip = { $0.isFiller }
-        list.seed(TimelineDiskCache.load(name: cacheName))
+        list.seed(TimelineDiskCache.load(scope))
     }
 
-    /// Show the cached feed immediately; only go to the network when
-    /// "Refresh when opening the app" is on, or when there is no cache at all.
-    /// Runs once per account/kind so closing a sheet does not re-fetch.
-    ///
-    /// Marked as started only once the load really finished: `.task` is
-    /// cancelled when the page disappears (swiping to the other feed or the
-    /// menu, opening a post), and a cancelled first load used to leave the feed
-    /// empty until a manual pull.
-    private func start(_ proxy: ScrollViewProxy) async {
-        let key = taskKey
-        guard startedFor != key else { return }
+    /// Show the cached feed immediately; only go to the network when "Refresh when
+    /// opening the app" is on, there is no cache, or the account changed. Runs until
+    /// the list itself says this configuration has loaded (`hasLoadedFirstPage`), so a
+    /// load cancelled by swiping away or opening a post is retried on the next
+    /// appearance, and an account switched back and forth can never skip its fetch.
+    private func start() async {
+        guard !list.hasLoadedFirstPage else { return }
         if !list.isEmpty { FeedActivity.shared.markContentReady() }   // cached posts
-        if list.isEmpty || autoRefreshOnOpen || awaitingFresh {
-            // Merge, so posts that are already on screen are never reordered or
-            // dropped: only new ones appear above them.
-            await refresh(proxy, merge: !awaitingFresh)
+        if list.isEmpty || autoRefreshOnOpen || accountChanged {
+            // Merge, so posts already on screen are never reordered or dropped: only
+            // new ones appear above them. After an account switch, replace.
+            await refresh(merge: !accountChanged)
         }
         if !Task.isCancelled {
-            startedFor = key
-            awaitingFresh = false
+            if list.hasLoadedFirstPage { accountChanged = false }
             FeedActivity.shared.markContentReady()
         }
     }
 
-    private func refresh(_ proxy: ScrollViewProxy, merge: Bool) async {
+    private func refresh(merge: Bool) async {
         await list.refresh(merge: merge)
         // Offline taps (like/repost/bookmark) go out as soon as we are online.
         await app.posts.flush(client: app.client)
-        // A refresh the reader asked for (pull / crown) brings them to the top;
-        // the silent one on open leaves the scroll position alone.
-        guard !merge, !list.items.isEmpty else { return }
-        // The list has to lay out its first row before `scrollTo` can find it.
-        try? await Task.sleep(nanoseconds: 60_000_000)
-        guard !list.items.isEmpty else { return }
-        proxy.scrollTo(list.items[0].id, anchor: .top)
     }
 }
 
-/// What the feeds are doing, for the single glow over the root pager.
+/// Launch gate for the intro animation.
 @MainActor
 final class FeedActivity: ObservableObject {
     static let shared = FeedActivity()
 
-    @Published private(set) var loading: Set<HomeKind> = []
     /// The first feed has something to show (cached or fresh posts, or a
     /// finished load): the launch intro ends then, never later.
     @Published private(set) var firstContentReady = false
@@ -238,21 +186,18 @@ final class FeedActivity: ObservableObject {
     func markContentReady() {
         if !firstContentReady { firstContentReady = true }
     }
-
-    func setLoading(_ on: Bool, for kind: HomeKind) {
-        if on, !loading.contains(kind) { loading.insert(kind) }
-        if !on, loading.contains(kind) { loading.remove(kind) }
-    }
 }
 
-/// The pager-wide glow. Its own view so loading changes only redraw it, not
-/// the pager. Fetching in either feed shows the pulse on every page, so a
-/// refresh still running after a swipe stays visible.
+/// The pager-wide glow, read straight from the two feed lists (the source of truth,
+/// no mirror). It pulses only while a feed *refreshes* (pull, crown, on open, account
+/// switch); loading older posts at the bottom has its own spinner. A refresh still
+/// running after a swipe stays visible on every page.
 struct RootGlow: View {
-    @ObservedObject private var activity = FeedActivity.shared
+    @ObservedObject var forYou: PagedList<TimelineItem>
+    @ObservedObject var following: PagedList<TimelineItem>
 
     var body: some View {
-        EdgeGlow(loading: !activity.loading.isEmpty)
+        EdgeGlow(loading: forYou.isRefreshing || following.isRefreshing)
     }
 }
 

@@ -27,11 +27,17 @@ final class AppModel: ObservableObject {
     @Published private(set) var accounts: [XAccount] = []
     @Published private(set) var activeAccountId: String?
     @Published private(set) var badge = XBadgeCounts(notifications: 0, dms: 0)
+    /// The active account's profile. Only `AppModel` fetches it (`loadViewer`).
     @Published private(set) var viewer: XUser?
+    /// Why the last viewer fetch failed (nil after a success); `.relogin` means the
+    /// session really is dead.
+    @Published private(set) var viewerError: XError?
     @Published private(set) var endpointsUpdatedAt = ""
     @Published private(set) var materialSummary = "none"
     @Published private(set) var remoteOverrideURL: URL?
-    @Published private(set) var lastStateChange = Date()
+    /// X answered 401 for the active credentials. Cleared by the store when new or
+    /// switched credentials arrive; the credentials themselves are never touched.
+    @Published private(set) var sessionExpired = false
     @Published var busyMessage: String?
     /// True once the first `reloadState()` has read the stored session (before
     /// that `isLoggedIn` is false even for a logged-in user).
@@ -40,6 +46,10 @@ final class AppModel: ObservableObject {
     weak var sync: SyncChannel?
     /// Platform hook run on logout (the Watch clears its offline caches).
     var onLogout: (() -> Void)?
+    /// The account `viewer` belongs to (nil = no viewer).
+    private var viewerAccountId: String?
+    private var viewerTask: Task<Void, Never>?
+    private var viewerLoadToken: UUID?
     private var lastBadgeFetch: Date = .distantPast
     /// Never poll X more often than this in the background.
     static let pollInterval: TimeInterval = 15 * 60
@@ -55,9 +65,12 @@ final class AppModel: ObservableObject {
         let provider = TransactionMaterialProvider(store: store)
         materialProvider = provider
         client = Self.makeClient(store: store, provider: provider)
+        posts.attach(client)
         UserDefaults.standard.removeObject(forKey: "demoMode")  // left over from the removed demo mode
         Task { [weak self] in
-            await store.observe { Task { @MainActor in await AppModel.shared.reloadState() } }
+            await store.observe { (event: XSessionEvent) in
+                Task { @MainActor in await AppModel.shared.apply(event) }
+            }
             await self?.reloadState()
         }
     }
@@ -66,28 +79,58 @@ final class AppModel: ObservableObject {
 
     var activeAccount: XAccount? { accounts.first { $0.id == activeAccountId } }
 
+    /// Updates only what a store event can have changed (a signing-key refresh does not
+    /// republish the accounts, and a ct0 rotation emits nothing at all).
+    func apply(_ event: XSessionEvent) async {
+        switch event {
+        case .material:
+            await reloadMaterialSummary()
+        case .sessionExpired:
+            let expired = await store.sessionExpired
+            if sessionExpired != expired { sessionExpired = expired }
+            // Ask the iPhone once for fresh credentials; nothing is wiped here.
+            if expired { sync?.syncNow() }
+        case .accounts, .activeAccount, .config, .remoteOverride:
+            await reloadState()
+        }
+    }
+
+    /// Reads the stored session. Assigns only values that changed, so a burst of store
+    /// events (one sync payload writes several things) does not redraw the whole app
+    /// for each of them.
     func reloadState() async {
         #if DEBUG
         if hasDebugSession { return }
         #endif
-        accounts = await store.accounts
-        activeAccountId = await store.activeAccountId
-        // Offline taps are queued per account: only the active one's replay.
+        let newAccounts = await store.accounts
+        if accounts != newAccounts { accounts = newAccounts }
+        let newActive = await store.activeAccountId
+        if activeAccountId != newActive { activeAccountId = newActive }
+        // Offline taps are queued per account: only the active one's replay, and the
+        // queues of accounts that no longer exist are dropped.
         posts.setAccount(activeAccountId)
+        posts.dropQueues(notIn: Set(newAccounts.map(\.id)))
         let creds = await store.credentials
         let wasLoggedIn = isLoggedIn
-        isLoggedIn = creds != nil
-        endpointsUpdatedAt = await store.config.updatedAt
-        remoteOverrideURL = await store.remoteOverrideURL
-        if let m = await store.material {
-            materialSummary = "\(m.source), \(RelativeTime.short(m.fetchedAt)) ago"
-        } else {
-            materialSummary = "none"
-        }
-        if viewer == nil { viewer = activeAccount?.user }
+        if isLoggedIn != (creds != nil) { isLoggedIn = creds != nil }
+        let updatedAt = await store.config.updatedAt
+        if endpointsUpdatedAt != updatedAt { endpointsUpdatedAt = updatedAt }
+        let override = await store.remoteOverrideURL
+        if remoteOverrideURL != override { remoteOverrideURL = override }
+        let expired = await store.sessionExpired
+        if sessionExpired != expired { sessionExpired = expired }
+        await reloadMaterialSummary()
         if wasLoggedIn != isLoggedIn { rebuildClient() }
-        lastStateChange = Date()
-        stateLoaded = true
+        // The viewer belongs to one account: a synced/removed account change drops it.
+        if viewerAccountId != activeAccountId { setViewer(nil, for: nil) }
+        if viewer == nil, let cached = activeAccount?.user { setViewer(cached, for: activeAccountId) }
+        if viewer == nil, canBrowse { startViewerLoad() }
+        if !stateLoaded { stateLoaded = true }
+    }
+
+    private func reloadMaterialSummary() async {
+        let summary = await store.material.map { "\($0.source), \(RelativeTime.short($0.fetchedAt)) ago" } ?? "none"
+        if materialSummary != summary { materialSummary = summary }
     }
 
     private static func makeClient(store: XSessionStore, provider: TransactionMaterialProvider) -> XClient {
@@ -96,106 +139,103 @@ final class AppModel: ObservableObject {
 
     private func rebuildClient() {
         client = Self.makeClient(store: store, provider: materialProvider)
-        viewer = nil
+        posts.attach(client)
+        setViewer(nil, for: nil)
+    }
+
+    private func setViewer(_ u: XUser?, for accountId: String?) {
+        viewerTask?.cancel()
+        viewerTask = nil
+        if viewer != u { viewer = u }
+        viewerAccountId = u == nil ? nil : accountId
+        if u != nil { viewerError = nil }
     }
 
     // MARK: Account
 
     func login(_ creds: XCredentials) async {
-        let id = await store.upsertAccount(creds, user: nil)
-        await reloadState()
+        _ = await store.upsertAccount(creds, user: nil)
         rebuildClient()
-        // Cache the profile so account pickers show a name and avatar immediately.
-        if let v = try? await client.viewer() {
-            viewer = v
-            await store.updateUser(v, forAccount: id)
-            accounts = await store.accounts
-        }
+        await reloadState()
         sync?.syncNow()
         // Signing material makes some endpoints (search) work; best effort.
         Task { try? await self.refreshMaterial() }
     }
 
     /// Switches the device-local active account. The other device keeps its own.
+    /// Which timeline it opens on is the UI's decision (the Watch menu picks For You).
     func switchAccount(to id: String) async {
-        // A new account always opens on For You (the default timeline).
-        UserDefaults.standard.set(HomeKind.forYou.rawValue, forKey: PerchSettings.homeKind)
         guard id != activeAccountId else { return }
         await store.setActiveAccount(id)
-        viewer = nil
         badge = XBadgeCounts(notifications: 0, dms: 0)
         lastBadgeFetch = .distantPast
         posts.reset()
         rebuildClient()
         await reloadState()
-        await loadViewer()
     }
 
     func removeAccount(_ id: String, propagate: Bool = true) async {
         let wasActive = activeAccountId == id
         await store.removeAccount(id)
-        clearTimelineCaches(accountID: id)
+        TimelineDiskCache.clear(account: id)
         posts.dropQueue(accountId: id)
         if wasActive {
-            viewer = nil
             badge = XBadgeCounts(notifications: 0, dms: 0)
             lastBadgeFetch = .distantPast
             posts.reset()
             rebuildClient()
         }
         await reloadState()
-        await loadViewer()
         if propagate { sync?.syncNow() }
     }
 
     func logout(propagate: Bool = true) async {
         await store.wipe()
-        clearAllTimelineCaches()
+        TimelineDiskCache.clearAll()
         posts.reset()
         posts.clearQueue()
         onLogout?()
         badge = XBadgeCounts(notifications: 0, dms: 0)
-        viewer = nil
+        setViewer(nil, for: nil)
+        viewerError = nil
         await reloadState()
         if propagate { sync?.sendLogout() }
     }
 
-    func loadViewer() async {
-        guard canBrowse else { viewer = nil; return }
-        guard viewer == nil else { return }
-        guard let v = try? await client.viewer() else { return }
-        viewer = v
-        if let id = activeAccountId {
-            await store.updateUser(v, forAccount: id)
-            accounts = await store.accounts
+    /// One viewer fetch at a time, owned here (screens don't ask for it).
+    private func startViewerLoad() {
+        guard viewerTask == nil else { return }
+        let token = UUID()
+        viewerLoadToken = token
+        viewerTask = Task { [weak self] in
+            await self?.loadViewer()
+            // Only clear our own handle: a cancelled load must not clear the next one's.
+            if self?.viewerLoadToken == token { self?.viewerTask = nil }
         }
     }
 
-    /// Disk cache file stem for a timeline of the active account.
-    func timelineCacheName(_ kind: HomeKind) -> String {
-        "home-\(activeAccountId ?? "none")-\(kind.rawValue)"
-    }
-
-    // MARK: Disk cache
-
-    private func clearAllTimelineCaches() {
-        TimelineDiskCache.clear()
-        // TODO(contract): `TimelineDiskCache.clear()` (watch-ui) must clear every
-        // `perch-home-*` file too; AppModel removes them itself for now.
-        clearTimelineFiles(prefix: "perch-home-")
-    }
-
-    private func clearTimelineCaches(accountID: String) {
-        clearTimelineFiles(prefix: "perch-home-\(accountID)-")
-    }
-
-    private func clearTimelineFiles(prefix: String) {
-        guard let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first,
-              let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
-        else { return }
-        for f in files where f.lastPathComponent.hasPrefix(prefix) {
-            try? FileManager.default.removeItem(at: f)
+    /// Fetches the active account's profile and stores it with that account. A response
+    /// that arrives after the account changed is dropped (it would otherwise be saved as
+    /// the new account's profile).
+    private func loadViewer() async {
+        guard canBrowse, viewer == nil, let accountId = activeAccountId else { return }
+        let client = self.client
+        do {
+            let v = try await client.viewer()
+            guard !Task.isCancelled, accountId == activeAccountId else { return }
+            viewer = v
+            viewerAccountId = accountId
+            viewerError = nil
+            await store.updateUser(v, forAccount: accountId)
+        } catch {
+            guard !Task.isCancelled, accountId == activeAccountId else { return }
+            viewerError = XError.from(error)
         }
+    }
+
+    /// Disk cache scope of a home timeline of the active account.
+    func homeCacheScope(_ kind: HomeKind) -> TimelineCacheScope {
+        .home(account: activeAccountId ?? "none", kind: kind)
     }
 
     // MARK: Endpoints & signing
@@ -229,7 +269,7 @@ final class AppModel: ObservableObject {
 
     func refreshMaterial() async throws {
         try await materialProvider.material(force: true)
-        await reloadState()
+        await reloadMaterialSummary()
         sync?.syncNow()
     }
 
@@ -247,15 +287,11 @@ final class AppModel: ObservableObject {
         guard canBrowse else { return }
         guard force || Date().timeIntervalSince(lastBadgeFetch) > Self.pollInterval else { return }
         lastBadgeFetch = Date()
-        if let b = try? await client.badgeCounts() {
-            badge = b
-            BadgeShare.save(b)
-        }
+        if let b = try? await client.badgeCounts(), b != badge { badge = b }
     }
 
     func clearNotificationBadge(topCursor: String?) async {
         badge.notifications = 0
-        BadgeShare.save(badge)
         if let topCursor { try? await client.markNotificationsSeen(topCursor: topCursor) }
     }
 }
@@ -273,21 +309,12 @@ extension AppModel {
         activeAccountId = account.id
         isLoggedIn = true
         self.viewer = viewer
+        viewerAccountId = account.id
         badge = XBadgeCounts(notifications: 0, dms: 0)
-        lastStateChange = Date()
         stateLoaded = true
     }
 }
 #endif
-
-/// Shares the unread count with widgets/complications via the app group-less
-/// standard defaults (the widget reads the same suite when an app group exists).
-enum BadgeShare {
-    static let key = "perch.badge.notifications"
-    static func save(_ b: XBadgeCounts) {
-        UserDefaults.standard.set(b.notifications, forKey: key)
-    }
-}
 
 /// WatchConnectivity dictionaries only contain property-list values; boxed to cross actors.
 struct MessageBox: @unchecked Sendable {

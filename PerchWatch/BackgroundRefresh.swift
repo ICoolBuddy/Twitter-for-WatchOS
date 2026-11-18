@@ -57,11 +57,11 @@ enum BackgroundRefresh {
         let app = AppModel.shared
         let kind = HomeKind(rawValue: UserDefaults.standard.string(forKey: PerchSettings.homeKind) ?? "")
             ?? .following
-        let cacheName = app.timelineCacheName(kind)
+        let scope = TimelineCacheScope.home(account: app.activeAccountId ?? "none", kind: kind)
 
         var newest: XTweet?
         if let page = try? await app.client.homeTimeline(kind, cursor: nil) {
-            TimelineDiskCache.save(page.items, name: cacheName)
+            TimelineDiskCache.save(page.items.filter { !$0.isFiller }, scope: scope)
             let tweets = page.items.flatMap(\.tweets)
             newest = tweets.first { !$0.isTombstone }
             // Warm exactly what the feed shows first (same URLs and decode sizes
@@ -69,7 +69,7 @@ enum BackgroundRefresh {
             await ImageLoader.shared.prefetchFeed(Array(page.items.displayTweets.prefix(8))).value
         } else {
             // Offline: keep the complication useful with the last cached post.
-            newest = TimelineDiskCache.load(name: cacheName).flatMap(\.tweets).first { !$0.isTombstone }
+            newest = TimelineDiskCache.load(scope).flatMap(\.tweets).first { !$0.isTombstone }
         }
 
         await app.refreshBadge(force: true)

@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 /// Shimmering placeholder shapes (YouTube-style) shown while content and images
 /// are still loading, instead of grey blocks or spinners.
@@ -6,13 +7,14 @@ struct Skeleton: View {
     var corner: CGFloat = 6
 
     @State private var slide: CGFloat = -1
+    /// Tracked as state: a `body`-time read of `isLowPowerModeEnabled` would not stop a
+    /// shimmer that started before Low Power Mode was turned on.
+    @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// No shimmer when motion is reduced or in Low Power Mode: many of these can
     /// be on screen at once (every image that has not loaded yet).
-    private var animated: Bool {
-        !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
-    }
+    private var animated: Bool { !reduceMotion && !lowPower }
 
     var body: some View {
         RoundedRectangle(cornerRadius: corner, style: .continuous)
@@ -38,6 +40,9 @@ struct Skeleton: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
             .accessibilityHidden(true)
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
+                lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+            }
     }
 }
 

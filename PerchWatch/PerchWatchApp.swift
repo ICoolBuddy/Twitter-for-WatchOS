@@ -1,5 +1,6 @@
 import SwiftUI
 import WatchKit
+import WidgetKit
 import XKit
 
 @main
@@ -14,7 +15,13 @@ struct PerchWatchApp: App {
         PerchSettings.registerDefaults()
         OfflineCache.removeLegacyFiles()
         // Cached threads/profiles belong to the session that fetched them.
-        AppModel.shared.onLogout = { OfflineCache.clear() }
+        // Cached threads/profiles and the complication belong to the session that
+        // fetched them.
+        AppModel.shared.onLogout = {
+            OfflineCache.clear()
+            AppGroup.clearSnapshot()
+            WidgetCenter.shared.reloadAllTimelines()
+        }
     }
 
     /// The app's root view. The screenshot harness hook lives in
@@ -89,8 +96,47 @@ struct WatchRootView: View {
                     .ignoresSafeArea()
             }
         }
+        // One app-wide notice for a dead session (X answered 401) instead of an error
+        // on every screen; it goes away by itself when the iPhone sends new cookies.
+        .overlay(alignment: .bottom) {
+            if app.canBrowse, app.sessionExpired, presenter.target == nil {
+                SessionExpiredBanner()
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
         .animation(.easeInOut(duration: 0.18), value: presenter.target?.id)
+        .animation(.easeInOut(duration: 0.2), value: app.sessionExpired)
         ._statusBarHidden(presenter.target != nil)
+    }
+}
+
+/// "Your X session expired": asks the iPhone for fresh cookies (it already did once
+/// automatically when the 401 arrived). The Watch never deletes the session itself.
+struct SessionExpiredBanner: View {
+    @EnvironmentObject private var app: AppModel
+    @State private var requested = false
+
+    var body: some View {
+        Button {
+            app.sync?.syncNow()
+            requested = true
+        } label: {
+            VStack(spacing: 1) {
+                Label("Session expired", systemImage: "person.crop.circle.badge.exclamationmark")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(requested ? "Asked your iPhone…" : "Open Perch on your iPhone")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 6)
+        .padding(.bottom, 2)
+        .accessibilityHint("Asks your iPhone to send your X session again")
     }
 }
 
@@ -102,6 +148,10 @@ struct WatchRootView: View {
 struct RootPager: View {
     @AppStorage(PerchSettings.homeKind) private var kindRaw = HomeKind.forYou.rawValue
     @State private var page = 1
+    /// The two feeds' lists live here (not in the pages) so the edge glow can read
+    /// them directly.
+    @StateObject private var forYou = PagedList<TimelineItem>(maxItems: 200, fetch: { _ in ([], nil, nil) })
+    @StateObject private var following = PagedList<TimelineItem>(maxItems: 200, fetch: { _ in ([], nil, nil) })
     /// The feed page to return to from the menu (1 = For You, 2 = Following).
     @State private var lastFeed = 1
     @State private var didStart = false
@@ -129,10 +179,10 @@ struct RootPager: View {
                 })
                 .frame(width: w)
                 .disabled(page != 0)
-                HomeView(kind: .forYou, isActive: page == 1)
+                HomeView(kind: .forYou, isActive: page == 1, list: forYou)
                     .frame(width: w)
                     .disabled(page != 1)
-                HomeView(kind: .following, isActive: page == 2)
+                HomeView(kind: .following, isActive: page == 2, list: following)
                     .frame(width: w)
                     .disabled(page != 2)
             }
@@ -150,7 +200,7 @@ struct RootPager: View {
         .background(Color.black)
         // One glow for the whole pager (not per page), so a refresh that is
         // still running stays visible after swiping to the other feed or the menu.
-        .overlay { RootGlow() }
+        .overlay { RootGlow(forYou: forYou, following: following) }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button {

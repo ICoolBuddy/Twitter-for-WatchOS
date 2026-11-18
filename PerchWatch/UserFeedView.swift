@@ -20,43 +20,27 @@ struct UserFeedView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                if list.isEmpty && list.isLoading {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 30)
-                } else if let e = list.error, list.isEmpty {
-                    ErrorStateView(error: e) { await list.refresh() }
-                        .padding(.vertical, 8)
-                } else if list.isEmpty && !list.isLoading {
-                    Text("No posts yet.")
-                        .font(.system(size: 15))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 30)
-                }
+                PagedListStatus(list: list, emptyText: "No posts yet.")
 
                 ForEach(list.items) { item in
                     TimelineItemRows(item: item,
                                      onOpenProfile: { profileTarget = ProfileTarget(user: $0) },
                                      onMedia: { mediaTarget = $0 })
-                        .onAppear { list.loadMoreIfNeeded(current: item) }
+                        .paginates(list, with: item)
                     PostSeparator()
                 }
 
-                PagingFooter(isLoading: list.isLoading && !list.isEmpty && !list.isRefreshing,
-                             error: list.isEmpty ? nil : list.error, retry: { list.retryMore() })
+                PagingFooter(list: list)
             }
             .padding(.horizontal, Metrics.horizontalPadding)
         }
-        .crownScrollFocus()
-        .background(Color.black)
+        .pagedListChrome(list, onRefresh: { await list.refresh() },
+                         profile: $profileTarget, media: $mediaTarget)
         .navigationTitle("@" + user.screenName)
-        .pullToRefresh(isRefreshing: list.isRefreshing) { await list.refresh() }
         .task(id: taskKey) {
             configure()
             await list.loadIfNeeded()
         }
-        .postPresentation(profile: $profileTarget, media: $mediaTarget)
         .swipeBack()
     }
 

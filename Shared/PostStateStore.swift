@@ -24,7 +24,6 @@ final class PostStateStore: ObservableObject {
     }
 
     @Published private var overrides: [String: State] = [:]
-    @Published var lastError: XError?
     /// Actions of the active account performed while offline, replayed when the
     /// connection is back.
     @Published private(set) var pendingCount = 0
@@ -33,6 +32,11 @@ final class PostStateStore: ObservableObject {
     private var flushing = false
     /// The account taps are made as (set by `AppModel`).
     private(set) var accountId: String?
+    /// The client actions are sent through (set by `AppModel` on every rebuild), so
+    /// post rows don't have to observe `AppModel` just to reach it.
+    private(set) var client: XClient?
+
+    func attach(_ client: XClient) { self.client = client }
 
     private static let queueKey = "perchPendingActions"
 
@@ -42,7 +46,8 @@ final class PostStateStore: ObservableObject {
         var kind: Kind
         var tweetId: String
         var on: Bool
-        /// Older builds did not store it; those entries count as the active account.
+        /// Optional only so older queues still decode; entries without it are dropped
+        /// at load (see `loadQueue`).
         var accountId: String?
     }
 
@@ -65,7 +70,23 @@ final class PostStateStore: ObservableObject {
     func state(for t: XTweet) -> State {
         let server = State(liked: t.liked, likeCount: t.likeCount, retweeted: t.retweeted,
                            retweetCount: t.retweetCount, bookmarked: t.bookmarked)
-        guard let o = overrides[t.id] else { return server }
+        guard let o = overrides[t.id] else {
+            // No optimistic state on this device any more (e.g. the app was killed), but
+            // a replayed offline tap reached X: the post data predates it.
+            var s = server
+            if let liked = confirmed[Key(kind: .like, tweetId: t.id)], liked != server.liked {
+                s.liked = liked
+                s.likeCount = max(0, s.likeCount + (liked ? 1 : -1))
+            }
+            if let rt = confirmed[Key(kind: .retweet, tweetId: t.id)], rt != server.retweeted {
+                s.retweeted = rt
+                s.retweetCount = max(0, s.retweetCount + (rt ? 1 : -1))
+            }
+            if let bm = confirmed[Key(kind: .bookmark, tweetId: t.id)], bm != server.bookmarked {
+                s.bookmarked = bm
+            }
+            return s
+        }
         if o.liked == server.liked, o.retweeted == server.retweeted, o.bookmarked == server.bookmarked {
             return server
         }
@@ -99,7 +120,15 @@ final class PostStateStore: ObservableObject {
         saveQueue()
     }
 
-    func toggleLike(_ t: XTweet, client: XClient) {
+    /// Accounts that disappeared (e.g. removed on the iPhone and synced) leave nothing behind.
+    func dropQueues(notIn ids: Set<String>) {
+        let before = queue.count
+        queue.removeAll { a in a.accountId.map { !ids.contains($0) } ?? true }
+        if queue.count != before { saveQueue() }
+    }
+
+    func toggleLike(_ t: XTweet) {
+        guard let client else { return }
         var s = state(for: t)
         let key = Key(kind: .like, tweetId: t.id)
         if confirmed[key] == nil { confirmed[key] = t.liked }
@@ -109,7 +138,8 @@ final class PostStateStore: ObservableObject {
         request(key, on: s.liked, client: client)
     }
 
-    func toggleRetweet(_ t: XTweet, client: XClient) {
+    func toggleRetweet(_ t: XTweet) {
+        guard let client else { return }
         var s = state(for: t)
         let key = Key(kind: .retweet, tweetId: t.id)
         if confirmed[key] == nil { confirmed[key] = t.retweeted }
@@ -119,7 +149,8 @@ final class PostStateStore: ObservableObject {
         request(key, on: s.retweeted, client: client)
     }
 
-    func toggleBookmark(_ t: XTweet, client: XClient) {
+    func toggleBookmark(_ t: XTweet) {
+        guard let client else { return }
         var s = state(for: t)
         let key = Key(kind: .bookmark, tweetId: t.id)
         if confirmed[key] == nil { confirmed[key] = t.bookmarked }
@@ -160,7 +191,6 @@ final class PostStateStore: ObservableObject {
             } catch {
                 guard account == accountId else { return }
                 let e = XError.from(error)
-                lastError = e
                 desired[key] = nil
                 if e.isTransientWhileOffline {
                     // Offline or X is having a moment: keep the optimistic state and
@@ -199,7 +229,7 @@ final class PostStateStore: ObservableObject {
     // MARK: Offline queue
 
     private func belongsToActive(_ a: PendingAction) -> Bool {
-        a.accountId == nil || a.accountId == accountId
+        a.accountId != nil && a.accountId == accountId
     }
 
     /// Replays the active account's queued actions in order. Safe to call often
@@ -223,7 +253,6 @@ final class PostStateStore: ObservableObject {
             } catch {
                 guard account == accountId else { return }
                 let e = XError.from(error)
-                lastError = e
                 if e.isTransientWhileOffline { return }
                 remove(action)
             }
@@ -238,8 +267,7 @@ final class PostStateStore: ObservableObject {
 
     private func removeQueued(_ key: Key, account: String?) {
         let before = queue.count
-        queue.removeAll { $0.kind == key.kind && $0.tweetId == key.tweetId
-            && ($0.accountId == nil || $0.accountId == account) }
+        queue.removeAll { $0.kind == key.kind && $0.tweetId == key.tweetId && $0.accountId == account }
         if queue.count != before { saveQueue() }
     }
 
@@ -254,7 +282,15 @@ final class PostStateStore: ObservableObject {
             pendingCount = 0
             return
         }
-        queue = decoded
+        // Older builds stored no account id: such a tap cannot be attributed safely, and
+        // replaying it as whoever is active now would be a wrong-account action.
+        queue = decoded.filter { $0.accountId != nil }
+        if queue.count != decoded.count {
+            let dropped = decoded.count - queue.count
+            saveQueue()
+            Task { await RequestLog.shared.record(method: "-", url: nil, status: nil, durationMs: 0,
+                                                 note: "dropped \(dropped) queued action(s) without an account") }
+        }
         updatePendingCount()
     }
 

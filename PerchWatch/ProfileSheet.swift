@@ -221,26 +221,15 @@ struct ProfileContent: View {
 
     @ViewBuilder
     private var postsSection: some View {
-        if list.isEmpty && list.isLoading {
-            ProgressView()
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-        } else if list.isEmpty && !list.isLoading {
-            Text("No posts yet.")
-                .font(.system(size: 15))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-        }
+        PagedListStatus(list: list, emptyText: "No posts yet.")
         ForEach(list.items) { item in
             TimelineItemRows(item: item,
                              onOpenProfile: { otherProfile = ProfileTarget(user: $0) },
                              onMedia: { mediaTarget = $0 })
-                .onAppear { list.loadMoreIfNeeded(current: item) }
+                .paginates(list, with: item)
             PostSeparator()
         }
-        PagingFooter(isLoading: list.isLoading && !list.isEmpty && !list.isRefreshing,
-                     error: list.isEmpty ? nil : list.error, retry: { list.retryMore() })
+        PagingFooter(list: list)
     }
 
     // MARK: Loading
@@ -311,10 +300,10 @@ struct ProfileContent: View {
             ImageLoader.shared.prefetchFeed(items.displayTweets)
         }
         list.onFirstPage = { items, _ in
-            TimelineDiskCache.save(items, name: "profile-\(userId)")
+            TimelineDiskCache.save(items, scope: .profile(userId: userId))
         }
         list.skip = { $0.isFiller }
-        list.seed(TimelineDiskCache.load(name: "profile-\(userId)"))
+        list.seed(TimelineDiskCache.load(.profile(userId: userId)))
     }
 
     private func toggleFollow(_ u: XUser) {

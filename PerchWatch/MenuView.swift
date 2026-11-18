@@ -85,14 +85,16 @@ struct MenuView: View {
         // No navigationTitle: the root navigation bar only carries the pager's
         // back/hamburger button, and the menu is recognisable by its content.
         .sheet(isPresented: $showAccounts) {
-            AccountPicker(onDone: {
+            // Switching opens the new account on For You; leaving the picker without
+            // switching (Done, the current account, swipe back) stays on the menu.
+            AccountPicker(onSwitched: {
                 showAccounts = false
-                // A new account always opens on For You (AppModel sets that too).
                 onPick(.forYou)
+            }, onClosed: {
+                showAccounts = false
             })
         }
         .task {
-            await app.loadViewer()
             await app.refreshBadge()
         }
     }
@@ -205,10 +207,14 @@ struct AccountPicker: View {
     @EnvironmentObject private var app: AppModel
     @Environment(\.dismiss) private var dismiss
 
-    /// Called after the picker closes (the menu returns to the feed page).
-    var onDone: (() -> Void)? = nil
+    /// Called after a switch to another account (the menu returns to For You).
+    var onSwitched: (() -> Void)? = nil
+    /// Called when the picker closes without a switch (stay on the menu).
+    var onClosed: (() -> Void)? = nil
 
     @State private var switching: String?
+    /// `finish` already reported how the picker closed (swipe-back reports in onDisappear).
+    @State private var didFinish = false
 
     var body: some View {
         NavigationStack {
@@ -260,8 +266,9 @@ struct AccountPicker: View {
                     .foregroundStyle(.secondary)
             }
             .navigationTitle("Accounts")
-            // Swiping right closes the picker, like the other screens.
+            // Swiping right closes the picker, like the other screens (same as Done).
             .swipeBack()
+            .onDisappear { if switching == nil, !didFinish { onClosed?() } }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { finish() }
@@ -280,12 +287,13 @@ struct AccountPicker: View {
         Task {
             await app.switchAccount(to: account.id)
             switching = nil
-            finish()
+            finish(switched: true)
         }
     }
 
-    private func finish() {
+    private func finish(switched: Bool = false) {
+        didFinish = true
         dismiss()
-        onDone?()
+        if switched { onSwitched?() } else { onClosed?() }
     }
 }
