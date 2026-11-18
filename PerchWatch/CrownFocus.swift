@@ -7,12 +7,15 @@ import SwiftUI
 /// - the media viewer's pages are `.focusable()` (crown zoom / volume); when the
 ///   viewer closed, focus did not return to the feed underneath;
 /// - swiping the root pager to another feed left focus on the page that had
-///   just scrolled off screen.
+///   just scrolled off screen;
+/// - popping a pushed screen (post, profile…) left the crown with the screen
+///   that had gone, while this screen's FocusState still read `true`.
 /// Apply it directly to the `ScrollView`/`List` (not to a wrapper such as
 /// `.background`), so the binding lands on the focusable view itself.
 /// This binds the scroll view to a `@FocusState` and claims it whenever the
-/// screen becomes the visible one: on appear, when its pager page becomes
-/// active, and when the media viewer closes.
+/// screen becomes the visible one: on appear (including coming back from a
+/// pushed screen), when its pager page becomes active, and when the media
+/// viewer closes.
 struct CrownScrollFocus: ViewModifier {
     /// False for a pager page that is off screen.
     var active: Bool = true
@@ -37,14 +40,25 @@ struct CrownScrollFocus: ViewModifier {
             }
     }
 
+    private var canClaim: Bool { active && visible && presenter.target == nil }
+
     private func claim() {
-        // Wait for the view that held focus (viewer, previous page) to finish
-        // leaving; focusing during its removal animation does not stick.
-        // Twice: the second attempt covers a slow close/page animation.
+        // Wait for the view that held focus (viewer, previous page, popped
+        // screen) to finish leaving; focusing during its removal animation
+        // does not stick. Twice: the second attempt covers a slow animation.
         for delay in [0.3, 0.8] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                guard active, visible, presenter.target == nil else { return }
-                if !focused { focused = true }
+                guard canClaim else { return }
+                // Always re-assert, never `if !focused`: after a pushed screen
+                // (a post) took the crown and was popped, this FocusState still
+                // read `true` although the focus engine had moved on, so the
+                // feed never asked for the crown back and it did nothing until
+                // the screen was touched. Clearing it first makes the next
+                // assignment a real focus request.
+                focused = false
+                DispatchQueue.main.async {
+                    if canClaim { focused = true }
+                }
             }
         }
     }
