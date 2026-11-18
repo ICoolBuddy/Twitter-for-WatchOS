@@ -167,8 +167,11 @@ struct RootPager: View {
     @State private var didStart = false
     /// Live horizontal finger offset while swiping between pages.
     @State private var dragX: CGFloat = 0
-    /// The current drag was recognised as a horizontal page swipe.
-    @State private var swiping = false
+    /// The axis this drag was decided as (see `PagerSwipe`); nil before it is known.
+    @State private var dragAxis: PagerSwipe.Axis?
+    /// True while the drag gesture is live; SwiftUI resets it when the gesture ends
+    /// *or is cancelled*, which is how a lost `onEnded` is noticed.
+    @GestureState private var dragLive = false
 
     // A hand-rolled pager instead of `TabView(.page)`: a page-style TabView
     // inside the root NavigationStack rendered a black screen after a pushed
@@ -199,6 +202,18 @@ struct RootPager: View {
             .frame(width: w, alignment: .leading)
             .offset(x: -CGFloat(page) * w + dragX)
             .simultaneousGesture(pagerDrag(width: w))
+            .onChange(of: dragLive) { _, live in
+                guard !live else { return }
+                // `onEnded` and this reset arrive at the same lift in either order; after
+                // one runloop hop a still-set axis means the gesture was cancelled (wrist
+                // down, a sheet appeared) without `onEnded`: settle back, release taps.
+                DispatchQueue.main.async {
+                    guard dragAxis != nil else { return }
+                    dragAxis = nil
+                    SwipeGuard.end()
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) { dragX = 0 }
+                }
+            }
         }
         // No `.clipped()` and no `.ignoresSafeArea()` here (measured with the
         // layout probe in the CI screenshots): the pager's frame is the safe
@@ -250,28 +265,38 @@ struct RootPager: View {
         go(kind == .following ? 2 : 1)
     }
 
+    /// Pages only for a deliberate sideways swipe (`PagerSwipe` has the rule and its
+    /// numbers): the axis is decided early and revoked if the drag turns out vertical,
+    /// and the commit needs real horizontal travel, so a vertical scroll with a thumb arc
+    /// no longer opens the menu.
     private func pagerDrag(width w: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 15)
+            .updating($dragLive) { _, live, _ in live = true }
             .onChanged { value in
                 let dx = value.translation.width
                 let dy = value.translation.height
-                if !swiping {
-                    guard abs(dx) > abs(dy) * 1.5 else { return }
-                    swiping = true
+                let axis = PagerSwipe.axis(decided: dragAxis, dx: Double(dx), dy: Double(dy))
+                if axis != dragAxis { dragAxis = axis }
+                guard axis == .horizontal else {
+                    // A scroll (or a revoked arc) never offsets the page or blocks taps.
+                    SwipeGuard.end()
+                    if dragX != 0 { withAnimation(.easeOut(duration: 0.15)) { dragX = 0 } }
+                    return
                 }
-                SwipeGuard.mark()
+                SwipeGuard.begin()
                 // Rubber band past the first and last page.
                 let atEdge = (page == 0 && dx > 0) || (page == 2 && dx < 0)
                 dragX = atEdge ? dx * 0.25 : dx
             }
             .onEnded { value in
-                guard swiping else { return }
-                swiping = false
-                SwipeGuard.mark()
-                let travel = value.predictedEndTranslation.width
-                var target = page
-                if travel < -w * 0.35, page < 2 { target += 1 }
-                if travel > w * 0.35, page > 0 { target -= 1 }
+                let axis = dragAxis
+                dragAxis = nil
+                SwipeGuard.end()
+                guard axis == .horizontal else { return }
+                let target = PagerSwipe.target(page: page, width: Double(w),
+                                               dx: Double(value.translation.width),
+                                               dy: Double(value.translation.height),
+                                               predicted: Double(value.predictedEndTranslation.width))
                 withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
                     page = target
                     dragX = 0

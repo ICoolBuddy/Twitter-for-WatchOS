@@ -192,10 +192,9 @@ struct ProfileContent: View {
     @ViewBuilder
     private var followButton: some View {
         if let u = user, !isSelf {
-            Button {
-                guard !SwipeGuard.isActive else { return }
+            Button(action: SwipeGuard.run {
                 toggleFollow(u)
-            } label: {
+            }) {
                 HStack(spacing: 4) {
                     if followBusy { ProgressView() }
                     Text(following ? "Following" : "Follow")

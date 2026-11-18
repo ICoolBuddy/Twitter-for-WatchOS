@@ -1,24 +1,47 @@
 import SwiftUI
 
-/// Remembers when a horizontal swipe (root pager, swipe-back) last moved, so a
-/// control under the finger does not also fire when the finger lifts. The swipe
-/// gestures are `simultaneousGesture`s (exclusive ones would break vertical
-/// scrolling), so the button, link or text field link under the finger still
-/// gets the touch: lifting it over an image opened the viewer *and* paged.
-/// Taps within a short window of swipe movement are ignored.
+/// Whether the touch that is ending is a horizontal swipe (root pager, swipe-back), so
+/// the control under the finger does not also fire. The swipe gestures are
+/// `simultaneousGesture`s (exclusive ones would break vertical scrolling), so the
+/// button, link or text field link under the finger still gets the touch.
 ///
-/// Only the Watch's gestures mark it; on the iPhone it is never active.
+/// It follows the swipe's lifetime instead of a clock: `begin()` when a horizontal swipe
+/// is recognised, `end()` when it ends or is cancelled. A short tail after the lift
+/// covers the tap that belongs to the same lift (the control's action and the drag's
+/// end arrive in either order). A new tap needs a new touch-down and lift, which takes
+/// longer than the tail, so a quick tap right after paging works (the old 0.35 s window
+/// swallowed it).
+///
+/// Only the Watch's gestures drive it; on the iPhone it is never active.
 /// Gesture callbacks and button actions all run on the main thread, so the
-/// unsynchronised storage is safe; it is nonisolated so button styles (whose
-/// isolation differs between SDKs) can read it.
+/// unsynchronised storage is safe; it is nonisolated so button styles (whose isolation
+/// differs between SDKs) can read it. Monotonic clock: a wall-clock change can't wedge it.
 enum SwipeGuard {
-    nonisolated(unsafe) private static var lastMove = Date.distantPast
+    nonisolated(unsafe) private static var swiping = false
+    nonisolated(unsafe) private static var liftedAt: UInt64 = 0
+    private static let liftTail: UInt64 = 80_000_000      // 80 ms, in nanoseconds
 
-    /// Called on every movement of a recognised horizontal swipe, and when it ends.
-    static func mark() { lastMove = Date() }
+    /// A horizontal swipe is under the finger (idempotent; call on every movement).
+    static func begin() { swiping = true }
 
-    /// A horizontal swipe is in progress or just ended.
-    static var isActive: Bool { Date().timeIntervalSince(lastMove) < 0.35 }
+    /// The swipe ended or was cancelled.
+    static func end() {
+        guard swiping else { return }
+        swiping = false
+        liftedAt = DispatchTime.now().uptimeNanoseconds
+    }
+
+    /// The touch that is ending belongs to a swipe.
+    static var isActive: Bool {
+        swiping || DispatchTime.now().uptimeNanoseconds &- liftedAt < liftTail
+    }
+
+    /// For controls that keep a system style (bordered, toolbar) and so cannot use
+    /// `.buttonStyle(.swipeSafe)`: wraps the action once, no guard at each call site.
+    @MainActor
+    static func run(_ action: @escaping @MainActor () -> Void) -> @MainActor () -> Void {
+        { if !isActive { action() } }
+    }
 }
 
 /// Plain-looking button style that drops the tap when it ends a horizontal

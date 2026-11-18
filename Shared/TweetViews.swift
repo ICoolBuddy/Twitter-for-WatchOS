@@ -520,39 +520,35 @@ struct ErrorStateView: View {
                 #if os(watchOS)
                 Text("Open Perch on your iPhone and log in again.")
                     .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                Button("Sync from iPhone") {
-                    guard !SwipeGuard.isActive else { return }
+                Button("Sync from iPhone", action: SwipeGuard.run {
                     app.sync?.syncNow()
                     // The channel's own status, not "Requested…": it may not have asked.
                     message = app.sync?.statusText
-                }
+                })
                     .frame(maxWidth: .infinity)
                 #else
                 Text("Log in again from the Account section.").font(.caption).foregroundStyle(.secondary)
                 #endif
             // One remedy per error: XKit decided which one fits (`XError.recovery`).
             case .refreshEndpoints:
-                Button(working ? "Refreshing…" : "Refresh endpoints") {
-                    guard !SwipeGuard.isActive else { return }
+                Button(working ? "Refreshing…" : "Refresh endpoints", action: SwipeGuard.run {
                     recover { try await app.refreshEndpoints() }
-                }
+                })
                 .frame(maxWidth: .infinity)
                 .disabled(working)
             case .refreshMaterial:
-                Button(working ? "Renewing…" : "Renew signing key") {
-                    guard !SwipeGuard.isActive else { return }
+                Button(working ? "Renewing…" : "Renew signing key", action: SwipeGuard.run {
                     recover { try await app.refreshMaterial() }
-                }
+                })
                 .frame(maxWidth: .infinity)
                 .disabled(working)
             case .wait:
                 EmptyView()
             case .retry:
                 if let retry {
-                    Button("Retry") {
-                        guard !SwipeGuard.isActive else { return }
+                    Button("Retry", action: SwipeGuard.run {
                         Task { await retry() }
-                    }
+                    })
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -649,10 +645,9 @@ struct LoadMoreRow: View {
         if isLoading {
             ProgressView().frame(maxWidth: .infinity)
         } else if !reachedEnd {
-            Button("Load more") {
-                guard !SwipeGuard.isActive else { return }
+            Button("Load more", action: SwipeGuard.run {
                 action()
-            }
+            })
             .frame(maxWidth: .infinity)
         }
     }

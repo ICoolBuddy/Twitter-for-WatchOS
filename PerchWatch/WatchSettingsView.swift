@@ -58,10 +58,9 @@ struct WatchSettingsView: View {
                     Text("Last payload: \(ByteCountFormatter.string(fromByteCount: Int64(sync.lastPayloadBytes), countStyle: .file))")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
-                Button {
-                    guard !SwipeGuard.isActive else { return }
+                Button(action: SwipeGuard.run {
                     sync.syncNow()
-                } label: {
+                }) {
                     Text("Sync from iPhone").frame(maxWidth: .infinity)
                 }
             }
@@ -70,18 +69,16 @@ struct WatchSettingsView: View {
                 Text("IDs: \(app.endpointsUpdatedAt.isEmpty ? "bundled" : String(app.endpointsUpdatedAt.prefix(10)))")
                     .font(.caption2)
                 Text("Key: \(app.materialSummary)").font(.caption2)
-                Button {
-                    guard !SwipeGuard.isActive else { return }
+                Button(action: SwipeGuard.run {
                     run { try await app.refreshEndpoints(scrape: true) }
-                } label: {
+                }) {
                     Text(working ? "Working…" : "Refresh endpoints")
                         .frame(maxWidth: .infinity)
                 }
                 .disabled(working)
-                Button {
-                    guard !SwipeGuard.isActive else { return }
+                Button(action: SwipeGuard.run {
                     run { try await app.refreshMaterial() }
-                } label: {
+                }) {
                     Text("Refresh signing key")
                         .frame(maxWidth: .infinity)
                 }
@@ -98,10 +95,9 @@ struct WatchSettingsView: View {
                 NavigationLink("Request log", value: Route.debugLog)
                     .buttonStyle(.swipeSafeRow)
                 if app.isLoggedIn {
-                    Button(role: .destructive) {
-                        guard !SwipeGuard.isActive else { return }
+                    Button(role: .destructive, action: SwipeGuard.run {
                         confirmLogout = true
-                    } label: {
+                    }) {
                         Text("Log out").frame(maxWidth: .infinity)
                     }
                 }

@@ -153,11 +153,10 @@ private struct SavedDetailView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
 
-                Button(role: .destructive) {
-                    guard !SwipeGuard.isActive else { return }
+                Button(role: .destructive, action: SwipeGuard.run {
                     SavedStore.shared.remove(post.id)
                     dismiss()
-                } label: {
+                }) {
                     Text("Remove from saved")
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity, alignment: .center)

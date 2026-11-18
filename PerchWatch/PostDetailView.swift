@@ -185,10 +185,9 @@ private struct SaveButton: View {
     @ObservedObject private var saved = SavedStore.shared
 
     var body: some View {
-        Button {
-            guard !SwipeGuard.isActive else { return }
+        Button(action: SwipeGuard.run {
             saved.toggle(tweet)
-        } label: {
+        }) {
             Image(systemName: saved.isSaved(tweet.id) ? "arrow.down.circle.fill" : "arrow.down.circle")
         }
         .accessibilityLabel(saved.isSaved(tweet.id) ? "Remove from saved" : "Save for offline")
