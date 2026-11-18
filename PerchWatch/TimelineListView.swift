@@ -38,6 +38,8 @@ struct TimelineListView: View {
         .pagedListChrome(list, onRefresh: { await list.refresh() },
                          profile: $profileTarget, media: $mediaTarget)
         .navigationTitle(title)
+        // crown-lab measurement hook (DEBUG only): `probe.likes` / `probe.bookmarks`.
+        .crownProbe(kind.rawValue)
         .task(id: taskKey) {
             configure()
             await list.loadIfNeeded()

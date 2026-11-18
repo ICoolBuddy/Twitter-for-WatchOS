@@ -5,7 +5,7 @@ name: Watch screens
 # into DEBUG builds only (see docs/REDESIGN-2.md R20/R21).
 on:
   push:
-    branches: [redesign]
+    branches: [redesign, crown-lab]
   workflow_dispatch:
 
 permissions:
@@ -18,7 +18,7 @@ concurrency:
 jobs:
   screens:
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       XCODE_APP: /Applications/Xcode_26.6.app
     steps:
@@ -200,6 +200,149 @@ jobs:
         with:
           name: watch-screens
           path: shots/
+          if-no-files-found: warn
+          retention-days: 14
+
+      # crown-lab: Digital Crown routing measurements. The UI test target is Debug
+      # only and drives the DEBUG fixture session; every scenario runs 3 times from a
+      # cold launch and prints `CROWN <id> <i>/3 <VERDICT> …` lines that the next
+      # step turns into the k/3 table. Test FAILURES are the data (a list that does
+      # not scroll fails its assertion on purpose), so the step continues on error;
+      # a build failure shows up as no CROWN lines and a red step.
+      - name: Crown routing UI tests
+        id: crown
+        continue-on-error: true
+        run: |
+          UDID="${{ steps.sim.outputs.udid }}"
+          mkdir -p build
+          rm -rf build/crown.xcresult
+          set +e
+          xcodebuild test \
+            -project Perch.xcodeproj \
+            -scheme PerchWatchCrown \
+            -configuration Debug \
+            -destination "platform=watchOS Simulator,id=$UDID" \
+            -derivedDataPath build/DerivedData \
+            -skipPackagePluginValidation \
+            -parallel-testing-enabled NO \
+            -resultBundlePath build/crown.xcresult \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            ARCHS=arm64 \
+            > build/crown.log 2>&1
+          STATUS=$?
+          set -e
+          echo "xcodebuild test exit: $STATUS"
+          grep -E ': error:|error: ' build/crown.log | sort -u | head -40 || true
+          grep -oE 'CROWN S[0-9A-Za-z]+ [0-9]+/[0-9]+ [A-Z]+.*' build/crown.log \
+            > build/crown-lines.txt || true
+          echo "--- CROWN lines ---"
+          cat build/crown-lines.txt || true
+          echo "--- test summary ---"
+          xcrun xcresulttool get test-results summary \
+            --path build/crown.xcresult --format json 2>/dev/null | head -40 || true
+          exit $STATUS
+
+      - name: Crown routing table
+        if: always()
+        run: |
+          python3 - > build/crown-table.md <<'PY'
+          import collections
+          import json
+          import os
+          import re
+          import subprocess
+
+          crowns = []
+          if os.path.exists("build/crown-lines.txt"):
+              crowns = [l.strip() for l in open("build/crown-lines.txt") if l.strip()]
+
+          # Per-test status from the result bundle: this is what tells a build
+          # failure (no tests at all) from test failures (the data we want).
+          summary = {}
+          if os.path.isdir("build/crown.xcresult"):
+              try:
+                  out = subprocess.run(
+                      ["xcrun", "xcresulttool", "get", "test-results", "summary",
+                       "--path", "build/crown.xcresult", "--format", "json"],
+                      capture_output=True, text=True, timeout=180).stdout
+                  summary = json.loads(out)
+              except Exception as error:                     # noqa: BLE001
+                  summary = {"error": str(error)}
+
+          pattern = re.compile(r"^CROWN (\S+) (\d+)/(\d+) ([A-Z]+)(.*)$")
+          rows = collections.OrderedDict()
+          for line in crowns:
+              match = pattern.match(line)
+              if not match:
+                  continue
+              sid = match.group(1)
+              verdict = match.group(4)
+              rest = match.group(5)
+              row = rows.setdefault(sid, {"verdicts": [], "notes": [], "size": ""})
+              row["verdicts"].append(verdict)
+              note = rest.split("note=", 1)[1].strip() if "note=" in rest else ""
+              if note and note not in row["notes"]:
+                  row["notes"].append(note)
+              size = re.search(r"h=(\d+) v=(\d+)", rest)
+              if size:
+                  row["size"] = "content %s pt / viewport %s pt" % size.groups()
+
+          print("## Digital Crown routing (k/3 = runs where the crown scrolled the list)")
+          print()
+
+          if not rows:
+              print("**No CROWN lines.** The UI test target did not run (build failure) "
+                    "— see `build/crown.log` in the `crown-report` artifact.")
+              if summary:
+                  print()
+                  print("```")
+                  print(json.dumps(summary, indent=2)[:4000])
+                  print("```")
+          else:
+              print("| Scenario | k/3 | Notes |")
+              print("|---|---|---|")
+              for sid, row in rows.items():
+                  verdicts = row["verdicts"]
+                  if verdicts == ["SKIPPED"]:
+                      print("| %s | skipped | %s |" % (sid, " ".join(row["notes"])))
+                      continue
+                  moved = verdicts.count("MOVED")
+                  still = verdicts.count("STILL")
+                  other = len(verdicts) - moved - still
+                  attempted = moved + still
+                  k = "%d/%d" % (moved, attempted) if attempted else "–"
+                  tally = []
+                  if moved:
+                      tally.append("%d moved" % moved)
+                  if still:
+                      tally.append("%d still" % still)
+                  if other:
+                      tally.append("%d not measured" % other)
+                  notes = "; ".join(row["notes"])
+                  if row["size"]:
+                      notes = (notes + "; " if notes else "") + row["size"]
+                  notes = (("(" + ", ".join(tally) + ") " if tally else "") + notes).strip()
+                  notes = notes.replace("|", "/")
+                  print("| %s | %s | %s |" % (sid, k, notes[:400]))
+              if summary.get("totalTestCount") is not None:
+                  print()
+                  print("xcodebuild: %s tests, %s passed, %s failed, %s skipped (%s)" % (
+                      summary.get("totalTestCount"), summary.get("passedTests"),
+                      summary.get("failedTests"), summary.get("skippedTests"),
+                      summary.get("result")))
+          PY
+          cat build/crown-table.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload crown report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: crown-report
+          path: |
+            build/crown-table.md
+            build/crown-lines.txt
+            build/crown.log
+            build/crown.xcresult
           if-no-files-found: warn
           retention-days: 14
 

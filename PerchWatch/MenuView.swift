@@ -48,11 +48,14 @@ struct MenuView: View {
                     }
                 }
                 .buttonStyle(.swipeSafeRow)
+                // crown-lab: a stable handle for the pushed-list tests.
+                .accessibilityIdentifier("menu.notifications")
 
                 NavigationLink(value: Route.likes) {
                     Label("Likes", systemImage: "heart")
                 }
                 .buttonStyle(.swipeSafeRow)
+                .accessibilityIdentifier("menu.likes")
 
                 NavigationLink(value: Route.bookmarks) {
                     Label("Bookmarks", systemImage: "bookmark")
@@ -82,6 +85,8 @@ struct MenuView: View {
         }
         // No navigationTitle: the root navigation bar only carries the pager's
         // back/hamburger button, and the menu is recognisable by its content.
+        // crown-lab measurement hook (DEBUG only): `probe.menu`.
+        .crownProbe("menu")
         .sheet(isPresented: $showAccounts) {
             // Switching opens the new account on For You; leaving the picker without
             // switching (Done, the current account, swipe back) stays on the menu.

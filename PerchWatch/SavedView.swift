@@ -42,6 +42,8 @@ struct SavedView: View {
         }
         .background(Color.black)
         .navigationTitle("Saved")
+        // crown-lab measurement hook (DEBUG only): `probe.saved`.
+        .crownProbe("saved")
         .swipeBack()
         // Pushed, not a sheet: swipe right goes back like everywhere else.
         .navigationDestination(item: $selected) { post in

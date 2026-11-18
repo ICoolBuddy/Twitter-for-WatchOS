@@ -37,6 +37,8 @@ struct UserFeedView: View {
         .pagedListChrome(list, onRefresh: { await list.refresh() },
                          profile: $profileTarget, media: $mediaTarget)
         .navigationTitle("@" + user.screenName)
+        // crown-lab measurement hook (DEBUG only): `probe.userfeed`.
+        .crownProbe("userfeed")
         .task(id: taskKey) {
             configure()
             await list.loadIfNeeded()

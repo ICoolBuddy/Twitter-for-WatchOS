@@ -109,7 +109,30 @@ targets:
         # here is additionally wrapped in #if DEBUG, so a stale project file can
         # never make a shipping build depend on it.
         Release:
-          EXCLUDED_SOURCE_FILE_NAMES: "PerchDebug.swift FixtureXClient.swift FixtureHarness.swift *.json"
+          EXCLUDED_SOURCE_FILE_NAMES: "PerchDebug.swift FixtureXClient.swift FixtureHarness.swift CrownProbe.swift *.json"
+  # crown-lab: watchOS UI tests (Digital Crown routing). Debug only (the scheme
+  # below runs it in Debug); it is not part of the Perch / PerchWatch schemes, so
+  # their builds (CI `Build` + `Watch screens`) are unchanged.
+  PerchWatchUITests:
+    type: bundle.ui-testing
+    platform: watchOS
+    sources:
+      - path: PerchWatchUITests
+    dependencies:
+      - target: PerchWatch
+    settings:
+      base:
+        # Xcode's "Target Application" for the runner.
+        TEST_TARGET_NAME: PerchWatch
+        PRODUCT_BUNDLE_IDENTIFIER: $(PERCH_BUNDLE_ID).watchkitapp.uitests
+        # The base config disables generated plists (the app targets ship their own);
+        # a test bundle has none.
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "4"
+        ARCHS: "arm64 arm64_32"
+        "ARCHS[sdk=watchsimulator*]": "arm64"
+        ONLY_ACTIVE_ARCH: NO
+        SKIP_INSTALL: YES
   PerchWidget:
     type: app-extension
     platform: watchOS
@@ -153,5 +176,19 @@ schemes:
       targets:
         PerchWatch: all
         PerchWidget: all
+    run:
+      config: Debug
+  # crown-lab: dedicated scheme for the crown routing UI tests, so the screens
+  # workflow's `xcodebuild build -scheme PerchWatch` stays exactly as it was.
+  PerchWatchCrown:
+    build:
+      targets:
+        PerchWatch: all
+        PerchWidget: all
+        PerchWatchUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - PerchWatchUITests
     run:
       config: Debug

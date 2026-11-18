@@ -248,6 +248,8 @@ struct RootPager: View {
                     Image(systemName: page == 0 ? "chevron.left" : "line.3.horizontal")
                 }
                 .accessibilityLabel(page == 0 ? "Back to feed" : "Menu")
+                // crown-lab: the one chrome button the routing tests press.
+                .accessibilityIdentifier("chrome.menuToggle")
             }
         }
         .onAppear {

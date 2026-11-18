@@ -39,3 +39,19 @@ extension View {
         modifier(LayoutProbe(name: name, color: color))
     }
 }
+
+/// DEBUG-only Digital Crown probe (the modifier itself lives in `Debug/CrownProbe.swift`,
+/// which Release does not compile): reports a scroll view's offset as the
+/// `accessibilityValue` of `probe.<name>` for the crown routing UI tests. Same shape
+/// as `layoutProbe`, so app files can call it without an `#if DEBUG` of their own.
+/// In Release this is a no-op.
+extension View {
+    @ViewBuilder
+    func crownProbe(_ name: String) -> some View {
+        #if DEBUG
+        modifier(CrownProbe(name: name))
+        #else
+        self
+        #endif
+    }
+}

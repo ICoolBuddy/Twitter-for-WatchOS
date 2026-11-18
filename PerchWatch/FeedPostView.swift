@@ -228,6 +228,8 @@ struct FeedPostView: View {
             }
             .buttonStyle(.swipeSafe)
             .accessibilityLabel("Open @\(t.author.screenName) profile")
+            // crown-lab: a stable handle for the profile-sheet tests.
+            .accessibilityIdentifier("avatar." + t.id)
 
             VStack(alignment: .leading, spacing: 1) {
                 Button {
@@ -301,6 +303,8 @@ struct FeedPostView: View {
                 .accessibilityElement()
                 .accessibilityAddTraits(.isButton)
                 .accessibilityLabel("Open media")
+                // crown-lab: a stable handle for the media-viewer tests.
+                .accessibilityIdentifier("media.tile.\(t.id).0")
         }
     }
 
@@ -328,6 +332,8 @@ struct FeedPostView: View {
             .accessibilityElement()
             .accessibilityAddTraits(.isButton)
             .accessibilityLabel(m.altText ?? "Image \(index + 1) of \(media.count)")
+            // crown-lab: a stable handle for the media-viewer tests.
+            .accessibilityIdentifier("media.tile.\(t.id).\(index)")
     }
 
     // MARK: Text
@@ -390,6 +396,8 @@ struct FeedPostView: View {
                 textBody(clamped: clamped)
             }
             .buttonStyle(.swipeSafe)
+            // crown-lab: "tap a post" is this link; one id per tweet.
+            .accessibilityIdentifier("post.open." + t.id)
         } else {
             textBody(clamped: clamped)
         }

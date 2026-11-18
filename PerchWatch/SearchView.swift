@@ -41,6 +41,8 @@ struct SearchView: View {
         }
         .pagedListChrome(list, profile: $profileTarget, media: $mediaTarget)
         .navigationTitle("Search")
+        // crown-lab measurement hook (DEBUG only): `probe.search`.
+        .crownProbe("search")
         .swipeBack()
     }
 

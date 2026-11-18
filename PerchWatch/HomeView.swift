@@ -61,6 +61,9 @@ struct HomeView: View {
                     proxy.scrollTo(Self.topAnchor, anchor: .top)
                 }
             }
+            // crown-lab measurement hook (DEBUG only, a no-op in Release): publishes
+            // this list's offset as `probe.feed.forYou` / `probe.feed.following`.
+            .crownProbe(kind == .forYou ? "feed.forYou" : "feed.following")
             .task(id: taskKey) {
                 configure()
                 // The disk cache is read off the main thread, before the first fetch.

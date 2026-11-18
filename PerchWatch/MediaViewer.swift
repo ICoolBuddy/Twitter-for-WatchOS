@@ -139,6 +139,8 @@ struct MediaViewer: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Close")
+                // crown-lab: the routing tests close the viewer with this.
+                .accessibilityIdentifier("media.close")
                 Spacer(minLength: 0)
             }
             Spacer(minLength: 0)

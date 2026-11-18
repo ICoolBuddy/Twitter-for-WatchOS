@@ -30,6 +30,8 @@ struct NotificationsView: View {
         .pagedListChrome(list, onRefresh: { await list.refresh() },
                          profile: $profileTarget, media: $mediaTarget)
         .navigationTitle("Notifications")
+        // crown-lab measurement hook (DEBUG only): `probe.notifications`.
+        .crownProbe("notifications")
         .task(id: taskKey) {
             configure()
             await list.loadIfNeeded()

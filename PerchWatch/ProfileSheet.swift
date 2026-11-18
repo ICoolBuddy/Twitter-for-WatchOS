@@ -42,6 +42,8 @@ struct ProfileSheet: View {
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
                             Button("Close") { dismiss() }
+                                // crown-lab: the routing tests close the sheet with this.
+                                .accessibilityIdentifier("sheet.close")
                         }
                     }
             }
@@ -141,6 +143,8 @@ struct ProfileContent: View {
         .background(Color.black)
         .task { await start(force: false) }
         .postPresentation(profile: $otherProfile, media: $mediaTarget)
+        // crown-lab measurement hook (DEBUG only): `probe.profile`.
+        .crownProbe("profile")
     }
 
     // MARK: Header

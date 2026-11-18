@@ -104,6 +104,8 @@ struct WatchSettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        // crown-lab measurement hook (DEBUG only): `probe.settings`.
+        .crownProbe("settings")
         .swipeBack()
         .confirmationDialog("Log out of Perch on Watch and iPhone?", isPresented: $confirmLogout) {
             Button("Log out", role: .destructive) { Task { await app.logout() } }

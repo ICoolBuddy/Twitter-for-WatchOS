@@ -79,6 +79,8 @@ struct PostDetailView: View {
         }
         .background(Color.black)
         .navigationTitle("Post")
+        // crown-lab measurement hook (DEBUG only): `probe.post`.
+        .crownProbe("post")
         .toolbar {
             ToolbarItem(placement: .confirmationAction) { SaveButton(tweet: focal) }
         }
