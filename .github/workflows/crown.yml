@@ -57,12 +57,6 @@ jobs:
       - name: Generate project
         run: xcodegen generate
 
-      - name: Print simulator runtimes and devices
-        run: |
-          xcrun simctl list runtimes
-          echo "--- watch devices ---"
-          xcrun simctl list devices available | grep -Ei 'watch' || echo "(no watch devices yet)"
-
       - name: Pick watch simulator
         id: sim
         run: |
