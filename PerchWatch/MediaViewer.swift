@@ -6,8 +6,10 @@ import AVFoundation
 import Combine
 import XKit
 
-/// Full-screen media viewer, drawn as an overlay at the root (see
-/// `MediaPresenter`): black background, swipe sideways between attachments (only
+/// Full-screen media viewer (see `MediaPresenter`). At the root it is presented
+/// as a `fullScreenCover`, which shows watchOS' own close button, so ours is
+/// hidden there (`showsCloseButton: false`); inside the profile sheet it is still
+/// drawn as a `MediaHost` overlay with our own close button. Black background, swipe sideways between attachments (only
 /// when there is more than one), swipe down to close, photos zoom with the
 /// Digital Crown and start from the feed's decoded copy, videos start playing
 /// immediately on a small MP4 and step up to better variants while they play.
@@ -18,7 +20,7 @@ struct MediaViewer: View {
     /// Now Playing text for videos (author, post text).
     var title: String? = nil
     var caption: String? = nil
-    /// Dismiss handler for the root overlay presentation (`nil` inside a cover).
+    /// Dismiss handler (closes `MediaPresenter`, which dismisses the cover or overlay).
     var onClose: (() -> Void)? = nil
     /// False inside a `fullScreenCover`, which already has watchOS' close button.
     var showsCloseButton = true
@@ -135,7 +137,8 @@ struct MediaViewer: View {
 
     // MARK: Chrome
 
-    /// Our own close button (the overlay has no system one). Visible for a
+    /// Our own close button, used only by the overlay presentation (inside the
+    /// profile sheet), which has no system one. Visible for a
     /// moment, then it fades so the picture/video fills the screen.
     private var closeButton: some View {
         VStack {

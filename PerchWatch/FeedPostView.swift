@@ -12,10 +12,11 @@ struct MediaTarget: Identifiable {
     var id: String { media.map(\.id).joined(separator: ",") + "-\(startIndex)" }
 }
 
-/// App-wide full-screen media presentation. The viewer is drawn by a `MediaHost`
-/// above whatever presentation context is on screen (the root, or a sheet), not
-/// by a `fullScreenCover`, so it has no system close button: we draw our own and
-/// can hide it with the rest of the chrome.
+/// App-wide full-screen media presentation. At the root (`sheetDepth == 0`) the
+/// viewer is a `fullScreenCover` in `WatchRootView`: a real presentation is needed
+/// so watchOS hands the Digital Crown back to the feed when it closes (an overlay
+/// that disappears does not; measured, see `docs/crown/PHASE2-REPORT.md`). Inside
+/// a sheet a `MediaHost` overlay still draws it, with our own close button.
 @MainActor
 final class MediaPresenter: ObservableObject {
     static let shared = MediaPresenter()
