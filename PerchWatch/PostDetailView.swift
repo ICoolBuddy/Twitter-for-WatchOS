@@ -77,7 +77,6 @@ struct PostDetailView: View {
             }
             .padding(.horizontal, Metrics.horizontalPadding)
         }
-        .crownScrollFocus()
         .background(Color.black)
         .navigationTitle("Post")
         .toolbar {

@@ -93,16 +93,9 @@ struct WatchRootView: View {
                 NavigationStack(path: $nav.path) {
                     RootPager(rootActive: nav.path.isEmpty)
                         .navigationDestination(for: Route.self) { route in
-                            RouteView(route: route,
-                                      isTop: nav.path.last == route,
-                                      pop: { nav.back() })
+                            RouteView(route: route, pop: { nav.back() })
                         }
                 }
-                // Same rule the pager already uses for off-screen pages: only the
-                // screen on display may hold the crown. While the viewer covers
-                // this context its pages own it; a viewer drawn inside a sheet is
-                // not this one, hence `sheetDepth`.
-                .disabled(presenter.target != nil && presenter.sheetDepth == 0)
             } else {
                 NavigationStack { OnboardingView() }
             }
@@ -124,14 +117,6 @@ struct WatchRootView: View {
         // Logout: do not restore the old stack when the next session appears.
         .onChange(of: app.canBrowse) { _, canBrowse in
             if !canBrowse { nav.path = [] }
-        }
-        // A push or a pop moves the crown to a different screen. The reveal
-        // animation takes ~0.3 s; until it is done the focus system ignores the
-        // request, so the hand-over is announced once it has finished.
-        .onChange(of: nav.path) { _, _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                CrownFocusMark.shared.mark()
-            }
         }
     }
 }
@@ -216,7 +201,7 @@ struct RootPager: View {
                 // that is on screen. (All three pages stay alive; an enabled
                 // off-screen list was taking the crown on launch and after the
                 // media viewer closed, which is why it needed a touch first.)
-                MenuView(isActive: rootActive && page == 0, onPick: { kind in
+                MenuView(onPick: { kind in
                     goFeed(kind)
                 })
                 .frame(width: w)
@@ -230,10 +215,6 @@ struct RootPager: View {
             }
             .frame(width: w, alignment: .leading)
             .offset(x: -CGFloat(page) * w + dragX)
-            // While the finger is locked to a horizontal page swipe, the page's
-            // own scroll view must not also follow the vertical part of the drag:
-            // that is what moved the feed up and down during a menu switch.
-            .scrollDisabled(dragAxis == .horizontal)
             .simultaneousGesture(pagerDrag(width: w))
             .onChange(of: dragLive) { _, live in
                 guard !live else { return }
@@ -245,11 +226,6 @@ struct RootPager: View {
                     dragAxis = nil
                     SwipeGuard.end()
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) { dragX = 0 }
-                    // The pages were scroll-disabled for that drag: the crown is
-                    // free again once the scroll views are back.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        CrownFocusMark.shared.mark()
-                    }
                 }
             }
         }
@@ -285,11 +261,6 @@ struct RootPager: View {
         // The page is the source of truth for the swipe; the stored kind follows
         // it so the menu checkmark, background refresh and account switch agree.
         .onChange(of: page) { _, value in
-            // The page slide is a 0.2–0.28 s animation; ask for the crown once it
-            // has settled, otherwise the request lands while the pages move.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                CrownFocusMark.shared.mark()
-            }
             guard value != 0 else { return }
             lastFeed = value
             let kind = value == 2 ? HomeKind.following : HomeKind.forYou
@@ -344,14 +315,6 @@ struct RootPager: View {
                     page = target
                     dragX = 0
                 }
-                // A drag that settled back on the same page changes nothing, so
-                // `onChange(of: page)` says nothing either — but the scroll views
-                // were disabled for it and the crown has to come back.
-                if target == page {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        CrownFocusMark.shared.mark()
-                    }
-                }
             }
     }
 
@@ -364,16 +327,12 @@ struct RootPager: View {
 /// a placeholder.
 struct RouteView: View {
     let route: Route
-    /// True for the screen that is actually on top of the stack.
-    var isTop: Bool = true
     /// Pops one screen by state (no `dismiss()` round trip).
     var pop: (() -> Void)? = nil
     @EnvironmentObject private var app: AppModel
 
     var body: some View {
         screen
-            // The crown's owner is navigation state, not a timer.
-            .environment(\.screenIsTop, isTop)
             .environment(\.popScreen, pop)
     }
 

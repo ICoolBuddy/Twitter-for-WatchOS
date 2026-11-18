@@ -37,9 +37,7 @@ struct ProfileSheet: View {
                     // post *and* dismissed the sheet.
                     .swipeBack()
                     .navigationDestination(for: Route.self) { route in
-                        RouteView(route: route,
-                                  isTop: path.last == route,
-                                  pop: { if !path.isEmpty { path.removeLast() } })
+                        RouteView(route: route, pop: { if !path.isEmpty { path.removeLast() } })
                     }
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
@@ -140,7 +138,6 @@ struct ProfileContent: View {
             }
             .padding(.horizontal, Metrics.horizontalPadding)
         }
-        .crownScrollFocus()
         .background(Color.black)
         .task { await start(force: false) }
         .postPresentation(profile: $otherProfile, media: $mediaTarget)

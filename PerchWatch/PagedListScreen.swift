@@ -71,13 +71,11 @@ extension View {
     /// pull-to-refresh (search results).
     func pagedListChrome<Item: Identifiable & Hashable>(
         _ list: PagedList<Item>,
-        active: Bool = true,
         onRefresh: (() async -> Void)? = nil,
         profile: Binding<ProfileTarget?>,
         media: Binding<MediaTarget?>
     ) -> some View {
         self
-            .crownScrollFocus(active: active)
             .background(Color.black)
             .modifier(OptionalPullToRefresh(isRefreshing: list.isRefreshing, failed: list.error != nil,
                                             action: onRefresh))

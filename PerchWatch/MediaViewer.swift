@@ -73,11 +73,6 @@ struct MediaViewer: View {
         }
         .onDisappear { neighbourPrefetch?.cancel() }
         .onDisappear { hideTask?.cancel() }
-        .onDisappear {
-            // Screens behind the viewer reclaim the crown (root host, sheet host
-            // and cover alike).
-            CrownFocusMark.shared.mark()
-        }
     }
 
     @ViewBuilder
@@ -468,13 +463,17 @@ private struct MediaVideoPage: View {
             if let volume = volumeHUD { volumeOverlay(volume) }
 
             // The system volume control owns the crown while the chrome is
-            // hidden. Nearly invisible: our HUD above shows the level.
-            SystemVolumeControl(focused: isActive && !controlsVisible && !closing)
-                .frame(width: 40, height: 40)
-                .opacity(0.02)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+            // hidden. Videos only: a GIF is silent (no volume to change), and a
+            // WKInterfaceVolumeControl that never existed cannot be the thing
+            // the crown is still attached to after the viewer closes.
+            if media.type == .video {
+                SystemVolumeControl(focused: isActive && !controlsVisible && !closing)
+                    .frame(width: 40, height: 40)
+                    .opacity(0.02)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
         }
         // Chrome visible: this page owns the crown (scrub). Hidden: it is not
         // focusable at all, so the system volume control below gets it.
@@ -566,12 +565,23 @@ private struct MediaVideoPage: View {
     }
 
     private func unavailable(_ message: String) -> some View {
-        Label(message, systemImage: "exclamationmark.triangle.fill")
-            .font(.caption2)
+        Button {
+            playback.retry()
+        } label: {
+            VStack(spacing: 3) {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                Text("Tap to retry")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
             .background(Color.black.opacity(0.65), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(message). Tap to retry.")
     }
 
     /// How much of the video is buffered, until it starts playing.

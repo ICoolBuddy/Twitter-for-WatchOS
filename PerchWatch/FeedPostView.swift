@@ -110,12 +110,7 @@ struct PostPresentation: ViewModifier {
             .sheet(item: (pushProfile == nil) ? $profile : .constant(ProfileTarget?.none)) { target in
                 ProfileSheet(target: target)
                     .onAppear { presenter.sheetOpened() }
-                    // The sheet owned the crown while it was up: tell the screen
-                    // behind it (and give its list back the crown).
-                    .onDisappear {
-                        presenter.sheetClosed()
-                        CrownFocusMark.shared.mark()
-                    }
+                    .onDisappear { presenter.sheetClosed() }
             }
             .onChange(of: profile?.id) { _, _ in
                 guard let target = profile, let pushProfile else { return }

@@ -39,6 +39,12 @@ final class VideoPlayback: ObservableObject {
     /// turns add up instead of snapping back.
     private var scrubTarget: Double?
     private var seekToken = 0
+    /// A video request that failed on the network is retried once by itself, and
+    /// then only by tapping the message: the Watch reaches the CDN through the
+    /// iPhone, and the first request does time out now and then (NSURLError
+    /// -1001) without anything being wrong with the post.
+    private var retriedNetworkFailure = false
+    private var retryTask: Task<Void, Never>?
 
     /// Now Playing text and the remote-command handlers registered for it.
     private var title: String?
@@ -65,6 +71,7 @@ final class VideoPlayback: ObservableObject {
         }
         stop()
         mediaId = media.id
+        retriedNetworkFailure = false
         endedFlag = false
         loading = true
         stalled = false
@@ -135,9 +142,37 @@ final class VideoPlayback: ObservableObject {
         if backgroundSession { clearNowPlaying() }
     }
 
+    /// A failure the reader can clear by tapping the message.
+    func retry() {
+        retriedNetworkFailure = true      // one automatic retry, then only taps
+        reloadItem()
+    }
+
+    /// Rebuilds the item at the level already chosen for this post. A fresh item
+    /// is what clears a network error: AVPlayer does not recover one by itself.
+    private func reloadItem() {
+        guard let mediaId, !levels.isEmpty else { return }
+        retryTask?.cancel()
+        retryTask = nil
+        let level = Self.chosenLevel[mediaId] ?? pickLevel()
+        Self.chosenLevel[mediaId] = level
+        failed = nil
+        stalled = false
+        loading = true
+        buffered = 0
+        duration = 0
+        position = 0
+        scrubTarget = nil
+        player.replaceCurrentItem(with: AVPlayerItem(url: levels[level].url))
+        player.play()
+        startTicker()
+    }
+
     /// Called by the view when the page goes away for good.
     func teardown() {
         stop()
+        retryTask?.cancel()
+        retryTask = nil
         player.replaceCurrentItem(with: nil)
         mediaId = nil
         loading = true
@@ -278,7 +313,21 @@ final class VideoPlayback: ObservableObject {
     private func tick() {
         guard let item = player.currentItem else { return }
         if item.status == .failed {
-            if failed == nil { failed = item.error?.localizedDescription ?? "Video unavailable" }
+            let error = item.error as NSError?
+            let network = error?.domain == NSURLErrorDomain
+            if network, !retriedNetworkFailure, mediaId != nil, !levels.isEmpty {
+                retriedNetworkFailure = true
+                retryTask?.cancel()
+                retryTask = Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                    guard !Task.isCancelled else { return }
+                    self?.reloadItem()
+                }
+                return
+            }
+            if failed == nil {
+                failed = network ? "Video timed out" : (item.error?.localizedDescription ?? "Video unavailable")
+            }
             return
         }
 

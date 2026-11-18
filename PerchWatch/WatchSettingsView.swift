@@ -103,7 +103,6 @@ struct WatchSettingsView: View {
                 }
             }
         }
-        .crownScrollFocus()
         .navigationTitle("Settings")
         .swipeBack()
         .confirmationDialog("Log out of Perch on Watch and iPhone?", isPresented: $confirmLogout) {

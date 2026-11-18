@@ -50,7 +50,6 @@ struct HomeView: View {
                 }
                 .padding(.horizontal, Metrics.horizontalPadding)
             }
-            .crownScrollFocus(active: isActive)
             .background(Color.black)
             // The edge glow is drawn by `RootGlow` straight from the lists; pulling
             // or turning the crown only triggers the refresh.

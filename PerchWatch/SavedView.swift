@@ -40,7 +40,6 @@ struct SavedView: View {
             }
             .padding(.horizontal, Metrics.horizontalPadding)
         }
-        .crownScrollFocus()
         .background(Color.black)
         .navigationTitle("Saved")
         .swipeBack()
@@ -167,7 +166,6 @@ private struct SavedDetailView: View {
             .padding(.horizontal, Metrics.horizontalPadding)
             .padding(.vertical, 6)
         }
-        .crownScrollFocus()
         .background(Color.black)
         .navigationTitle("Saved post")
         .swipeBack()
