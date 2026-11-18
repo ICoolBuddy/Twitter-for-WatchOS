@@ -16,6 +16,8 @@ struct HomeView: View {
     /// scroll view that appears, not to one a page swipe merely brings back (crown
     /// routing test S3) — and the reader is put back on the post they were reading.
     var returnToken = 0
+    /// Tapping the other tab at the top switches feeds (the pager owns the page).
+    var onSelect: ((HomeKind) -> Void)? = nil
 
     @EnvironmentObject private var app: AppModel
     @AppStorage(PerchSettings.autoRefreshOnOpen) private var autoRefreshOnOpen = true
@@ -117,15 +119,15 @@ struct HomeView: View {
         }
     }
 
-    /// Which timeline this page is (the menu no longer lists them; the pager's
-    /// swipes decide, so the label says where you are).
+    /// X-style tabs: both feeds named, the current one bold white with a blue bar.
+    /// The first row of the list, so it scrolls away with the posts (owner,
+    /// 2026-11-18: not pinned). Tapping the other name switches feeds.
     private var timelineLabel: some View {
-        VStack(spacing: 1) {
-            Text(kind == .forYou ? "FOR YOU" : "FOLLOWING")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.8)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel(kind == .forYou ? "For You timeline" : "Following timeline")
+        VStack(spacing: 2) {
+            HStack(spacing: 16) {
+                feedTab(.forYou, "For You")
+                feedTab(.following, "Following")
+            }
             // Cached posts on screen but the last refresh failed: say so, instead
             // of an error line at the very bottom of the feed nobody sees.
             if !list.isEmpty, list.error != nil, !list.isRefreshing {
@@ -139,6 +141,29 @@ struct HomeView: View {
         .padding(.top, 2)
         .padding(.bottom, 6)
     }
+
+    private func feedTab(_ tab: HomeKind, _ title: String) -> some View {
+        let current = tab == kind
+        return Button {
+            if !current { onSelect?(tab) }
+        } label: {
+            VStack(spacing: 3) {
+                Text(title)
+                    .font(.system(size: 14, weight: current ? .bold : .medium))
+                    .foregroundStyle(current ? Color.white : Color.white.opacity(0.45))
+                Capsule()
+                    .fill(current ? Self.tabBlue : Color.clear)
+                    .frame(width: 26, height: 3)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.swipeSafe)
+        .accessibilityLabel(title + " timeline")
+        .accessibilityAddTraits(current ? .isSelected : [])
+    }
+
+    /// X's own blue.
+    private static let tabBlue = Color(red: 0.114, green: 0.608, blue: 0.941)
 
     private var offlineText: String {
         guard let d = list.lastUpdated else { return "Offline · cached posts" }

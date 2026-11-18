@@ -226,7 +226,7 @@ private struct MediaPage: View {
     }
 }
 
-/// One photo page: fit inside the screen, crown zoom, drag to pan (clamped to the
+/// One photo page: fit inside the screen, drag to pan (clamped to the
 /// image so zooming out can never leave black around a corner), single tap
 /// toggles between 1× and 2.5× (centred).
 private struct MediaPhotoPage: View {
@@ -234,10 +234,6 @@ private struct MediaPhotoPage: View {
     let isActive: Bool
     let closing: Bool
     @Binding var zoomed: Bool
-
-    /// The crown zooms the photo on screen (with several attachments, focus
-    /// used to stay on the first page).
-    @FocusState private var crownFocused: Bool
 
     @State private var zoom: Double = 1
     @State private var offset: CGSize = .zero
@@ -267,28 +263,18 @@ private struct MediaPhotoPage: View {
                 .onAppear { container = geo.size }
                 .onChange(of: geo.size) { _, size in container = size }
         }
-        // Only the page on screen may take the crown, and never once the viewer
-        // has started closing: an off-screen page must not swallow it, and the
-        // crown has to be free again while the viewer fades out.
-        .modifier(PhotoFocus(enabled: isActive && !closing))
-        .focused($crownFocused)
+        // No crown zoom (owner, 2026-11-18): a focusable page with
+        // `digitalCrownRotation` swallowed the swipe-down that closes the viewer
+        // (measured: plain, `.edit` and `.activate` focus all block it; only no
+        // focus lets it through). Tap toggles 2.5×, drag pans while zoomed.
         .onChange(of: isActive) { _, active in
             if active {
                 // While off screen this page could not write `zoomed`: re-publish its zoom.
                 zoomed = zoom > 1.05
                 // The full-size copy is for the page on screen.
                 if !wantsFull { wantsFull = LinkSpeed.prefersFullPhoto(media) }
-                claimCrown()
-            } else {
-                crownFocused = false
             }
         }
-        .onChange(of: closing) { _, closing in
-            if closing { crownFocused = false }
-        }
-        .digitalCrownRotation($zoom, from: 1, through: 5, by: 0.1,
-                              sensitivity: .medium, isContinuous: false,
-                              isHapticFeedbackEnabled: true)
         .onChange(of: zoom) { _, value in
             zoomed = value > 1.05
             // Zooming in is the moment the extra resolution matters.
@@ -310,19 +296,11 @@ private struct MediaPhotoPage: View {
             if isActive {
                 zoomed = zoom > 1.05
                 wantsFull = LinkSpeed.prefersFullPhoto(media)
-                claimCrown()
             }
         }
         .onDisappear { zoomed = false }
         .ignoresSafeArea()
         .accessibilityLabel(media.altText ?? "Image")
-    }
-
-    /// After the viewer's open animation; focusing during it does not stick.
-    private func claimCrown() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            if isActive, !closing { crownFocused = true }
-        }
     }
 
     /// Largest offset that still keeps the scaled image covering the frame in
@@ -489,37 +467,6 @@ private struct CoverChrome: ViewModifier {
                 ._statusBarHidden(true)
         } else {
             content
-        }
-    }
-}
-
-/// EXPERIMENT switches for the photo swipe-down measurement (crown.yml `variants`,
-/// `-crownVariant`). DEBUG reads the launch argument; Release is always "A".
-/// Remove once a winner ships.
-enum MediaLab {
-    static func has(_ letter: Character) -> Bool {
-        #if DEBUG
-        return (UserDefaults.standard.string(forKey: "crownVariant") ?? "A").contains(letter)
-        #else
-        return false
-        #endif
-    }
-}
-
-/// EXPERIMENT: how the photo page is focusable (crown zoom) — N none, E `.edit`,
-/// V `.activate`, default plain `.focusable`. Plain focus swallowed swipe-down.
-private struct PhotoFocus: ViewModifier {
-    let enabled: Bool
-
-    func body(content: Content) -> some View {
-        if MediaLab.has("N") {
-            content.focusable(false)
-        } else if MediaLab.has("E") {
-            content.focusable(enabled, interactions: .edit)
-        } else if MediaLab.has("V") {
-            content.focusable(enabled, interactions: .activate)
-        } else {
-            content.focusable(enabled)
         }
     }
 }
