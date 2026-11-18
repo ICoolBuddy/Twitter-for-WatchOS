@@ -38,6 +38,17 @@ struct HomeView: View {
     /// Black over the list while a restore lands (a frame or two), so a page that
     /// comes back never shows the top first and then jumps to the reader's place.
     @State private var coverWhileRestoring = false
+    /// The `returnToken` whose scroll view has been put back at the reader's place.
+    /// Different from `returnToken` = a rebuilt scroll view that has not been
+    /// restored yet: covered from its very first frame (setting a flag in
+    /// `onChange` came one frame late, and a fast swipe back showed that frame).
+    @State private var restoredToken = 0
+
+    /// Black over the list: a restore is running, or a new scroll view (rebuilt, or a
+    /// page the pager created again) has not been put back at the reader's place yet.
+    private var covered: Bool {
+        coverWhileRestoring || returnToken != restoredToken || (!hasAppeared && place.savedTopID != nil)
+    }
 
     /// The top of the list: a zero-height anchor laid out before any row, so a refresh
     /// can scroll up without waiting for the new first post to exist.
@@ -65,7 +76,7 @@ struct HomeView: View {
             }
             .background(Color.black)
             .overlay {
-                if coverWhileRestoring { Color.black.allowsHitTesting(false) }
+                if covered { Color.black.allowsHitTesting(false) }
             }
             .onScrollGeometryChange(for: CGSize.self) {
                 CGSize(width: $0.contentInsets.top, height: $0.containerSize.height)
@@ -213,10 +224,17 @@ struct HomeView: View {
     /// to the top, then `FeedPlace` corrects by measuring where the row really landed
     /// (the new list has not measured the rows above it, so one scroll is not exact).
     private func restore(_ proxy: ScrollViewProxy) {
-        guard let id = place.savedTopID, list.items.contains(where: { $0.id == id }) else { return }
+        let token = returnToken
+        guard let id = place.savedTopID, list.items.contains(where: { $0.id == id }) else {
+            restoredToken = token
+            return
+        }
         coverWhileRestoring = true
         place.beginRestore({ id, anchor in proxy.scrollTo(id, anchor: anchor) },
-                           done: { coverWhileRestoring = false })
+                           done: {
+                               coverWhileRestoring = false
+                               restoredToken = token
+                           })
     }
 
     #if DEBUG
