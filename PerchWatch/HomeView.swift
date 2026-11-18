@@ -42,12 +42,13 @@ struct HomeView: View {
     /// Different from `returnToken` = a rebuilt scroll view that has not been
     /// restored yet: covered from its very first frame (setting a flag in
     /// `onChange` came one frame late, and a fast swipe back showed that frame).
-    @State private var restoredToken = 0
+    /// -1 = this page's scroll view was never put back (a page the pager created).
+    @State private var restoredToken = -1
 
     /// Black over the list: a restore is running, or a new scroll view (rebuilt, or a
     /// page the pager created again) has not been put back at the reader's place yet.
     private var covered: Bool {
-        coverWhileRestoring || returnToken != restoredToken || (!hasAppeared && place.savedTopID != nil)
+        coverWhileRestoring || returnToken != restoredToken
     }
 
     /// The top of the list: a zero-height anchor laid out before any row, so a refresh
@@ -97,11 +98,19 @@ struct HomeView: View {
             }
             #endif
             // Swiped back to: the scroll view was rebuilt (crown), put the reader back.
-            .onChange(of: returnToken) { _, _ in restore(proxy) }
+            // Rebuilt (crown): restore only while on screen. Off screen the list does
+            // not lay its rows out, so the jump landed short (an older post) and there
+            // were no row frames to correct it with (device: menu -> For You). A feed
+            // rebuilt off screen stays covered and restores when it comes back.
+            .onChange(of: returnToken) { _, _ in
+                if isActive { restore(proxy) }
+            }
             .onAppear {
                 guard !hasAppeared else { return }
                 hasAppeared = true
-                restore(proxy)
+                // The pager creates the neighbouring page off screen: that one waits
+                // (covered) and restores when it becomes the feed on screen.
+                if isActive { restore(proxy) }
             }
             // The edge glow is drawn by `RootGlow` straight from the lists; pulling
             // or turning the crown only triggers the refresh.
@@ -127,7 +136,8 @@ struct HomeView: View {
             .postPresentation(profile: $profileTarget, media: $mediaTarget)
             .onChange(of: isActive, initial: true) { _, active in
                 visibility.isActive = active
-                // Leaving this feed (page swipe, menu, pushed screen): keep the place.
+                // Back on screen with a scroll view not yet put back at the place.
+                if active, returnToken != restoredToken { restore(proxy) }
                 // Arriving on this feed: warm what it is about to show.
                 if active, !list.isEmpty { ImageLoader.shared.prefetchFeed(list.items.displayTweets) }
             }
@@ -211,7 +221,7 @@ struct HomeView: View {
                     // A page created a moment ago starts at the top: its rows must not
                     // overwrite the place before `restore` has run (`hasAppeared`).
                     place.rowMoved(item, frame: frame, isFirst: item.id == list.items.first?.id,
-                                   active: visibility.isActive && hasAppeared)
+                                   active: visibility.isActive && returnToken == restoredToken)
                 }
             }
             PagingFooter(list: list)
