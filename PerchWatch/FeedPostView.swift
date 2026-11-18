@@ -25,6 +25,8 @@ final class MediaPresenter: ObservableObject {
     @Published private(set) var closing = false
 
     func show(_ target: MediaTarget) {
+        // A finger lifted over an image at the end of a page swipe.
+        guard !SwipeGuard.isActive else { return }
         closing = false
         self.target = target
     }
@@ -157,6 +159,7 @@ struct FeedPostView: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 8) {
             Button {
+                guard !SwipeGuard.isActive else { return }
                 onOpenProfile?(t.author)
             } label: {
                 Avatar(user: t.author, size: compact ? 28 : Metrics.avatar)
@@ -166,7 +169,8 @@ struct FeedPostView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Button {
-                    onOpenProfile?(t.author)
+                    guard !SwipeGuard.isActive else { return }
+                onOpenProfile?(t.author)
                 } label: {
                     HStack(spacing: 3) {
                         Text(t.author.name)
@@ -358,6 +362,7 @@ struct TimelineItemRows: View {
             }
         case .user(let u):
             Button {
+                guard !SwipeGuard.isActive else { return }
                 onOpenProfile?(u)
             } label: {
                 UserRow(user: u)

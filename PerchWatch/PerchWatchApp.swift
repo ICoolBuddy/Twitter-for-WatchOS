@@ -199,6 +199,7 @@ struct RootPager: View {
                     guard abs(dx) > abs(dy) * 1.5 else { return }
                     swiping = true
                 }
+                SwipeGuard.mark()
                 // Rubber band past the first and last page.
                 let atEdge = (page == 0 && dx > 0) || (page == 2 && dx < 0)
                 dragX = atEdge ? dx * 0.25 : dx
@@ -206,6 +207,7 @@ struct RootPager: View {
             .onEnded { value in
                 guard swiping else { return }
                 swiping = false
+                SwipeGuard.mark()
                 let travel = value.predictedEndTranslation.width
                 var target = page
                 if travel < -w * 0.35, page < 2 { target += 1 }

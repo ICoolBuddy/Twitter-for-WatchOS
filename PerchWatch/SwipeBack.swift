@@ -1,5 +1,21 @@
 import SwiftUI
 
+/// Remembers when a horizontal swipe (root pager, swipe-back) last moved, so a
+/// button under the finger does not also fire when the finger lifts. Buttons
+/// inside the swiped content still get the touch: the swipe gestures are
+/// `simultaneousGesture`s, so lifting the finger over an image opened the media
+/// viewer *and* paged. Taps within a short window of a swipe are ignored.
+@MainActor
+enum SwipeGuard {
+    private static var lastMove = Date.distantPast
+
+    /// Called on every movement of a recognised horizontal swipe, and when it ends.
+    static func mark() { lastMove = Date() }
+
+    /// A horizontal swipe is in progress or just ended.
+    static var isActive: Bool { Date().timeIntervalSince(lastMove) < 0.35 }
+}
+
 /// iOS-like "swipe right to go back", but forgiving: the drag may start anywhere
 /// on the screen (middle included), not only at the very left edge. Mostly
 /// vertical drags are ignored, so scrolling and pull-to-refresh still work.
@@ -34,6 +50,7 @@ struct SwipeBack: ViewModifier {
                             if offsetX != 0 { offsetX = 0 }
                             return
                         }
+                        SwipeGuard.mark()
                         offsetX = min(dx, 120)
                     }
                     .onEnded { value in
@@ -43,6 +60,7 @@ struct SwipeBack: ViewModifier {
                         }
                         let dx = value.translation.width
                         let go = dx > 55 && abs(dx) > abs(value.translation.height) * 1.8
+                        if offsetX != 0 { SwipeGuard.mark() }
                         if go {
                             popping = true
                             // Back to rest first: the pop animates the whole
