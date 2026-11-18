@@ -264,7 +264,7 @@ struct RootGlow: View {
 enum DisplayShape {
     static var cornerRadius: CGFloat {
         let w = WKInterfaceDevice.current().screenBounds.width
-        return (w * 0.22).rounded()
+        return (w * 0.235).rounded()
     }
 }
 
@@ -308,10 +308,38 @@ struct EdgeGlow: View {
     }
 }
 
-/// One thin white ring inside the display's rounded corners.
+/// Pigeon-style edge glow: a bright rim on the display edge that fades softly
+/// inwards over ~14 pt.
+///
+/// Built from concentric bands (each inset by one band width, with the corner
+/// radius shrunk by the same amount so they stay parallel) whose opacity falls
+/// off quadratically, instead of blurring a full-screen layer, which is costly
+/// on the Watch GPU. `drawingGroup()` flattens the bands into one layer once,
+/// so the pulse only changes that layer's opacity.
 private struct GlowShape: View {
+    /// Number of bands and the width of each, in points.
+    private static let bands = 10
+    private static let band: CGFloat = 1.4
+    /// Opacity of the band next to the rim (the rim itself is fully opaque).
+    private static let innerStart = 0.55
+
     var body: some View {
-        RoundedRectangle(cornerRadius: DisplayShape.cornerRadius, style: .continuous)
-            .strokeBorder(Color.white, lineWidth: 2)
+        let radius = DisplayShape.cornerRadius
+        ZStack {
+            ForEach(0..<Self.bands, id: \.self) { i in
+                let inset = CGFloat(i) * Self.band
+                RoundedRectangle(cornerRadius: max(0, radius - inset), style: .continuous)
+                    .strokeBorder(Color.white.opacity(Self.opacity(band: i)),
+                                  lineWidth: i == 0 ? 2 : Self.band)
+                    .padding(inset)
+            }
+        }
+        .drawingGroup()
+    }
+
+    private static func opacity(band i: Int) -> Double {
+        guard i > 0 else { return 1 }
+        let t = Double(i) / Double(bands)      // 0 at the rim … 1 at the inner edge
+        return innerStart * (1 - t) * (1 - t)
     }
 }
