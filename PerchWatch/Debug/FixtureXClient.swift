@@ -124,12 +124,16 @@ struct FixtureXClient: XClient {
         return XParser.timeline(library.userTweetsJSON)
     }
 
+    // crown-lab: Likes / Bookmarks serve the home posts so the pushed lists are long
+    // enough to scroll (an empty list cannot show whether the crown reached it).
     func likes(userId: String, cursor: String?) async throws -> TimelinePage {
-        TimelinePage(items: [], topCursor: nil, bottomCursor: nil)
+        guard cursor == nil else { return TimelinePage(items: [], topCursor: nil, bottomCursor: nil) }
+        return TimelinePage(items: library.home.items, topCursor: nil, bottomCursor: nil)
     }
 
     func bookmarks(cursor: String?) async throws -> TimelinePage {
-        TimelinePage(items: [], topCursor: nil, bottomCursor: nil)
+        guard cursor == nil else { return TimelinePage(items: [], topCursor: nil, bottomCursor: nil) }
+        return TimelinePage(items: library.home.items, topCursor: nil, bottomCursor: nil)
     }
 
     func search(_ query: String, product: SearchProduct, cursor: String?) async throws -> TimelinePage {

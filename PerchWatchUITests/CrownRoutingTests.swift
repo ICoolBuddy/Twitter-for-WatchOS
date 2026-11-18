@@ -37,6 +37,8 @@ final class CrownRoutingTests: XCTestCase {
     private enum FixtureID {
         static let photoPost = "1860000000000000001"
         static let videoPost = "1860000000000000042"
+        /// Added for S21: a looping GIF right after the video.
+        static let gifPost = "1860000000000000043"
     }
 
     /// Half-turns per measurement, four times: the brief's `delta: 0.5`, "a few
@@ -50,7 +52,17 @@ final class CrownRoutingTests: XCTestCase {
     /// animations are shorter) before the first crown rotation, so the measurement
     /// sees the finished layout. Everything else waits on a real signal.
     private static let settle: TimeInterval = 1.0
-    private static let iterations = 3
+    /// `TEST_RUNNER_CROWN_ITERATIONS` (xcodebuild strips the prefix) lowers this for
+    /// the variant matrix; the full baseline keeps three cold launches.
+    private static let iterations: Int = {
+        Int(ProcessInfo.processInfo.environment["CROWN_ITERATIONS"] ?? "") ?? 3
+    }()
+    /// The crown experiment the app runs (`-crownVariant`, see `CrownLab.swift`), from
+    /// `TEST_RUNNER_CROWN_VARIANT`. "A" = the shipped code, unchanged.
+    private static let variant: String = {
+        let v = ProcessInfo.processInfo.environment["CROWN_VARIANT"] ?? ""
+        return v.isEmpty ? "A" : v
+    }()
 
     // MARK: State
 
@@ -268,7 +280,7 @@ final class CrownRoutingTests: XCTestCase {
     /// S13: the GIF half of S12. The fixture timeline has no GIF, so this is
     /// recorded as skipped rather than failed.
     func test14_S13_gifViewer() {
-        report("S13", 0, "SKIPPED", note: "no GIF in the fixture timeline (photos and one video only)")
+        report("S13", 0, "SKIPPED", note: "measured as S21 (GIF fixture added)")
     }
 
     /// S14: S12 with the video in the fixture timeline (scrolled into reach first:
@@ -369,6 +381,97 @@ final class CrownRoutingTests: XCTestCase {
         }
     }
 
+    /// S18 (added): menu -> Bookmarks (push) -> crown on `bookmarks`.
+    func test19_S18_menuBookmarksPush() {
+        scenario("S18", probe: "bookmarks") {
+            guard self.pushFromMenu("menu.bookmarks", probe: "bookmarks") else {
+                return .blocked("could not push Bookmarks from the menu")
+            }
+            return .ready("Bookmarks pushed from the menu")
+        }
+    }
+
+    /// S19 (added): Bookmarks, then back -> crown on `menu`.
+    func test20_S19_bookmarksBackToMenu() {
+        scenario("S19", probe: "menu") {
+            guard self.pushFromMenu("menu.bookmarks", probe: "bookmarks") else {
+                return .blocked("could not push Bookmarks from the menu")
+            }
+            let how = self.tapSystemBack()
+            self.settle()
+            guard !self.probe("bookmarks").exists else {
+                return .blocked("the Bookmarks screen is still up (back tried via \(how))")
+            }
+            guard self.onScreen("menu") else {
+                return .blocked("back from Bookmarks landed on the wrong page (\(self.pagerNote()))")
+            }
+            return .ready("Bookmarks, back via \(how)")
+        }
+    }
+
+    /// S20 (added): Notifications (a list with rows), then back -> crown on `menu`.
+    func test21_S20_notificationsBackToMenu() {
+        scenario("S20", probe: "menu") {
+            guard self.pushFromMenu("menu.notifications", probe: "notifications") else {
+                return .blocked("could not push Notifications from the menu")
+            }
+            let how = self.tapSystemBack()
+            self.settle()
+            guard !self.probe("notifications").exists else {
+                return .blocked("the Notifications screen is still up (back tried via \(how))")
+            }
+            guard self.onScreen("menu") else {
+                return .blocked("back from Notifications landed on the wrong page (\(self.pagerNote()))")
+            }
+            return .ready("Notifications, back via \(how)")
+        }
+    }
+
+    /// S21 (added): the GIF half of S12, now that the fixture timeline has one.
+    func test22_S21_gifViewer() {
+        scenario("S21", probe: "feed.forYou") {
+            guard self.openViewer(tile: "media.tile." + FixtureID.gifPost + ".0") else {
+                return .blocked("the GIF tile never became tappable")
+            }
+            self.rotate()
+            self.settle()
+            guard self.closeViewer() else {
+                return .blocked("the viewer's close button was not tappable")
+            }
+            self.settle()
+            guard !self.app.buttons["media.close"].exists else {
+                return .blocked("the viewer did not close")
+            }
+            return .ready("GIF viewer opened, closed")
+        }
+    }
+
+    /// S22 (added): post page, then back with the button, then the hamburger -> crown on
+    /// `menu` (a tapped control after a pop).
+    func test23_S22_postBackThenHamburger() {
+        scenario("S22", probe: "menu") {
+            guard self.tap("post.open." + FixtureID.photoPost) else {
+                return .blocked("the first post's text link was not tappable")
+            }
+            guard self.probe("post").waitForExistence(timeout: 10) else {
+                return .blocked("the post page did not open")
+            }
+            let how = self.tapSystemBack()
+            self.settle()
+            guard !self.probe("post").exists else {
+                return .blocked("the post page is still up (back tried via \(how))")
+            }
+            guard self.tap("chrome.menuToggle") else {
+                return .blocked("the hamburger button was not tappable after the pop")
+            }
+            self.settle()
+            guard self.onScreen("menu") else {
+                return .blocked("the hamburger did not open the menu (\(self.pagerNote()))")
+            }
+            return .ready("post, back via \(how), hamburger")
+        }
+    }
+
     // MARK: The runner
 
     private enum StepResult {
@@ -421,7 +524,8 @@ final class CrownRoutingTests: XCTestCase {
 
     private func launch() {
         let app = XCUIApplication()
-        app.launchArguments = ["-PerchFixtures", "YES", "-homeKind", "forYou"]
+        app.launchArguments = ["-PerchFixtures", "YES", "-homeKind", "forYou",
+                               "-crownVariant", Self.variant]
         let launchedAt = Date()
         app.launch()
         self.app = app
@@ -650,6 +754,7 @@ final class CrownRoutingTests: XCTestCase {
         if let y0 { line += String(format: " y0=%.1f", y0) }
         if let y1 { line += String(format: " y1=%.1f", y1) }
         if let reading { line += String(format: " h=%.0f v=%.0f", reading.h, reading.v) }
+        line += " var=" + Self.variant
         line += " note=" + note
         print(line)
     }

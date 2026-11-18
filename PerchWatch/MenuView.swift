@@ -61,6 +61,7 @@ struct MenuView: View {
                     Label("Bookmarks", systemImage: "bookmark")
                 }
                 .buttonStyle(.swipeSafeRow)
+                .accessibilityIdentifier("menu.bookmarks")
 
                 NavigationLink(value: Route.saved) {
                     Label("Saved", systemImage: "arrow.down.circle")

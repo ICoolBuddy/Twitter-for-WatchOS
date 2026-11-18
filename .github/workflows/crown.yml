@@ -1,0 +1,250 @@
+name: Crown matrix
+
+# crown-lab phase 2: one job per Digital Crown experiment (`PerchWatch/CrownLab.swift`),
+# each running the crown routing UI tests against the DEBUG fixture session with
+# `-crownVariant <letters>`, then one table: scenarios x variants, k/n = how many cold
+# launches the crown scrolled the list on screen with no touch after the last step.
+on:
+  push:
+    branches: [crown-lab, claude/perch-apple-watch-x-client-jl9lf5]
+    paths:
+      - "PerchWatch/**"
+      - "PerchWatchUITests/**"
+      - "Shared/**"
+      - "project.yml"
+      - ".github/workflows/crown.yml"
+  workflow_dispatch:
+    inputs:
+      variants:
+        description: 'JSON list of variants, e.g. ["A","P"]'
+        required: false
+        default: ""
+      iterations:
+        description: "Cold launches per scenario"
+        required: false
+        default: "2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crown-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  crown:
+    runs-on: macos-26
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(github.event.inputs.variants != '' && github.event.inputs.variants || '["A","P","S","T","M","F"]') }}
+    env:
+      XCODE_APP: /Applications/Xcode_26.6.app
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode
+        run: |
+          if [ ! -d "$XCODE_APP" ]; then
+            echo "::warning::$XCODE_APP not found, using newest installed Xcode"
+            XCODE_APP=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          fi
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          xcodebuild -version
+          xcodebuild -showsdks | grep -Ei 'iphoneos|watchos'
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Print simulator runtimes and devices
+        run: |
+          xcrun simctl list runtimes
+          echo "--- watch devices ---"
+          xcrun simctl list devices available | grep -Ei 'watch' || echo "(no watch devices yet)"
+
+      - name: Pick watch simulator
+        id: sim
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess, sys
+
+          def simctl(*args):
+              return subprocess.run(["xcrun", "simctl", *args], check=True,
+                                    capture_output=True, text=True).stdout
+
+          def version_tuple(text):
+              return tuple(int(n) for n in re.findall(r"\d+", text or "0"))[:4]
+
+          runtimes = json.loads(simctl("list", "runtimes", "-j"))["runtimes"]
+          watch_runtimes = [r for r in runtimes
+                            if r.get("isAvailable")
+                            and "watch" in (r.get("platform", "") + r.get("identifier", "")).lower()]
+          if not watch_runtimes:
+              print("::error::No watchOS simulator runtime is installed")
+              sys.exit(1)
+          watch_runtimes.sort(key=lambda r: version_tuple(r.get("version") or r.get("name")))
+          runtime = watch_runtimes[-1]
+          runtime_id = runtime["identifier"]
+          print(f"Chosen runtime: {runtime.get('name')} ({runtime_id})")
+
+          devices = json.loads(simctl("list", "devices", "available", "-j"))["devices"]
+          existing = devices.get(runtime_id, [])
+
+          def device_rank(dev):
+              ident = dev.get("deviceTypeIdentifier", "")
+              if re.search(r"Apple-Watch-Series-11-46mm", ident): return 0
+              if re.search(r"Apple-Watch-Series-10-46mm", ident): return 1
+              if "46mm" in ident: return 2
+              if "Ultra" in ident: return 3
+              return 4
+
+          udid = None
+          picked = None
+          if existing:
+              existing.sort(key=device_rank)
+              picked = existing[0]
+              udid = picked["udid"]
+
+          if udid is None:
+              devicetypes = json.loads(simctl("list", "devicetypes", "-j"))["devicetypes"]
+              watch_types = [d for d in devicetypes
+                             if "watch" in (d.get("identifier", "") + d.get("name", "")).lower()]
+              if not watch_types:
+                  print("::error::No watchOS simulator device types are installed")
+                  sys.exit(1)
+              def type_rank(d):
+                  ident = d.get("identifier", "")
+                  if re.search(r"Apple-Watch-Series-11-46mm", ident): return 0
+                  if re.search(r"Apple-Watch-Series-10-46mm", ident): return 1
+                  if "46mm" in ident: return 2
+                  if "Ultra" in ident: return 3
+                  return 4
+              watch_types.sort(key=type_rank)
+              devicetype = watch_types[0]
+              print(f"Creating simulator from {devicetype.get('name')} / {runtime.get('name')}")
+              udid = simctl("create", "Perch Screens", devicetype["identifier"], runtime_id).strip()
+              picked = {"name": "Perch Screens", "udid": udid}
+
+          print(f"Chosen device: {picked.get('name')} ({udid})")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"udid={udid}\n")
+              out.write(f"runtime={runtime.get('name')}\n")
+              out.write(f"device={picked.get('name')}\n")
+          PY
+
+      - name: Boot simulator
+        run: |
+          UDID="${{ steps.sim.outputs.udid }}"
+          # Already-booted is fine; bootstatus waits until the device is usable.
+          xcrun simctl boot "$UDID" 2>/dev/null || true
+          xcrun simctl bootstatus "$UDID" -b
+
+      - name: Crown routing UI tests (${{ matrix.variant }})
+        continue-on-error: true
+        env:
+          TEST_RUNNER_CROWN_VARIANT: ${{ matrix.variant }}
+          TEST_RUNNER_CROWN_ITERATIONS: ${{ github.event.inputs.iterations || '2' }}
+        run: |
+          UDID="${{ steps.sim.outputs.udid }}"
+          mkdir -p build
+          set +e
+          xcodebuild test \
+            -project Perch.xcodeproj \
+            -scheme PerchWatchCrown \
+            -configuration Debug \
+            -destination "platform=watchOS Simulator,id=$UDID" \
+            -derivedDataPath build/DerivedData \
+            -skipPackagePluginValidation \
+            -parallel-testing-enabled NO \
+            -resultBundlePath build/crown.xcresult \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            ARCHS=arm64 \
+            > build/crown.log 2>&1
+          STATUS=$?
+          set -e
+          echo "xcodebuild test exit: $STATUS"
+          grep -E ': error:|error: ' build/crown.log | sort -u | head -40 || true
+          grep -oE 'CROWN S[0-9A-Za-z]+ [0-9]+/[0-9]+ [A-Z]+.*' build/crown.log \
+            > "build/crown-lines-${{ matrix.variant }}.txt" || true
+          echo "--- CROWN lines (${{ matrix.variant }}) ---"
+          cat "build/crown-lines-${{ matrix.variant }}.txt" || true
+          if [ ! -s "build/crown-lines-${{ matrix.variant }}.txt" ]; then
+            echo "::error::no CROWN lines for ${{ matrix.variant }} (build or harness failure)"
+            tail -80 build/crown.log
+            exit 1
+          fi
+
+      - name: Upload lines
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: crown-lines-${{ matrix.variant }}
+          path: |
+            build/crown-lines-${{ matrix.variant }}.txt
+            build/crown.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  table:
+    needs: crown
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: crown-lines-*
+          path: lines
+      - name: Scenario x variant table
+        run: |
+          python3 - <<'PY' | tee table.md
+          import collections, glob, os, re
+          pat = re.compile(r"CROWN (\S+) (\d+)/(\d+) ([A-Z]+)(.*?) var=(\S+) note=(.*)")
+          cells = collections.defaultdict(lambda: collections.Counter())
+          notes = {}
+          variants, scenarios = set(), []
+          for path in glob.glob("lines/**/crown-lines-*.txt", recursive=True):
+              for line in open(path):
+                  m = pat.search(line)
+                  if not m:
+                      continue
+                  sid, _, _, verdict, _, var, note = m.groups()
+                  variants.add(var)
+                  if sid not in scenarios:
+                      scenarios.append(sid)
+                  cells[(sid, var)][verdict] += 1
+                  notes.setdefault(sid, note.strip()[:70])
+          def key(s):
+              m = re.match(r"S(\d+)(\w*)", s)
+              return (int(m.group(1)), m.group(2)) if m else (999, s)
+          scenarios.sort(key=key)
+          vs = sorted(variants, key=lambda v: (v != "A", v))
+          print("| scenario | " + " | ".join(vs) + " | what |")
+          print("|---|" + "---|" * len(vs) + "---|")
+          for s in scenarios:
+              row = []
+              for v in vs:
+                  c = cells[(s, v)]
+                  measured = c["MOVED"] + c["STILL"]
+                  txt = f"{c['MOVED']}/{measured}" if measured else "-"
+                  extra = [f"{k[0]}{n}" for k, n in c.items() if k not in ("MOVED", "STILL")]
+                  if extra:
+                      txt += " (" + ",".join(extra) + ")"
+                  if measured and c["MOVED"] == measured:
+                      txt = "✅ " + txt
+                  elif measured:
+                      txt = "❌ " + txt
+                  row.append(txt)
+              print(f"| {s} | " + " | ".join(row) + f" | {notes.get(s, '')} |")
+          print()
+          print("k/n = cold launches where the crown scrolled the list (n = measured).")
+          print("B = blocked (navigation step failed), N = no probe, S = skipped.")
+          PY
+          cat table.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: crown-matrix
+          path: table.md
