@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import WatchKit
 import WidgetKit
@@ -73,22 +74,7 @@ enum BackgroundRefresh {
         }
 
         await app.refreshBadge(force: true)
-
-        let shown = newest?.displayed
-        AppGroup.saveSnapshot(ComplicationSnapshot(
-            unread: app.badge.notifications,
-            author: shown?.author.name,
-            text: shown.map { snippet($0.text) },
-            updated: Date()
-        ))
-        WidgetCenter.shared.reloadAllTimelines()
-    }
-
-    /// One-line version of a post that fits the rectangular complication.
-    private static func snippet(_ text: String) -> String {
-        let collapsed = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-        if collapsed.count <= 140 { return collapsed }
-        return String(collapsed.prefix(139)) + "…"
+        ComplicationPublisher.publish(newest: newest)
     }
 
     /// Run `operation`, but stop waiting for it after `timeBudget` seconds.
@@ -102,5 +88,50 @@ enum BackgroundRefresh {
             _ = await group.next()
             group.cancelAll()
         }
+    }
+}
+
+/// The single writer of the watch-face complication. The snapshot is derived from the
+/// app state (logged in, unread count, newest cached post), and republished whenever
+/// those change — so reading notifications or logging out updates the face right away
+/// instead of waiting for the next background refresh.
+@MainActor
+enum ComplicationPublisher {
+    private static var subscription: AnyCancellable?
+    private static var lastPublished: ComplicationSnapshot?
+
+    static func start() {
+        let app = AppModel.shared
+        subscription = app.$badge.map(\.notifications).removeDuplicates()
+            .combineLatest(app.$isLoggedIn.removeDuplicates(), app.$stateLoaded.removeDuplicates())
+            .filter { $0.2 }                       // not before the stored session is read
+            .sink { _ in publish() }
+    }
+
+    /// `newest`: the post a background refresh just fetched (else the newest cached one).
+    static func publish(newest: XTweet? = nil) {
+        let app = AppModel.shared
+        var snapshot = ComplicationSnapshot.empty
+        if app.isLoggedIn {
+            let kind = HomeKind(rawValue: UserDefaults.standard.string(forKey: PerchSettings.homeKind) ?? "")
+                ?? .following
+            let post = (newest ?? TimelineDiskCache.load(app.homeCacheScope(kind))
+                .flatMap(\.tweets).first { !$0.isTombstone })?.displayed
+            snapshot = ComplicationSnapshot(unread: app.badge.notifications, author: post?.author.name,
+                                            text: post.map { snippet($0.text) }, updated: Date())
+        }
+        // Each reload spends the widget's budget: only when the content changed.
+        if let last = lastPublished, last.unread == snapshot.unread, last.author == snapshot.author,
+           last.text == snapshot.text { return }
+        lastPublished = snapshot
+        AppGroup.saveSnapshot(snapshot)
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    /// One-line version of a post that fits the rectangular complication.
+    private static func snippet(_ text: String) -> String {
+        let collapsed = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        if collapsed.count <= 140 { return collapsed }
+        return String(collapsed.prefix(139)) + "…"
     }
 }

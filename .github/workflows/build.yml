@@ -109,6 +109,21 @@ jobs:
           case "$W_ID" in "$IOS_ID".*) ;; *) echo "::error::Watch bundle ID must be prefixed by iOS ID"; exit 1;; esac
           [ "$INDEP" = "true" ] || { echo "::error::WKRunsIndependentlyOfCompanionApp must be YES"; exit 1; }
           lipo -info "$APP/Perch"
+          # The complication extension must be packaged (the sideload signer may still
+          # strip it at install time; that is outside this build).
+          WIDGET=$WATCH/PlugIns/PerchWidget.appex
+          [ -d "$WIDGET" ] || { echo "::error::complication extension missing at $WIDGET"; find "$WATCH" -name '*.appex'; exit 1; }
+          WIDGET_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$WIDGET/Info.plist")
+          [ "$WIDGET_ID" = "$W_ID.widget" ] || { echo "::error::widget bundle id $WIDGET_ID must be $W_ID.widget"; exit 1; }
+          POINT=$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$WIDGET/Info.plist")
+          [ "$POINT" = "com.apple.widgetkit-extension" ] || { echo "::error::bad widget extension point: $POINT"; exit 1; }
+          # The DEBUG screenshot fixtures must never ship in a Release build (R20).
+          LEAK=$(find "$WATCH" \( -name 'home_timeline.json' -o -name 'v2_user.json' \) -print -quit)
+          if [ -n "$LEAK" ]; then
+            echo "::error::DEBUG fixtures leaked into the Release watch bundle: $LEAK"
+            find "$WATCH" -name '*.json'
+            exit 1
+          fi
           du -sh "$APP" "$WATCH"
 
       - name: Upload IPA

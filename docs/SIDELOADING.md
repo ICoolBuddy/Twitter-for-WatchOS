@@ -18,6 +18,15 @@ workflow manually (**Run workflow** → `bundle_id`). The Watch app always becom
 
 ## 2. Sign it
 
+Perch has **three** bundle IDs: `<id>`, `<id>.watchkitapp` and `<id>.watchkitapp.widget` (the
+watch-face complication). With a free Apple ID the working route is `perch-sideload wsign`
+(plumesign/Impactor): it signs the iPhone app and the Watch app, but **not the nested `.appex`**,
+and it strips `PlugIns/` — so the app works and **the complication is not installed**.
+`PerchWatch.app` and `PerchWidget.appex` also declare an App Group (`group.<id>`) for the
+complication snapshot; on a free team the signed build may not get that container. The app
+degrades gracefully without it (see `Shared/AppGroup.swift`), and Watch **Settings → iPhone**
+shows which App Group, if any, the installed app is in.
+
 Use your certificate + a provisioning profile that includes **both** UDIDs (iPhone 15 Pro **and**
 Apple Watch Series 10). A **wildcard App ID** (`TEAMID.*`) is easiest because it covers both
 bundle IDs with one profile.
@@ -28,7 +37,7 @@ bundle IDs with one profile.
 - If your tool **renames bundle IDs**, the Watch app's ID must stay `<new iOS id>.watchkitapp`
   and `WKCompanionAppBundleIdentifier` in `Watch/PerchWatch.app/Info.plist` must equal the new
   iOS ID. Otherwise iOS refuses to install the Watch app.
-- No special entitlements are needed (no app groups, no push, no iCloud).
+- Entitlements: only the App Group used by the complication (above). Push and iCloud are not used.
 
 With `zsign` for example:
 
@@ -98,7 +107,7 @@ plumesign sign --apple-id -p Perch-unsigned.ipa --register-and-install --udid <I
 
 Free-account limits:
 - Signatures expire after **7 days**. Re-run step 5 with the same IPA; the app data and Keychain survive. Alternatively, keep the Impactor GUI running, which refreshes apps from its tray.
-- Each new bundle ID uses up App IDs: **10 per 7 days**. Perch uses 2 per signing.
+- Each new bundle ID uses up App IDs: **10 per 7 days**. Perch uses 3 per signing (2 if the complication is stripped).
 - Free accounts can have **3 sideloaded apps active** at once.
 
 If `register-device` is rejected for the Watch UDID, a free account can't provision the Watch

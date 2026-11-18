@@ -26,18 +26,6 @@ enum FixtureHarness {
         return library
     }
 
-    /// `AppModel.init` starts `reloadState()` in a Task of its own. If that lands
-    /// after `install()`, it restores the real (logged out) state and the fixture
-    /// client would be replaced. Re-assert once, a second after launch; harmless
-    /// when the install already survived.
-    static func installAndReassert(screen: PerchDebugScreen?) async -> FixtureLibrary? {
-        guard PerchDebug.fixturesEnabled else { return nil }
-        guard let library = install(screen: screen) else { return nil }
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-        apply(library, screen: screen)
-        return library
-    }
-
     private static func apply(_ library: FixtureLibrary, screen: PerchDebugScreen?) {
         let client = FixtureXClient(library: library, longPostFirst: screen == .longpost)
         AppModel.shared.installDebugSession(client: client, viewer: library.viewer)
@@ -51,7 +39,9 @@ struct PerchDebugOverlay: View {
 
     var body: some View {
         Group {
-            if let screen = PerchDebug.screen {
+            // feed/longpost use the real root, which is already on screen: no second
+            // app instance on top of it.
+            if let screen = PerchDebug.screen, screen != .feed, screen != .longpost {
                 ZStack {
                     Color.black.ignoresSafeArea()
                     if let library {
@@ -64,7 +54,9 @@ struct PerchDebugOverlay: View {
         }
         .task {
             guard PerchDebug.fixturesEnabled else { return }
-            library = await FixtureHarness.installAndReassert(screen: PerchDebug.screen)
+            // Already installed synchronously in PerchWatchApp.init, before AppModel's
+            // first reloadState() could run (which then returns early): no re-assert.
+            library = FixtureHarness.install(screen: PerchDebug.screen)
         }
     }
 
@@ -72,9 +64,8 @@ struct PerchDebugOverlay: View {
     private func screenView(_ screen: PerchDebugScreen, library: FixtureLibrary) -> some View {
         switch screen {
         case .feed, .longpost:
-            // The real root: keeps the screenshot identical to the shipped UI
-            // (including the hamburger and the menu/feed pages added in R10).
-            WatchRootView()
+            // Not drawn here: the real root underneath is the screen.
+            EmptyView()
         case .menu:
             MenuView()
         case .post:

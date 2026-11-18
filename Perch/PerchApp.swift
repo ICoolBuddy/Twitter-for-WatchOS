@@ -63,12 +63,7 @@ struct PhoneRootView: View {
                 }
             }
             .sheet(isPresented: $showLogin) {
-                LoginSheet { creds in
-                    Task { @MainActor in
-                        await app.login(creds)
-                        sync.syncNow()
-                    }
-                }
+                LoginSheet { creds in await app.login(creds).message }
             }
             .alert("Perch", isPresented: Binding(get: { alert != nil }, set: { if !$0 { alert = nil } })) {
                 Button("OK", role: .cancel) {}
@@ -100,12 +95,7 @@ struct PhoneRootView: View {
                 }
             }
             NavigationLink {
-                ManualLoginView { creds in
-                    Task { @MainActor in
-                        await app.login(creds)
-                        sync.syncNow()
-                    }
-                }
+                ManualLoginView { creds in await app.login(creds).message }
             } label: {
                 Label("Paste cookies instead", systemImage: "doc.on.clipboard")
             }
@@ -132,20 +122,14 @@ struct PhoneRootView: View {
         let user = account.user ?? (isActive ? app.viewer : nil)
         return Button {
             guard !isActive else { return }
-            Task { @MainActor in
-                await app.switchAccount(to: account.id)
-                sync.syncNow()
-            }
+            Task { @MainActor in await app.switchAccount(to: account.id) }
         } label: {
             AccountRowView(user: user, isActive: isActive)
         }
         .buttonStyle(.plain)
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
-                Task { @MainActor in
-                    await app.removeAccount(account.id)
-                    sync.syncNow()
-                }
+                Task { @MainActor in await app.removeAccount(account.id) }
             } label: {
                 Label("Remove", systemImage: "trash")
             }
@@ -157,6 +141,9 @@ struct PhoneRootView: View {
             LabeledContent("Status", value: sync.statusText)
             if let d = sync.lastSent {
                 LabeledContent("Last sync", value: d.formatted(date: .omitted, time: .shortened))
+            }
+            if let e = sync.messageError {
+                LabeledContent("Live delivery", value: e)
             }
             Button("Sync to Watch now") { sync.syncNow() }
                 .disabled(!app.isLoggedIn)
@@ -267,12 +254,25 @@ struct PhoneTimelineView: View {
         .task(id: kind) {
             let client = app.client
             let k = kind
+            list.reset()                 // drop the other timeline's rows, cursor and error
             list.fetch = { cursor in
                 let p = try await client.homeTimeline(k, cursor: cursor)
                 return (p.items, p.bottomCursor, p.topCursor)
             }
             list.skip = { $0.isFiller }
             await list.refresh()
+        }
+    }
+}
+
+extension AppModel.LoginOutcome {
+    /// What the login sheet shows; nil = verified, close the sheet.
+    var message: String? {
+        switch self {
+        case .verified: return nil
+        case .rejected: return "X rejected that session. Log in again."
+        case .unverified(let e):
+            return "Saved, but X couldn't confirm it yet (\(e.localizedDescription)). Perch will retry; you can close this."
         }
     }
 }

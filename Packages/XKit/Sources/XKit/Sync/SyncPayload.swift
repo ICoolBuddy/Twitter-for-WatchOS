@@ -21,16 +21,25 @@ public struct SyncPayload: Codable, Sendable, Equatable {
     /// True when `remoteOverrideURL` is the sender's current value, so `nil` means "cleared".
     /// Absent in payloads from older builds, where `nil` means "don't change it".
     public var remoteOverrideIsAuthoritative: Bool?
+    /// The iPhone's active account; used only when the Watch has none yet (a fresh Watch
+    /// adopts it instead of the oldest account). Absent in older payloads.
+    public var activeAccountId: String?
+    /// Version of the iPhone's endpoint config. The config itself is sent only when it
+    /// changed or the Watch asked for it; a Watch whose version differs asks again.
+    public var configUpdatedAt: String?
     public var sentAt: Date
 
     public init(command: Command, credentials: XCredentials? = nil, accounts: [XAccount]? = nil,
                 config: EndpointConfig? = nil, material: TransactionMaterial? = nil,
                 remoteOverrideURL: String? = nil, remoteOverrideIsAuthoritative: Bool? = nil,
+                activeAccountId: String? = nil, configUpdatedAt: String? = nil,
                 sentAt: Date = Date()) {
         self.command = command; self.credentials = credentials; self.accounts = accounts
         self.config = config; self.material = material
         self.remoteOverrideURL = remoteOverrideURL
         self.remoteOverrideIsAuthoritative = remoteOverrideIsAuthoritative
+        self.activeAccountId = activeAccountId
+        self.configUpdatedAt = configUpdatedAt
         self.sentAt = sentAt
     }
 
@@ -54,8 +63,13 @@ public struct SyncPayload: Codable, Sendable, Equatable {
         case .logout:
             await store.wipe()
         case .update:
+            let hadActive = await store.activeAccountId != nil
             if let accounts {
                 await store.replaceAccounts(accounts)
+                // First sync on a fresh Watch: adopt the iPhone's account, not `accounts.first`.
+                if !hadActive, let id = activeAccountId, accounts.contains(where: { $0.id == id }) {
+                    await store.setActiveAccount(id)
+                }
             } else if let credentials {
                 // Payload from an older iPhone build: a single account.
                 _ = await store.upsertAccount(credentials, user: nil)

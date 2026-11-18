@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 import SwiftUI
 import XKit
@@ -101,3 +102,4 @@ struct PerchDebugRootModifier: ViewModifier {
         #endif
     }
 }
+#endif

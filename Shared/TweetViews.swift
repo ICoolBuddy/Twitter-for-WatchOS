@@ -522,7 +522,9 @@ struct ErrorStateView: View {
                     .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 Button("Sync from iPhone") {
                     guard !SwipeGuard.isActive else { return }
-                    app.sync?.syncNow(); message = "Requested…"
+                    app.sync?.syncNow()
+                    // The channel's own status, not "Requested…": it may not have asked.
+                    message = app.sync?.statusText
                 }
                     .frame(maxWidth: .infinity)
                 #else

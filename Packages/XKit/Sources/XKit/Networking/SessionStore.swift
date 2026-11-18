@@ -133,6 +133,8 @@ public actor XSessionStore {
     /// Replaces the whole list (used by the Watch when the iPhone syncs its accounts).
     /// The current active account is kept when it is still present, else the first wins.
     public func replaceAccounts(_ list: [XAccount]) {
+        // A sync delivers the same list again and again: no Keychain write, no event.
+        if list == accounts, (list.isEmpty || activeAccountId != nil) { return }
         accounts = list
         if list.isEmpty {
             activeAccountId = nil
@@ -174,6 +176,7 @@ public actor XSessionStore {
     }
 
     public func setConfig(_ c: EndpointConfig) {
+        guard c != config else { return }       // ~35 KB file: don't rewrite an identical one
         config = c
         write(c.encoded(), name: "endpoints.json")
         notify(.config)

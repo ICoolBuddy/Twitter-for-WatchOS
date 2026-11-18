@@ -5,7 +5,8 @@ import XKit
 /// Implemented by the platform-specific WatchConnectivity bridges.
 @MainActor
 protocol SyncChannel: AnyObject {
-    /// iPhone: push credentials/config/material to the Watch. Watch: ask the iPhone for them.
+    /// iPhone: push the current state now (it also pushes by itself whenever the synced
+    /// state changes). Watch: ask the iPhone for it.
     func syncNow()
     /// Tell the other device to log out too.
     func sendLogout()
@@ -153,13 +154,34 @@ final class AppModel: ObservableObject {
 
     // MARK: Account
 
-    func login(_ creds: XCredentials) async {
-        _ = await store.upsertAccount(creds, user: nil)
+    enum LoginOutcome: Equatable {
+        /// X answered with the profile: the session works.
+        case verified
+        /// Saved, but X could not be asked (offline, rate limit, server): retried later.
+        case unverified(XError)
+        /// X rejected the cookies; the account was not kept.
+        case rejected
+    }
+
+    /// Stores the account and verifies it with one authenticated request (the profile,
+    /// which the account pickers need anyway). Only a definitive auth rejection removes
+    /// it again; a 403 here usually means stale signing material, not a bad session.
+    @discardableResult
+    func login(_ creds: XCredentials) async -> LoginOutcome {
+        let id = await store.upsertAccount(creds, user: nil)
         rebuildClient()
-        await reloadState()
-        sync?.syncNow()
+        await reloadState()                  // starts the profile fetch (unless cached)
+        await viewerTask?.value
         // Signing material makes some endpoints (search) work; best effort.
         Task { try? await self.refreshMaterial() }
+        if viewer != nil, activeAccountId == id { return .verified }
+        let error = viewerError ?? .network("No response")
+        if error == .unauthorized || error == .notLoggedIn {
+            await store.removeAccount(id)
+            await reloadState()
+            return .rejected
+        }
+        return .unverified(error)
     }
 
     /// Switches the device-local active account. The other device keeps its own.
@@ -174,7 +196,7 @@ final class AppModel: ObservableObject {
         await reloadState()
     }
 
-    func removeAccount(_ id: String, propagate: Bool = true) async {
+    func removeAccount(_ id: String) async {
         let wasActive = activeAccountId == id
         await store.removeAccount(id)
         TimelineDiskCache.clear(account: id)
@@ -186,9 +208,10 @@ final class AppModel: ObservableObject {
             rebuildClient()
         }
         await reloadState()
-        if propagate { sync?.syncNow() }
     }
 
+    /// `propagate`: tell the other device to log out too (the iPhone's own sync would
+    /// also send the empty state; the Watch can only tell the iPhone this way).
     func logout(propagate: Bool = true) async {
         await store.wipe()
         TimelineDiskCache.clearAll()
@@ -263,21 +286,18 @@ final class AppModel: ObservableObject {
             }
         }
         await reloadState()
-        sync?.syncNow()
         if let lastError { throw lastError }
     }
 
     func refreshMaterial() async throws {
         try await materialProvider.material(force: true)
         await reloadMaterialSummary()
-        sync?.syncNow()
     }
 
     func setRemoteOverride(_ s: String) async {
         let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
         await store.setRemoteOverrideURL(trimmed.isEmpty ? nil : URL(string: trimmed))
         await reloadState()
-        sync?.syncNow()
     }
 
     // MARK: Badge

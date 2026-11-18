@@ -35,11 +35,10 @@ struct ComplicationSnapshot: Codable, Equatable, Sendable {
 enum AppGroup {
     static let snapshotKey = "perch.complication.snapshot"
 
-    /// The app group the process is really a member of, if any.
-    static var identifier: String? {
-        candidates.first {
-            FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil
-        }
+    /// The app group the process is really a member of, if any. Resolved once: the
+    /// container lookup used to run on every read and write.
+    static let identifier: String? = candidates.first {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil
     }
 
     /// Defaults the app and the widget both read and write.

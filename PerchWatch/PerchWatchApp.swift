@@ -1,6 +1,5 @@
 import SwiftUI
 import WatchKit
-import WidgetKit
 import XKit
 
 @main
@@ -15,13 +14,15 @@ struct PerchWatchApp: App {
         PerchSettings.registerDefaults()
         OfflineCache.removeLegacyFiles()
         // Cached threads/profiles belong to the session that fetched them.
-        // Cached threads/profiles and the complication belong to the session that
-        // fetched them.
-        AppModel.shared.onLogout = {
-            OfflineCache.clear()
-            AppGroup.clearSnapshot()
-            WidgetCenter.shared.reloadAllTimelines()
-        }
+        // Cached threads/profiles belong to the session that fetched them. (The
+        // complication follows the login state by itself: ComplicationPublisher.)
+        AppModel.shared.onLogout = { OfflineCache.clear() }
+        ComplicationPublisher.start()
+        #if DEBUG
+        // Screenshot harness: install the fixture session in the same main-actor turn
+        // that created AppModel, so its first reloadState() (a queued Task) sees it.
+        PerchDebug.install()
+        #endif
     }
 
     /// The app's root view. The screenshot harness hook lives in

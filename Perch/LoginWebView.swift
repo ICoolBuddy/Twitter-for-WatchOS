@@ -82,7 +82,12 @@ struct LoginWebView: UIViewRepresentable {
             guard !finished, let store = webView?.configuration.websiteDataStore.httpCookieStore else { return }
             store.getAllCookies { [weak self] cookies in
                 guard let self, !self.finished else { return }
-                let xCookies = cookies.filter { $0.domain.hasSuffix("x.com") || $0.domain.hasSuffix("twitter.com") }
+                // Exact domains or their subdomains: `hasSuffix("x.com")` also matched
+                // e.g. "netflix.com".
+                let xCookies = cookies.filter {
+                    let d = $0.domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+                    return d == "x.com" || d.hasSuffix(".x.com") || d == "twitter.com" || d.hasSuffix(".twitter.com")
+                }
                 func value(_ name: String) -> String? { xCookies.first { $0.name == name }?.value }
                 guard let auth = value("auth_token"), let ct0 = value("ct0") else {
                     self.parent.status = "Log in to X normally (2FA works). Perch picks up the session automatically."
@@ -112,7 +117,10 @@ struct LoginSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var status = "Clearing the previous session…"
     @State private var preparing = true
-    let onDone: (XCredentials) -> Void
+    @State private var verifying = false
+    /// Verifies the session; returns nil when it worked (the sheet closes), else the
+    /// message to show while the sheet stays open.
+    let onDone: (XCredentials) async -> String?
 
     var body: some View {
         NavigationStack {
@@ -133,8 +141,14 @@ struct LoginSheet: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     LoginWebView(onCredentials: { creds in
-                        onDone(creds)
-                        dismiss()
+                        guard !verifying else { return }
+                        verifying = true
+                        status = "Checking the session with X…"
+                        Task { @MainActor in
+                            let problem = await onDone(creds)
+                            verifying = false
+                            if let problem { status = problem } else { dismiss() }
+                        }
                     }, status: $status)
                 }
             }
@@ -159,7 +173,10 @@ struct ManualLoginView: View {
     @State private var authToken = ""
     @State private var ct0 = ""
     @State private var twid = ""
-    let onDone: (XCredentials) -> Void
+    @State private var verifying = false
+    @State private var problem: String?
+    /// Verifies the session; nil = worked (the view closes), else the message to show.
+    let onDone: (XCredentials) async -> String?
 
     var creds: XCredentials { XCredentials(authToken: authToken, ct0: ct0, twid: twid.isEmpty ? nil : twid) }
 
@@ -179,11 +196,19 @@ struct ManualLoginView: View {
                 Text("On a computer: open x.com while logged in → DevTools → Application/Storage → Cookies → https://x.com. Copy the values of auth_token and ct0. They are stored only in this device's Keychain and sent to your Watch.")
             }
             Section {
-                Button("Save") {
-                    onDone(creds)
-                    dismiss()
+                Button(verifying ? "Checking with X…" : "Save") {
+                    verifying = true
+                    problem = nil
+                    Task { @MainActor in
+                        let result = await onDone(creds)
+                        verifying = false
+                        if let result { problem = result } else { dismiss() }
+                    }
                 }
-                .disabled(!creds.looksValid)
+                .disabled(!creds.looksValid || verifying)
+                if let problem {
+                    Text(problem).font(.footnote).foregroundStyle(.orange)
+                }
             } footer: {
                 if !authToken.isEmpty && !creds.looksValid {
                     Text("auth_token should be ~40 hex characters, ct0 at least 32.")

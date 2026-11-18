@@ -50,6 +50,14 @@ struct WatchSettingsView: View {
 
             Section("iPhone") {
                 Text(sync.statusText).font(.caption2)
+                // Diagnostics: is the complication's shared container available on this
+                // (sideloaded) build, and how big was the last sync.
+                Text("App Group: \(AppGroup.identifier ?? "none (complication off)")")
+                    .font(.caption2).foregroundStyle(.secondary)
+                if sync.lastPayloadBytes > 0 {
+                    Text("Last payload: \(ByteCountFormatter.string(fromByteCount: Int64(sync.lastPayloadBytes), countStyle: .file))")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
                 Button {
                     guard !SwipeGuard.isActive else { return }
                     sync.syncNow()
