@@ -36,9 +36,11 @@ That branch is a fast-forward of `crown-lab` plus the phase-2 work; `crown-lab` 
 are untouched.
 
 - Baseline + experiments measured: see `docs/crown/PHASE2-REPORT.md`.
-- **Fix (commit a5ebc66):** `RootPager` is the system `TabView(.page)` pager (horizontal, same
+- **Fix (commits a5ebc66 + 13e2467):** `RootPager` is the system `TabView(.page)` pager (horizontal, same
   pages/look); the root media viewer is a `fullScreenCover` (user decision: system X + clock
-  rather than the overlay look). Experiment switches (`CrownLab.swift`) removed.
+  rather than the overlay look); a feed swiped back to rebuilds its scroll view and returns to
+  the post that was on top (S3). Experiment switches (`CrownLab.swift`) removed. Verified: all
+  measured scenarios pass (runs 44328430162, 44336548833).
 - Final verification runs: Crown matrix (variant A = shipped) on S1–S6, S10–S12, S14, S16,
   S18, S19, S21–S23, plus `Watch screens` (screenshots) on the branch.
 - Known gaps: Likes/Notifications pushes from the menu are not measured (harness row taps);

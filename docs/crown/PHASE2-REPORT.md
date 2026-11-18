@@ -102,3 +102,14 @@ viewer (see the `media` screenshot), which the overlay viewer had hidden.
 
 Still unmeasured (harness): Likes/Notifications pushed from the menu (row taps), media opened
 inside the profile sheet.
+
+## Shipped fix — verification on the branch (variant A = shipped code)
+
+Run 44328430162 (commit a5ebc66: system pager + viewer as `fullScreenCover`): S1, S2, S4, S5,
+S6, S10, S11, S12, S14, S18, S19, S22, S23 ✅; **S3 ❌ 0/2** (swiping back to a feed that was
+already shown: a page swipe back does not make its scroll view appear again).
+
+Run 44336548833 (commit 13e2467: a feed swiped back to gets a new scroll view identity and is
+scrolled back to the post that was at the top): S2, **S3**, S4, S5, S6, S10, S11, S12 all ✅ 2/2.
+
+Release build (Build workflow) green on both commits.
