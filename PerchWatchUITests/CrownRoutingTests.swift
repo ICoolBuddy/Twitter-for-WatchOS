@@ -615,8 +615,8 @@ final class CrownRoutingTests: XCTestCase {
             if finger {
                 let start = self.app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
                 let end = self.app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95))
-                start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow,
-                            thenHoldForDuration: 0.4)
+                // The plain variant (the velocity/hold overload may not exist on watchOS).
+                start.press(forDuration: 0.1, thenDragTo: end)
             } else {
                 // Which crown direction scrolls up is not ours to assume: the one that
                 // leaves the probe at (or above) the top is the refresh direction.
