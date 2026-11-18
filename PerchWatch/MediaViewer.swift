@@ -62,6 +62,7 @@ struct MediaViewer: View {
             }
 
             closeGesture
+            accessibleClose
             #if DEBUG
             // Crown routing tests: "the viewer is open", whichever close button it has.
             Text(verbatim: "viewer")
@@ -75,6 +76,7 @@ struct MediaViewer: View {
         .background(Color.black)
         .simultaneousGesture(dismissDrag)
         .modifier(CoverChrome(hidden: inCover))
+        .accessibilityAction(named: "Close") { close() }
         .onChange(of: selection, initial: true) { _, index in
             // `zoomed` decides whether a downward drag pans or closes, and only the
             // visible page can write it: paging away from a zoomed photo used to leave
@@ -179,6 +181,17 @@ struct MediaViewer: View {
         .opacity(0)
         .accessibilityHidden(true)
         .handGestureShortcut(.primaryAction)
+    }
+
+    /// There is no visible close button, and swipe down is a VoiceOver gesture:
+    /// VoiceOver gets a "Close" element and a named "Close" action instead.
+    private var accessibleClose: some View {
+        Color.clear
+            .frame(width: 1, height: 1)
+            .accessibilityElement()
+            .accessibilityLabel("Close")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { close() }
     }
 
     private var emptyState: some View {

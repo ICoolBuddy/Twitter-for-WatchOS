@@ -18,14 +18,13 @@ final class VideoPlayback: ObservableObject {
     @Published private(set) var buffered: Double = 0
     /// True until the first frame has really been shown (poster + bar on top).
     @Published private(set) var loading = true
-    /// Playing stalled for more data after it had started.
-    @Published private(set) var stalled = false
     @Published private(set) var failed: String?
-    @Published private(set) var endedFlag = false
-    /// Playback position / length, for the timestamp under the player.
-    @Published private(set) var position: Double = 0
-    @Published private(set) var duration: Double = 0
-    @Published private(set) var isPlaying = false
+    // Not published: the page draws none of these (the system player has its own
+    // controls); they feed Now Playing and the remote commands only.
+    private(set) var endedFlag = false
+    private(set) var position: Double = 0
+    private(set) var duration: Double = 0
+    private(set) var isPlaying = false
 
     private var levels: [XVideoVariant] = []
     private var mediaId: String?
@@ -70,7 +69,6 @@ final class VideoPlayback: ObservableObject {
         retriedNetworkFailure = false
         endedFlag = false
         loading = true
-        stalled = false
         buffered = 0
         failed = nil
         position = 0
@@ -155,7 +153,6 @@ final class VideoPlayback: ObservableObject {
         let level = Self.chosenLevel[mediaId] ?? pickLevel()
         Self.chosenLevel[mediaId] = level
         failed = nil
-        stalled = false
         loading = true
         buffered = 0
         duration = 0
@@ -324,6 +321,9 @@ final class VideoPlayback: ObservableObject {
         let now = player.currentTime().seconds
         if scrubTarget == nil, now.isFinite, abs(now - position) > 0.05 { position = now }
         let playing = player.timeControlStatus == .playing
+        // Replayed or scrubbed back with the system player's own controls: no
+        // longer ended, so a later Play (Now Playing, Bluetooth) must not restart.
+        if endedFlag, playing { endedFlag = false }
         if isPlaying != playing {
             isPlaying = playing
             updateNowPlaying(force: true)
@@ -340,8 +340,6 @@ final class VideoPlayback: ObservableObject {
         // keep the poster until the clock has really moved, so the reader never
         // sees the player's black frame.
         if loading, playing, now > 0.15 { loading = false }
-        let waiting = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
-        if stalled != (!loading && waiting) { stalled = !loading && waiting }
     }
 
     private func bufferedSeconds(_ item: AVPlayerItem) -> Double {

@@ -25,10 +25,6 @@ struct HomeView: View {
     /// Where the reader was, owned by `RootPager` so it survives this page being
     /// rebuilt (`returnToken`) or dropped by the system pager while off screen.
     let place: FeedPlace
-    @State private var configuredFor: String?
-    /// The account changed since this page was first configured: the next refresh
-    /// replaces the list instead of merging into it.
-    @State private var accountChanged = false
     /// `PagedList` keeps the closures it was configured with, so they cannot read the
     /// `isActive` struct property later: this box carries the live value.
     @State private var visibility = PageVisibility()
@@ -175,10 +171,18 @@ struct HomeView: View {
 
     private func configure() {
         let key = taskKey
-        guard configuredFor != key else { return }
-        // Not the first configure of this page: the account (or login) changed.
-        accountChanged = configuredFor != nil
-        configuredFor = key
+        // Kept in `place` (owned by RootPager, like the list): a page the system
+        // pager rebuilt is not a new configuration, and resetting the shared list
+        // there threw away the posts and the place it had just restored.
+        guard place.configuredFor != key else { return }
+        // Not the first configure of this feed: the account (or login) changed.
+        place.accountChanged = place.configuredFor != nil
+        if place.accountChanged {
+            // Another account's reading place means nothing here.
+            place.liveTopID = nil
+            place.savedTopID = nil
+        }
+        place.configuredFor = key
         list.reset()
 
         let client = app.client
@@ -208,13 +212,13 @@ struct HomeView: View {
     private func start() async {
         guard !list.hasLoadedFirstPage else { return }
         if !list.isEmpty { FeedActivity.shared.markContentReady() }   // cached posts
-        if list.isEmpty || autoRefreshOnOpen || accountChanged {
+        if list.isEmpty || autoRefreshOnOpen || place.accountChanged {
             // Merge, so posts already on screen are never reordered or dropped: only
             // new ones appear above them. After an account switch, replace.
-            await refresh(merge: !accountChanged)
+            await refresh(merge: !place.accountChanged)
         }
         if !Task.isCancelled {
-            if list.hasLoadedFirstPage { accountChanged = false }
+            if list.hasLoadedFirstPage { place.accountChanged = false }
             FeedActivity.shared.markContentReady()
         }
     }
@@ -234,6 +238,11 @@ final class FeedPlace {
     /// `liveTopID` at the moment the reader left the feed: what a rebuilt scroll
     /// view returns to.
     var savedTopID: String?
+    /// The account/login the shared list was configured for (`HomeView.taskKey`).
+    var configuredFor: String?
+    /// The account changed since the feed was first configured: the next refresh
+    /// replaces the list instead of merging into it.
+    var accountChanged = false
 }
 
 /// Whether a feed page is the one on screen, readable from closures stored earlier.

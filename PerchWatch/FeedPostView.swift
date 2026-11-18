@@ -36,17 +36,24 @@ final class MediaPresenter: ObservableObject {
         withAnimation(.easeInOut(duration: 0.18), completionCriteria: .logicallyComplete) {
             self.target = target
         } completion: {
-            self.isTransitioning = false
+            self.endTransition()
         }
     }
 
     func close() {
-        guard target != nil, !isTransitioning else { return }
+        guard target != nil else { return }
+        // The viewer marks itself closing for good on the first close, so a close
+        // during the open animation must not be dropped (it locked the viewer).
+        guard !isTransitioning else {
+            pendingClose = true
+            return
+        }
+        pendingClose = false
         beginTransition()
         withAnimation(.easeInOut(duration: 0.18), completionCriteria: .logicallyComplete) {
             self.target = nil
         } completion: {
-            self.isTransitioning = false
+            self.endTransition()
         }
     }
 
@@ -59,8 +66,18 @@ final class MediaPresenter: ObservableObject {
         transitionSafety = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 600_000_000)
             guard !Task.isCancelled else { return }
-            self?.isTransitioning = false
+            self?.endTransition()
         }
+    }
+
+    /// A close asked for while a transition ran.
+    private var pendingClose = false
+
+    private func endTransition() {
+        guard isTransitioning else { return }
+        isTransitioning = false
+        transitionSafety?.cancel()
+        if pendingClose { close() }
     }
 
     private var transitionSafety: Task<Void, Never>?
