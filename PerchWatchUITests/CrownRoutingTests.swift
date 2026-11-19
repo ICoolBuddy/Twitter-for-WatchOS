@@ -640,17 +640,13 @@ final class CrownRoutingTests: XCTestCase {
                 // Which crown direction scrolls up is not ours to assume: the one that
                 // leaves the probe at (or above) the top is the refresh direction.
                 let before = self.read("feed.forYou")?.y ?? 0
-                for _ in 0..<10 {
-                    XCUIDevice.shared.rotateDigitalCrown(delta: -CrownRoutingTests.rotationDelta)
-                    poll()
-                }
+                self.rotate(clockwise: false, times: 10)
+                // Poll before the (slow) probe read: "Updated" is only up for 1.5 s.
+                poll()
                 let after = self.read("feed.forYou")?.y ?? 0
                 if after > before + 20 {
                     // That scrolled down: go back to the top and turn the other way.
-                    for _ in 0..<20 {
-                        XCUIDevice.shared.rotateDigitalCrown(delta: CrownRoutingTests.rotationDelta)
-                        poll()
-                    }
+                    self.rotate(clockwise: true, times: 20)
                 }
                 poll()
                 // `os` = the overscroll travel the crown actually produced. 0 means the

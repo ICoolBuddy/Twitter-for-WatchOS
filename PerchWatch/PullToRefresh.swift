@@ -34,7 +34,7 @@ struct PullToRefresh: ViewModifier {
     static let crownThreshold: CGFloat = 20
     /// The crown's rubber band unwinds by itself; if it stops short of the
     /// threshold, forget the partial pull instead of leaving the arrow up.
-    static let crownIdle: UInt64 = 600_000_000
+    static let crownIdle: UInt64 = 900_000_000
 
     @State private var tracker = OverscrollTracker()
     @State private var pull = PullState()
