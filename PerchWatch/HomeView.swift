@@ -37,6 +37,10 @@ struct HomeView: View {
     @State private var restoredToken = 0
     /// Black over the list while a rebuilt scroll view is put back in place.
     @State private var coverWhileRestoring = false
+    /// The restore landed once: give the layout a beat to settle before uncovering.
+    @State private var settleScheduled = false
+    /// Invalidates a scheduled uncover when a later drift re-aims the list.
+    @State private var restoreGen = 0
 
     private var covered: Bool { coverWhileRestoring || returnToken != restoredToken }
 
@@ -84,23 +88,36 @@ struct HomeView: View {
                     place.savedDepth = place.liveDepth
                     place.savedHeight = place.liveHeight
                 }
-                if coverWhileRestoring, let id = place.savedTopID,
-                   place.liveTopID == id, abs(place.liveDepth - place.savedDepth) <= 40 {
-                    // Same post, same height on screen: the restore landed.
-                    #if DEBUG
-                    PerchTrace.place = "landed \(id) d=\(Int(place.liveDepth))"
-                    #endif
-                    coverWhileRestoring = false
-                    restoredToken = returnToken
-                } else if coverWhileRestoring, let id = place.savedTopID,
-                          place.restoreTries < 8 {
-                    // A rebuilt scroll view sometimes ignores scrollTo until it is
-                    // laid out; every geometry pass is proof that it is. Re-aim.
-                    place.restoreTries += 1
-                    #if DEBUG
-                    PerchTrace.place = "re-aim \(place.restoreTries) live=\(place.liveTopID ?? "-") d=\(Int(place.liveDepth)) covered=1"
-                    #endif
-                    proxy.scrollTo(id, anchor: place.savedAnchor)
+                if coverWhileRestoring, let id = place.savedTopID {
+                    let landed = place.liveTopID == id && abs(place.liveDepth - place.savedDepth) <= 40
+                    if landed {
+                        // Same post, same height. Hold the cover a beat: the rebuilt
+                        // LazyVStack corrects its estimates a frame or two later, and a
+                        // drift in that correction comes back here as a re-aim.
+                        if !settleScheduled {
+                            settleScheduled = true
+                            let gen = restoreGen
+                            #if DEBUG
+                            PerchTrace.place = "landed \(id) d=\(Int(place.liveDepth))"
+                            #endif
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                guard gen == restoreGen, coverWhileRestoring else { return }
+                                coverWhileRestoring = false
+                                restoredToken = returnToken
+                            }
+                        }
+                    } else if place.restoreTries < 12 {
+                        // A rebuilt scroll view sometimes ignores scrollTo until it is
+                        // laid out; every geometry pass is proof that it is. Re-aim and
+                        // restart the settle window.
+                        place.restoreTries += 1
+                        settleScheduled = false
+                        restoreGen += 1
+                        #if DEBUG
+                        PerchTrace.place = "re-aim \(place.restoreTries) live=\(place.liveTopID ?? "-") d=\(Int(place.liveDepth))"
+                        #endif
+                        proxy.scrollTo(id, anchor: place.savedAnchor)
+                    }
                 }
             }
             #if DEBUG
@@ -251,6 +268,8 @@ struct HomeView: View {
         PerchTrace.place = "restore called saved=\(place.savedTopID ?? "-") d=\(Int(place.savedDepth))/\(Int(place.savedHeight)) off=\(Int(saved))"
         #endif
         coverWhileRestoring = true
+        settleScheduled = false
+        restoreGen += 1
         place.restoreTries = 0
         DispatchQueue.main.async {
             // The saved row at the saved depth. A `scrollPosition` binding was tried

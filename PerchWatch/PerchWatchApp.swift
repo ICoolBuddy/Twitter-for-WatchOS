@@ -253,14 +253,13 @@ struct RootPager: View {
         // The page is the source of truth for the swipe; the stored kind follows
         // it so the menu checkmark, background refresh and account switch agree.
         .onChange(of: page) { old, value in
-            // The feed just left: rebuild its scroll view now, while it is off screen,
-            // so returning hands the crown to it again. The exact offset is restored.
-            if old != value, old == 1 || old == 2 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    if old == 1 { forYouReturn += 1 } else { followingReturn += 1 }
-                }
-            }
             guard value != 0 else { return }
+            // Rebuild the feed that is *arriving*, while it is on screen: a scroll view
+            // that appears in view is what watchOS hands the crown to (the off-screen
+            // rebuild made S3 flaky). Its exact place is restored before the cover lifts.
+            if old != value, value == 1 || value == 2 {
+                if value == 1 { forYouReturn += 1 } else { followingReturn += 1 }
+            }
             lastFeed = value
             let kind = value == 2 ? HomeKind.following : HomeKind.forYou
             if kindRaw != kind.rawValue { kindRaw = kind.rawValue }
