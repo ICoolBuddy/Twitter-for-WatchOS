@@ -95,7 +95,6 @@ struct HomeView: View {
                     restoredToken = returnToken
                 }
             }
-            .id(returnToken)
             #if DEBUG
             .overlay(alignment: .topTrailing) {
                 Text(verbatim: "place")
@@ -107,9 +106,6 @@ struct HomeView: View {
                     .accessibilityValue(placeDebug)
             }
             #endif
-            .onChange(of: returnToken) { _, _ in
-                if isActive { restore(proxy) }
-            }
             .onAppear {
                 // A page the system pager dropped and built again: put it back too.
                 if isActive { restore(proxy) }
@@ -145,6 +141,11 @@ struct HomeView: View {
             }
             .onDisappear { list.cancel() }
         }
+        // The id belongs to the whole reader, not the ScrollView inside it: a proxy
+        // captured from a reader whose child was just replaced points at the old
+        // scroll view, and `scrollTo` silently did nothing (the rebuilt feed landed
+        // on the top or on whatever post the estimates put there).
+        .id(returnToken)
     }
 
     /// X-style tabs: both feeds named, the current one bold white with a blue bar.

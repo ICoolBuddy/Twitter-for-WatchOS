@@ -14,11 +14,12 @@ import SwiftUI
 /// whether the list had any room to move at all (an empty Likes list cannot scroll,
 /// and that must not be reported as "the crown was not routed").
 ///
-/// `os` and `mx` are for the crown-refresh tests: `os` is the positive overscroll
-/// travel accumulated since launch (exactly what `PullToRefresh`'s crown counter
-/// adds up) and `mx` the deepest single overscroll. `os == 0` after turning the
-/// crown at the top means the crown never rubber-bands there at all, so no
-/// threshold can ever fire.
+/// `os`, `mx`, `fr` and `dip` are for the crown-refresh tests: `os` is the positive
+/// overscroll travel since launch, `mx` the deepest single overscroll, `fr` the part
+/// of `os` that started from the top (a fresh nudge, which is how a crown turn looks
+/// compared to a finger drag), and `dip` how often the band unwound back to the top
+/// (a finger stays pulled, the crown's does not). `os == 0` after turning the crown
+/// at the top means it never rubber-bands there, so no threshold could ever fire.
 ///
 /// Inert by construction: no `.focusable`, no `@FocusState`, no `.disabled`, no
 /// gestures (`allowsHitTesting(false)` on the marker), and the marker lives in an
@@ -59,19 +60,27 @@ struct CrownScrollState: Equatable {
 
 /// Holds the last reading; only the marker observes it.
 final class CrownProbeBox: ObservableObject {
-    @Published var text = "y=0.0 h=0 v=0 os=0.0 mx=0.0"
+    @Published var text = "y=0.0 h=0 v=0 os=0.0 mx=0.0 fr=0.0 dip=0"
     private var last: CGFloat = 0
     private var travel: CGFloat = 0
     private var peak: CGFloat = 0
+    private var fresh: CGFloat = 0
+    private var dips = 0
 
     func record(_ s: CrownScrollState) {
         let os = s.overscroll
-        if os > last { travel += os - last }
+        if os > last {
+            let delta = os - last
+            travel += delta
+            if last <= 2 { fresh += delta }
+        } else if last > 2, os <= 2 {
+            dips += 1
+        }
         last = os
         peak = max(peak, os)
-        text = String(format: "y=%.1f h=%.0f v=%.0f os=%.1f mx=%.1f",
+        text = String(format: "y=%.1f h=%.0f v=%.0f os=%.1f mx=%.1f fr=%.1f dip=%d",
                       Double(s.offsetY), Double(s.contentHeight), Double(s.viewportHeight),
-                      Double(travel), Double(peak))
+                      Double(travel), Double(peak), Double(fresh), dips)
     }
 }
 

@@ -640,7 +640,8 @@ final class CrownRoutingTests: XCTestCase {
                 // `os` = the overscroll travel the crown actually produced. 0 means the
                 // crown never rubber-bands at the top, so no threshold can fire.
                 if let r = self.read("feed.forYou") {
-                    crownNote = String(format: " (crown overscroll os=%.1f mx=%.1f)", r.os, r.mx)
+                    crownNote = String(format: " (crown overscroll os=%.1f mx=%.1f fresh=%.1f dip=%.0f)",
+                                       r.os, r.mx, r.fr, r.dip)
                 }
             }
             // The status line says the refresh ran (it shows "Updated" for 1 s).
@@ -1051,6 +1052,9 @@ final class CrownRoutingTests: XCTestCase {
         /// Positive overscroll travel accumulated since launch (crown refresh input).
         var os = 0.0
         var mx = 0.0
+        /// The part of `os` that started from the top, and how often it unwound.
+        var fr = 0.0
+        var dip = 0.0
 
         init?(_ raw: String) {
             var sawY = false
@@ -1063,6 +1067,8 @@ final class CrownRoutingTests: XCTestCase {
                 case "v": v = value
                 case "os": os = value
                 case "mx": mx = value
+                case "fr": fr = value
+                case "dip": dip = value
                 default: break
                 }
             }
