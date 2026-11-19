@@ -11,11 +11,6 @@ struct HomeView: View {
     let kind: HomeKind
     /// This page is the one the root pager shows (crown focus follows it).
     var isActive: Bool = true
-    /// Bumped by `RootPager` when this feed is swiped back to. The scroll view gets a
-    /// new identity so it *appears* again — watchOS hands the Digital Crown to a
-    /// scroll view that appears, not to one a page swipe merely brings back (crown
-    /// routing test S3) — and the reader is put back on the post they were reading.
-    var returnToken = 0
     /// Tapping the other tab at the top switches feeds (the pager owns the page).
     var onSelect: ((HomeKind) -> Void)? = nil
 
@@ -24,20 +19,13 @@ struct HomeView: View {
 
     /// Owned by `RootPager`, which also draws the edge glow from it.
     @ObservedObject var list: PagedList<TimelineItem>
-    /// Where the reader was, owned by `RootPager` so it survives this page being
-    /// rebuilt (`returnToken`) or dropped by the system pager while off screen.
+    /// Where the reader was (impressions + debug evidence), owned by `RootPager`.
     let place: FeedPlace
     /// `PagedList` keeps the closures it was configured with, so they cannot read the
     /// `isActive` struct property later: this box carries the live value.
     @State private var visibility = PageVisibility()
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
-    /// False only for a freshly created page (the system pager can drop an
-    /// off-screen page and build it again): that one restores `place` on appear.
-    @State private var hasAppeared = false
-    /// Black over the list while a restore lands (a frame or two), so a page that
-    /// comes back never shows the top first and then jumps to the reader's place.
-    @State private var coverWhileRestoring = false
 
     /// The top of the list: a zero-height anchor laid out before any row, so a refresh
     /// can scroll up without waiting for the new first post to exist.
@@ -64,16 +52,12 @@ struct HomeView: View {
                 .padding(.horizontal, Metrics.horizontalPadding)
             }
             .background(Color.black)
-            .overlay {
-                if coverWhileRestoring { Color.black.allowsHitTesting(false) }
-            }
             .onScrollGeometryChange(for: CGSize.self) {
                 CGSize(width: $0.contentInsets.top, height: $0.containerSize.height)
             } action: { _, g in
                 place.topInset = g.width
                 place.viewportHeight = g.height
             }
-            .id(returnToken)
             #if DEBUG
             .overlay(alignment: .topTrailing) {
                 Text(verbatim: "place")
@@ -85,13 +69,6 @@ struct HomeView: View {
                     .accessibilityValue(placeDebug)
             }
             #endif
-            // Swiped back to: the scroll view was rebuilt (crown), put the reader back.
-            .onChange(of: returnToken) { _, _ in restore(proxy) }
-            .onAppear {
-                guard !hasAppeared else { return }
-                hasAppeared = true
-                restore(proxy)
-            }
             // The edge glow is drawn by `RootGlow` straight from the lists; pulling
             // or turning the crown only triggers the refresh.
             .pullToRefresh(isRefreshing: list.isRefreshing, failed: list.error != nil) {
@@ -197,47 +174,31 @@ struct HomeView: View {
                 // impressions come from real row frames. (onScrollTargetVisibilityChange
                 // reported rows ~1000 pt above the viewport here: measured 2026-11-18.)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .scrollView) } action: { frame in
-                    // A page created a moment ago starts at the top: its rows must not
-                    // overwrite the place before `restore` has run (`hasAppeared`).
                     place.rowMoved(item, frame: frame, isFirst: item.id == list.items.first?.id,
-                                   active: visibility.isActive && hasAppeared)
+                                   active: visibility.isActive)
                 }
             }
             PagingFooter(list: list)
         }
     }
 
-    /// Scrolls a new scroll view back to the post that was on top when the reader
-    /// left this feed. Nothing to do on the very first appearance (no saved place).
-    /// Puts a new scroll view back at the reader's exact place: first the saved row
-    /// to the top, then `FeedPlace` corrects by measuring where the row really landed
-    /// (the new list has not measured the rows above it, so one scroll is not exact).
-    private func restore(_ proxy: ScrollViewProxy) {
-        guard let id = place.savedTopID, list.items.contains(where: { $0.id == id }) else { return }
-        coverWhileRestoring = true
-        place.beginRestore({ id, anchor in proxy.scrollTo(id, anchor: anchor) },
-                           done: { coverWhileRestoring = false })
-    }
-
     #if DEBUG
-    /// Restore evidence for the place tests (refreshed on each body pass).
+    /// Place evidence for the place tests (refreshed on each body pass).
     private var placeDebug: String {
-        "saved=\(place.savedTopID ?? "-") live=\(place.liveTopID ?? "-") d=\(Int(place.savedDepth)) inset=\(Int(place.topInset)) vh=\(Int(place.viewportHeight))"
+        "live=\(place.liveTopID ?? "-") inset=\(Int(place.topInset)) vh=\(Int(place.viewportHeight))"
     }
     #endif
 
     private func configure() {
         let key = taskKey
-        // Kept in `place` (owned by RootPager, like the list): a page the system
-        // pager rebuilt is not a new configuration, and resetting the shared list
-        // there threw away the posts and the place it had just restored.
+        // Kept in `place` (owned by RootPager, like the list): reconfiguring a feed
+        // that is already set up would reset the shared list.
         guard place.configuredFor != key else { return }
         // Not the first configure of this feed: the account (or login) changed.
         place.accountChanged = place.configuredFor != nil
         if place.accountChanged {
             // Another account's reading place means nothing here.
             place.liveTopID = nil
-            place.savedTopID = nil
             place.seen.reset()
         }
         place.configuredFor = key
@@ -296,21 +257,15 @@ struct HomeView: View {
     }
 }
 
-/// The reading place of one home feed. A plain reference (not observed): updating
-/// it on every scrolled post must not re-render the pager.
+/// One home feed's place on screen, shared with `RootPager` so a page the system
+/// pager drops and builds again keeps its impressions. The scroll view itself is
+/// never recreated: watchOS keeps each page's offset, so there is nothing to
+/// restore (and a rebuild used to land on the wrong post).
 final class FeedPlace {
     /// The first post on screen right now (only tracked while the feed is active).
     var liveTopID: String?
-    /// `liveTopID` at the moment the reader left the feed: what a rebuilt scroll
-    /// view returns to.
-    var savedTopID: String?
-    /// How far (points) the viewport top was inside the top row, live and saved.
+    /// How far (points) the viewport top is inside the top row.
     var liveDepth: CGFloat = 0
-    var savedDepth: CGFloat = 0
-    /// An exact restore in flight (see `beginRestore`).
-    private var restoring: (id: String, tries: Int, a0: CGFloat, top0: CGFloat?, a: CGFloat,
-                            lastTop: CGFloat?)?
-    private var scrollToRow: ((String, UnitPoint) -> Void)?
     /// The scroll view's visible height (what "on screen" means for a row frame).
     var viewportHeight: CGFloat = 0
     /// The scroll view's top inset (under the toolbar): where reading starts.
@@ -319,16 +274,9 @@ final class FeedPlace {
     let seen = FeedSeen()
 
     /// One row's frame in the scroll view's visible coordinates changed.
-    /// Called when a restore finished (or gave up).
-    private var restoreDone: (() -> Void)?
-
     func rowMoved(_ item: TimelineItem, frame: CGRect, isFirst: Bool, active: Bool) {
+        guard active else { return }
         let top = topInset
-        if let r = restoring, r.id == item.id {
-            correct(frame: frame)
-            return
-        }
-        guard active, restoring == nil else { return }
         let height = viewportHeight > 0 ? viewportHeight : 150
         // On screen at all: an impression (sent with the next home request).
         if frame.maxY > top + 8, frame.minY < height - 8 { seen.mark(item) }
@@ -340,75 +288,6 @@ final class FeedPlace {
             liveTopID = nil          // the top of the feed (label/anchor) is showing
             liveDepth = 0
         }
-        // Saved continuously, not when the feed is left: the system pager can drop
-        // the page in the same update that makes it inactive, so a "save on leave"
-        // never ran (device: back at the top, later at a long-gone post).
-        savedTopID = liveTopID
-        savedDepth = liveDepth
-    }
-
-    private func finishRestore() {
-        restoring = nil
-        let done = restoreDone
-        restoreDone = nil
-        done?()
-    }
-
-    /// Starts an exact restore: the saved row is scrolled to anchor 0 (its top at
-    /// the viewport top), then `correct` measures and re-aims.
-    func beginRestore(_ scroll: @escaping (String, UnitPoint) -> Void, done: @escaping () -> Void) {
-        guard let id = savedTopID else { done(); return }
-        scrollToRow = scroll
-        restoreDone?()
-        restoreDone = done
-        restoring = (id, 0, 0, nil, 0, nil)
-        liveTopID = id
-        liveDepth = savedDepth
-        DispatchQueue.main.async { scroll(id, UnitPoint(x: 0.5, y: 0)) }
-        // Belt: a row that never reports a frame must not freeze place tracking
-        // (or leave the list covered).
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            if self?.restoring?.id == id { self?.finishRestore() }
-        }
-    }
-
-    /// Where the restored row landed vs. where it was (`savedDepth` into it).
-    /// `scrollTo(id, anchor: a)` moves the row top linearly with `a`; two
-    /// measurements give the slope (secant step), so it converges in a step or two
-    /// without assuming how watchOS measures the viewport.
-    private func correct(frame: CGRect) {
-        guard var r = restoring, let scroll = scrollToRow else { return }
-        let rowTop = frame.minY
-        if let last = r.lastTop, abs(last - rowTop) < 0.25 { return }   // same frame again
-        r.lastTop = rowTop
-        let desired = topInset - savedDepth
-        let error = rowTop - desired
-        if abs(error) <= 1.5 || r.tries >= 4 {
-            liveDepth = topInset - rowTop
-            finishRestore()
-            return
-        }
-        let next: CGFloat
-        if let top0 = r.top0, abs(r.a - r.a0) > 0.0001, abs(rowTop - top0) > 0.5 {
-            let slope = (rowTop - top0) / (r.a - r.a0)
-            next = r.a - error / slope
-            r.a0 = r.a
-            r.top0 = rowTop
-        } else {
-            // First measurement: guess the slope from the sizes (row taller than the
-            // viewport moves up as `a` grows), then refine with the secant.
-            let v = viewportHeight > 0 ? viewportHeight : 150
-            let h = max(frame.height, 1)
-            let slope = (v - h) == 0 ? -1 : (v - h)
-            next = r.a - error / slope
-            r.a0 = r.a
-            r.top0 = rowTop
-        }
-        r.a = next
-        r.tries += 1
-        restoring = r
-        let id = r.id
-        DispatchQueue.main.async { scroll(id, UnitPoint(x: 0.5, y: next)) }
     }
     /// The account/login the shared list was configured for (`HomeView.taskKey`).
     var configuredFor: String?

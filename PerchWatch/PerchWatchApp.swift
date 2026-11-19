@@ -206,25 +206,18 @@ struct RootPager: View {
     /// The feed page to return to from the menu (1 = For You, 2 = Following).
     @State private var lastFeed = 1
     @State private var didStart = false
-    /// See `HomeView.returnToken`: bumped when a feed is swiped back to.
-    @State private var forYouReturn = 0
-    @State private var followingReturn = 0
     /// Each feed's reading place, kept here so it outlives the pages.
     @State private var forYouPlace = FeedPlace()
     @State private var followingPlace = FeedPlace()
-    /// Feeds already shown once (the first appearance gets the crown by itself).
-    @State private var shownFeeds: Set<Int> = []
-    /// The next page change comes from a button, not a swipe (buttons were fine).
-    @State private var programmaticChange = false
 
     var body: some View {
         TabView(selection: $page) {
             MenuView(onPick: { kind in goFeed(kind) })
                 .tag(0)
-            HomeView(kind: .forYou, isActive: rootActive && page == 1, returnToken: forYouReturn,
+            HomeView(kind: .forYou, isActive: rootActive && page == 1,
                      onSelect: { goFeed($0) }, list: forYou, place: forYouPlace)
                 .tag(1)
-            HomeView(kind: .following, isActive: rootActive && page == 2, returnToken: followingReturn,
+            HomeView(kind: .following, isActive: rootActive && page == 2,
                      onSelect: { goFeed($0) }, list: following, place: followingPlace)
                 .tag(2)
         }
@@ -252,25 +245,11 @@ struct RootPager: View {
             didStart = true
             page = kindRaw == HomeKind.following.rawValue ? 2 : 1
             lastFeed = page
-            shownFeeds.insert(page)
         }
         // The page is the source of truth for the swipe; the stored kind follows
         // it so the menu checkmark, background refresh and account switch agree.
-        .onChange(of: page) { old, value in
-            programmaticChange = false
-            // The feed just left gets its new scroll view now, while it is off screen
-            // (owner, 2026-11-18): it is rebuilt at the reader's exact place, so coming
-            // back shows no jump. A rebuilt scroll view is what watchOS hands the crown
-            // to (crown test S3); whether one built off screen still gets it is the
-            // open question of this approach.
-            if old != value, old == 1 || old == 2 {
-                // After the swipe has settled (the feed saved its place on leaving).
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    if old == 1 { forYouReturn += 1 } else { followingReturn += 1 }
-                }
-            }
+        .onChange(of: page) { _, value in
             guard value != 0 else { return }
-            shownFeeds.insert(value)
             lastFeed = value
             let kind = value == 2 ? HomeKind.following : HomeKind.forYou
             if kindRaw != kind.rawValue { kindRaw = kind.rawValue }
@@ -290,7 +269,6 @@ struct RootPager: View {
 
     private func go(_ target: Int) {
         guard target != page else { return }
-        programmaticChange = true
         withAnimation(.easeInOut(duration: 0.2)) { page = target }
     }
 }

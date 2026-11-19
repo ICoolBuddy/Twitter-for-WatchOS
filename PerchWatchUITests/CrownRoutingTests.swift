@@ -583,18 +583,15 @@ final class CrownRoutingTests: XCTestCase {
             guard let after = self.read(feed) else {
                 return .blocked("probe.\(feed) unreadable after returning")
             }
-            // The rebuilt list estimates the rows above it, so its offset differs; the
-            // reading place is "the same post on top" (saved = live, and not the top).
-            let place = String(format: "y %.0f -> %.0f", before.y, after.y)
+            // The scroll view is never rebuilt now, so the same post on top means the
+            // same content offset (watchOS keeps it). Before 2026-11-19 a rebuilt list
+            // guessed row heights and landed posts away; measure that, not "saved ==
+            // live" (which the restore set optimistically).
+            let drift = after.y - before.y
             let key = feed == "feed.forYou" ? "place.forYou" : "place.following"
             let evidence = (self.element(key).value as? String) ?? "no place marker"
-            let fields = Dictionary(evidence.split(separator: " ").compactMap { f -> (String, String)? in
-                let kv = f.split(separator: "=", maxSplits: 1)
-                return kv.count == 2 ? (String(kv[0]), String(kv[1])) : nil
-            }, uniquingKeysWith: { a, _ in a })
-            let saved = fields["saved"] ?? "-"
-            let kept = saved != "-" && fields["live"] == saved && abs(after.y) > 150
-            guard kept else { return .blocked("BUG place lost: \(place) [\(evidence)]") }
+            let place = String(format: "y %.0f -> %.0f (drift %.0f)", before.y, after.y, drift)
+            guard abs(drift) <= 40 else { return .blocked("BUG place moved: \(place) [\(evidence)]") }
             return .ready("place kept: \(place)")
         }
     }
