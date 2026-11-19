@@ -239,12 +239,14 @@ struct HomeView: View {
         coverWhileRestoring = true
         DispatchQueue.main.async {
             position.scrollTo(y: saved)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                guard abs(place.liveOffset - saved) > 4, let id = place.savedTopID,
-                      list.items.contains(where: { $0.id == id }) else { return }
-                // The exact offset did not take: the right post on top is better than
-                // the top of the feed (a rebuilt LazyVStack guesses the heights above).
-                proxy.scrollTo(id, anchor: .top)
+            // The exact offset cannot land when the rebuilt LazyVStack has not laid
+            // out the rows above it (it clamps to the estimated content height), so
+            // if the cover is still up after a beat, put the saved row on top.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                guard coverWhileRestoring else { return }
+                if let id = place.savedTopID, list.items.contains(where: { $0.id == id }) {
+                    proxy.scrollTo(id, anchor: .top)
+                }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                     coverWhileRestoring = false
                     restoredToken = token

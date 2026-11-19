@@ -34,7 +34,7 @@ struct PullToRefresh: ViewModifier {
     static let crownThreshold: CGFloat = 20
     /// The crown's rubber band unwinds by itself; if it stops short of the
     /// threshold, forget the partial pull instead of leaving the arrow up.
-    static let crownIdle: UInt64 = 800_000_000
+    static let crownIdle: UInt64 = 600_000_000
 
     @State private var tracker = OverscrollTracker()
     @State private var pull = PullState()
@@ -84,10 +84,15 @@ struct PullToRefresh: ViewModifier {
             return
         }
         if overscroll > 0 {
-            // Every upward nudge at the top adds up: the crown's rubber band too
-            // (a finger pull is measured by its offset, not by accumulated nudges).
+            // Every nudge at the top adds up. A crown detent is a fresh overscroll
+            // (it starts from the top, peaks, and unwinds), while a finger drag keeps
+            // the offset growing — so only a nudge that starts near 0 counts, which
+            // makes the crown work even though watchOS reports its turns with the
+            // scroll view "interacting" like a touch (measured: S17 os=272.5).
             let delta = overscroll - t.last
-            if delta > 0, !t.interacting { t.crown = min(Self.crownThreshold, t.crown + delta) }
+            if delta > 0, !t.interacting || t.last <= 2 {
+                t.crown = min(Self.crownThreshold, t.crown + delta)
+            }
         } else if overscroll < -4 {
             // Scrolling down the feed: a fresh start next time.
             t.crown = 0
@@ -102,8 +107,9 @@ struct PullToRefresh: ViewModifier {
         if progress >= 1 {
             setReady(true)
             // Finger down: wait for the release (it can still be pushed back).
-            // Crown: nothing to release, refresh now.
-            if !t.interacting { fire() }
+            // Crown: nothing to release, refresh as soon as the rubber band has
+            // unwound (the turn is over), even if watchOS calls it "interacting".
+            if !t.interacting || overscroll <= 2 { fire() }
         } else if t.interacting, finger < 0.7, crown < 1 {
             // Pushed back up before letting go: no refresh (the arrow turns back).
             setReady(false)
@@ -116,12 +122,12 @@ struct PullToRefresh: ViewModifier {
     /// arrow does not stay on screen until the reader happens to scroll.
     private func scheduleCrownIdle() {
         idleTask?.cancel()
-        guard tracker.crown > 0, !tracker.interacting else { return }
+        guard tracker.crown > 0 else { return }
         idleTask = Task {
             try? await Task.sleep(nanoseconds: Self.crownIdle)
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                guard !isRefreshing, !tracker.fired, !tracker.interacting else { return }
+                guard !isRefreshing, !tracker.fired else { return }
                 tracker.crown = 0
                 pull.reset()
             }

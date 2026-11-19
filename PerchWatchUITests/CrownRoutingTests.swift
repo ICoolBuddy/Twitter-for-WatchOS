@@ -577,21 +577,27 @@ final class CrownRoutingTests: XCTestCase {
             guard let before = self.read(feed), abs(before.y) > 150 else {
                 return .blocked("could not scroll \(feed) down first")
             }
+            // What the reader actually sees: the posts on screen, top first. The
+            // rebuilt LazyVStack estimates the rows above the target, so the raw
+            // offset is not comparable — the post on top is.
+            let beforePosts = self.visiblePosts()
+            guard let top = beforePosts.first else {
+                return .blocked("no post links on screen before leaving")
+            }
             guard away() else { return .blocked("could not leave \(feed) (\(self.pagerNote()))") }
             guard back() else { return .blocked("could not return to \(feed) (\(self.pagerNote()))") }
             self.settle()
             guard let after = self.read(feed) else {
                 return .blocked("probe.\(feed) unreadable after returning")
             }
-            // The scroll view is never rebuilt now, so the same post on top means the
-            // same content offset (watchOS keeps it). Before 2026-11-19 a rebuilt list
-            // guessed row heights and landed posts away; measure that, not "saved ==
-            // live" (which the restore set optimistically).
-            let drift = after.y - before.y
-            let key = feed == "feed.forYou" ? "place.forYou" : "place.following"
-            let evidence = (self.element(key).value as? String) ?? "no place marker"
-            let place = String(format: "y %.0f -> %.0f (drift %.0f)", before.y, after.y, drift)
-            guard abs(drift) <= 40 else { return .blocked("BUG place moved: \(place) [\(evidence)]") }
+            let afterPosts = self.visiblePosts()
+            let place = String(format: "y %.0f -> %.0f, top %@ -> %@",
+                               before.y, after.y, top, afterPosts.prefix(2).joined(separator: ","))
+            // The depth can cut the saved row, so the post that was on top may be the
+            // second link; being in the first two is "the same place".
+            guard afterPosts.prefix(2).contains(top) else {
+                return .blocked("BUG place moved: \(place)")
+            }
             return .ready("place kept: \(place)")
         }
     }
@@ -806,6 +812,24 @@ final class CrownRoutingTests: XCTestCase {
         guard frame.width > 0, screen.width > 0 else { return false }
         return frame.midX >= screen.minX && frame.midX < screen.maxX
             && frame.midY >= screen.minY && frame.midY < screen.maxY
+    }
+
+    /// The post links visible on the on-screen feed, top first (the reader's place).
+    private func visiblePosts() -> [String] {
+        let screen = app.frame
+        let matches = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "post.open."))
+            .allElementsBoundByIndex
+        var rows: [(String, CGFloat)] = []
+        for m in matches where m.exists {
+            let f = m.frame
+            guard f.width > 0, f.height > 0 else { continue }
+            // The pager keeps all three pages in the tree: only the on-screen one.
+            guard f.midX >= screen.minX, f.midX < screen.maxX else { continue }
+            guard f.maxY > screen.minY + 40, f.minY < screen.maxY else { continue }
+            rows.append((m.identifier.replacingOccurrences(of: "post.open.", with: ""), f.minY))
+        }
+        return rows.sorted { $0.1 < $1.1 }.map { $0.0 }
     }
 
     /// Where the three pages are, for the notes column.
