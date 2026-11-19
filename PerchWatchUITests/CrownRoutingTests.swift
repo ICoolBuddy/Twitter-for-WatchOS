@@ -591,11 +591,16 @@ final class CrownRoutingTests: XCTestCase {
                 return .blocked("probe.\(feed) unreadable after returning")
             }
             let afterPosts = self.visiblePosts()
-            let place = String(format: "y %.0f -> %.0f, top %@ -> %@",
-                               before.y, after.y, top, afterPosts.prefix(2).joined(separator: ","))
-            // The depth can cut the saved row, so the post that was on top may be the
-            // second link; being in the first two is "the same place".
-            guard afterPosts.prefix(2).contains(top) else {
+            let afterTop = afterPosts.first { $0.id == top.id }
+            let nearby = afterPosts.prefix(2).map(\.id)
+            let depthOK = afterTop.map { abs($0.y - top.y) <= 40 } ?? false
+            let place = String(format: "y %.0f -> %.0f, top %@@%.0f -> %@",
+                               before.y, after.y, top.id, top.y,
+                               afterPosts.prefix(2).map { "\($0.id)@\(Int($0.y))" }
+                                   .joined(separator: ","))
+            // The same post must be back at the same height on screen: the depth
+            // inside a row is what a row-only restore used to lose.
+            guard nearby.contains(top.id), depthOK else {
                 return .blocked("BUG place moved: \(place)")
             }
             return .ready("place kept: \(place)")
@@ -814,22 +819,25 @@ final class CrownRoutingTests: XCTestCase {
             && frame.midY >= screen.minY && frame.midY < screen.maxY
     }
 
+    private struct VisiblePost { let id: String; let y: CGFloat }
+
     /// The post links visible on the on-screen feed, top first (the reader's place).
-    private func visiblePosts() -> [String] {
+    private func visiblePosts() -> [VisiblePost] {
         let screen = app.frame
         let matches = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "post.open."))
             .allElementsBoundByIndex
-        var rows: [(String, CGFloat)] = []
+        var rows: [VisiblePost] = []
         for m in matches where m.exists {
             let f = m.frame
             guard f.width > 0, f.height > 0 else { continue }
             // The pager keeps all three pages in the tree: only the on-screen one.
             guard f.midX >= screen.minX, f.midX < screen.maxX else { continue }
             guard f.maxY > screen.minY + 40, f.minY < screen.maxY else { continue }
-            rows.append((m.identifier.replacingOccurrences(of: "post.open.", with: ""), f.minY))
+            rows.append(VisiblePost(id: m.identifier.replacingOccurrences(of: "post.open.", with: ""),
+                                    y: f.minY))
         }
-        return rows.sorted { $0.1 < $1.1 }.map { $0.0 }
+        return rows.sorted { $0.y < $1.y }
     }
 
     /// Where the three pages are, for the notes column.

@@ -86,6 +86,8 @@ struct HomeView: View {
                     // not a row estimate.
                     place.savedOffset = g.offset
                     place.savedTopID = place.liveTopID
+                    place.savedDepth = place.liveDepth
+                    place.savedHeight = place.liveHeight
                 }
                 if coverWhileRestoring, let saved = place.savedOffset,
                    abs(g.offset - saved) <= 2 {
@@ -245,7 +247,12 @@ struct HomeView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 guard coverWhileRestoring else { return }
                 if let id = place.savedTopID, list.items.contains(where: { $0.id == id }) {
-                    proxy.scrollTo(id, anchor: .top)
+                    // Anchor the point of the row that was at the top edge, so the
+                    // depth inside the post comes back too (anchor y is a fraction of
+                    // the row's height).
+                    let h = place.savedHeight
+                    let frac = h > 1 ? min(1, max(0, place.savedDepth / h)) : 0
+                    proxy.scrollTo(id, anchor: UnitPoint(x: 0.5, y: frac))
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                     coverWhileRestoring = false
@@ -348,13 +355,17 @@ struct FeedGeometry: Equatable {
 final class FeedPlace {
     /// The first post on screen right now (only tracked while the feed is active).
     var liveTopID: String?
-    /// How far (points) the viewport top is inside the top row.
+    /// How far (points) the viewport top is inside the top row, and that row's height.
     var liveDepth: CGFloat = 0
+    var liveHeight: CGFloat = 0
     /// The live content offset, and the one a rebuilt scroll view comes back to.
     var liveOffset: CGFloat = 0
     var savedOffset: CGFloat?
-    /// The row on top when the offset was saved (the restore's fallback).
+    /// The row on top when the place was saved, its depth under the top edge and its
+    /// height: the restore puts that exact point back at the top.
     var savedTopID: String?
+    var savedDepth: CGFloat = 0
+    var savedHeight: CGFloat = 0
     /// The scroll view's visible height (what "on screen" means for a row frame).
     var viewportHeight: CGFloat = 0
     /// The scroll view's top inset (under the toolbar): where reading starts.
@@ -373,6 +384,7 @@ final class FeedPlace {
             // This row covers the top edge of the viewport: it is the reading place.
             liveTopID = item.id
             liveDepth = top - frame.minY
+            liveHeight = frame.height
         } else if isFirst, frame.minY > top + 0.5 {
             liveTopID = nil          // the top of the feed (label/anchor) is showing
             liveDepth = 0
