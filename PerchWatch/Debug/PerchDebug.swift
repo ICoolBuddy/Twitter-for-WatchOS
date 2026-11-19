@@ -51,6 +51,8 @@ enum PerchTrace {
     /// Sticky counters: survive the per-frame trace overwrite.
     static var fires = 0
     static var maxCrown: CGFloat = 0
+    static var updates = 0
+    static var maxOverscroll: CGFloat = 0
 }
 
 enum PerchDebug {

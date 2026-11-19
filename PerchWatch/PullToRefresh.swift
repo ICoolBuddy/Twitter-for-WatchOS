@@ -78,8 +78,11 @@ struct PullToRefresh: ViewModifier {
     private func update(_ overscroll: CGFloat) {
         let t = tracker
         #if DEBUG
+        PerchTrace.updates += 1
         PerchTrace.maxCrown = max(PerchTrace.maxCrown, t.crown)
-        PerchTrace.refresh = String(format: "o%.1f c%.1f mx%.1f ia%d f%d r%d fires%d",
+        PerchTrace.maxOverscroll = max(PerchTrace.maxOverscroll, overscroll)
+        PerchTrace.refresh = String(format: "n%d mo%.1f o%.1f c%.1f mx%.1f ia%d f%d r%d fires%d",
+                                    PerchTrace.updates, Double(PerchTrace.maxOverscroll),
                                     Double(overscroll), Double(t.crown),
                                     Double(PerchTrace.maxCrown),
                                     t.interacting ? 1 : 0, t.fired ? 1 : 0,
