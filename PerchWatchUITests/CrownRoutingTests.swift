@@ -621,6 +621,14 @@ final class CrownRoutingTests: XCTestCase {
                 return .blocked("For You is not on screen (\(self.pagerNote()))")
             }
             var crownNote = ""
+            // The status line says the refresh ran ("Refreshing", then "Updated" for
+            // 1.5 s). It is polled *between* crown turns too: the refresh can fire
+            // mid-rotation, long before the rotation finishes.
+            let pill = ["Refreshing", "Updated", "Couldn't update"]
+            var seen = false
+            func poll() {
+                if !seen { seen = pill.contains { self.app.staticTexts[$0].exists } }
+            }
             if finger {
                 let start = self.app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
                 let end = self.app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95))
@@ -630,13 +638,19 @@ final class CrownRoutingTests: XCTestCase {
                 // Which crown direction scrolls up is not ours to assume: the one that
                 // leaves the probe at (or above) the top is the refresh direction.
                 let before = self.read("feed.forYou")?.y ?? 0
-                self.rotate(clockwise: false, times: 10)
+                for _ in 0..<10 {
+                    XCUIDevice.shared.rotateDigitalCrown(delta: -CrownRoutingTests.rotationDelta)
+                    poll()
+                }
                 let after = self.read("feed.forYou")?.y ?? 0
                 if after > before + 20 {
                     // That scrolled down: go back to the top and turn the other way.
-                    self.rotate(clockwise: true, times: 10)
-                    self.rotate(clockwise: true, times: 10)
+                    for _ in 0..<20 {
+                        XCUIDevice.shared.rotateDigitalCrown(delta: CrownRoutingTests.rotationDelta)
+                        poll()
+                    }
                 }
+                poll()
                 // `os` = the overscroll travel the crown actually produced. 0 means the
                 // crown never rubber-bands at the top, so no threshold can fire.
                 if let r = self.read("feed.forYou") {
@@ -644,12 +658,9 @@ final class CrownRoutingTests: XCTestCase {
                                        r.os, r.mx, r.fr, r.dip)
                 }
             }
-            // The status line says the refresh ran (it shows "Updated" for 1 s).
-            let pill = ["Refreshing", "Updated", "Couldn't update"]
             let deadline = Date().addingTimeInterval(4)
-            var seen = false
             while Date() < deadline, !seen {
-                seen = pill.contains { self.app.staticTexts[$0].exists }
+                poll()
                 if !seen { Thread.sleep(forTimeInterval: 0.2) }
             }
             guard seen else { return .blocked("BUG no refresh after \(finger ? "the pull + release" : "the crown at the top")\(crownNote)") }

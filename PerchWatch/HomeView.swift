@@ -89,10 +89,17 @@ struct HomeView: View {
                     place.savedDepth = place.liveDepth
                     place.savedHeight = place.liveHeight
                 }
-                if coverWhileRestoring, let saved = place.savedOffset,
-                   abs(g.offset - saved) <= 2 {
+                if coverWhileRestoring, let id = place.savedTopID,
+                   place.liveTopID == id, abs(place.liveDepth - place.savedDepth) <= 40 {
+                    // Same post, same height on screen: the restore landed.
                     coverWhileRestoring = false
                     restoredToken = returnToken
+                } else if coverWhileRestoring, let id = place.savedTopID,
+                          place.restoreTries < 8 {
+                    // A rebuilt scroll view sometimes ignores scrollTo until it is
+                    // laid out; every geometry pass is proof that it is. Re-aim.
+                    place.restoreTries += 1
+                    proxy.scrollTo(id, anchor: place.savedAnchor)
                 }
             }
             #if DEBUG
@@ -222,7 +229,7 @@ struct HomeView: View {
                 // reported rows ~1000 pt above the viewport here: measured 2026-11-18.)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .scrollView) } action: { frame in
                     place.rowMoved(item, frame: frame, isFirst: item.id == list.items.first?.id,
-                                   active: visibility.isActive && !covered)
+                                   active: visibility.isActive)
                 }
             }
             PagingFooter(list: list)
@@ -240,28 +247,16 @@ struct HomeView: View {
             return
         }
         coverWhileRestoring = true
+        place.restoreTries = 0
         DispatchQueue.main.async {
+            // The exact offset is worth a try (it can land when the content is small);
+            // otherwise the geometry passes re-aim the saved row (see the action above).
             position.scrollTo(y: saved)
-            // The exact offset cannot land when the rebuilt LazyVStack has not laid
-            // out the rows above it (it clamps to the estimated content height), so
-            // if the cover is still up after a beat, put the saved row on top.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                guard coverWhileRestoring else { return }
-                if let id = place.savedTopID, list.items.contains(where: { $0.id == id }) {
-                    // Anchor the point of the row that was at the top edge, so the
-                    // depth inside the post comes back too (anchor y is a fraction of
-                    // the row's height).
-                    let h = place.savedHeight
-                    let frac = h > 1 ? min(1, max(0, place.savedDepth / h)) : 0
-                    proxy.scrollTo(id, anchor: UnitPoint(x: 0.5, y: frac))
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    coverWhileRestoring = false
-                    restoredToken = token
-                }
+            if let id = place.savedTopID, list.items.contains(where: { $0.id == id }) {
+                proxy.scrollTo(id, anchor: place.savedAnchor)
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
             if coverWhileRestoring {
                 coverWhileRestoring = false
                 restoredToken = token
@@ -272,7 +267,7 @@ struct HomeView: View {
     #if DEBUG
     /// Place evidence for the place tests (refreshed on each body pass).
     private var placeDebug: String {
-        "live=\(place.liveTopID ?? "-") off=\(Int(place.savedOffset ?? -999)) inset=\(Int(place.topInset)) vh=\(Int(place.viewportHeight))"
+        "live=\(place.liveTopID ?? "-") saved=\(place.savedTopID ?? "-") d=\(Int(place.liveDepth))/\(Int(place.savedDepth)) tries=\(place.restoreTries) off=\(Int(place.savedOffset ?? -999)) inset=\(Int(place.topInset)) vh=\(Int(place.viewportHeight))"
     }
     #endif
 
@@ -367,6 +362,15 @@ final class FeedPlace {
     var savedTopID: String?
     var savedDepth: CGFloat = 0
     var savedHeight: CGFloat = 0
+    /// How many re-aims the current restore has done (the geometry action counts).
+    var restoreTries = 0
+
+    /// The anchor that puts the point of the saved row that was at the top edge back
+    /// there (anchor y is a fraction of the row's height).
+    var savedAnchor: UnitPoint {
+        let frac = savedHeight > 1 ? min(1, max(0, savedDepth / savedHeight)) : 0
+        return UnitPoint(x: 0.5, y: frac)
+    }
     /// The scroll view's visible height (what "on screen" means for a row frame).
     var viewportHeight: CGFloat = 0
     /// The scroll view's top inset (under the toolbar): where reading starts.

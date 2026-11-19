@@ -214,7 +214,7 @@ private struct PullIndicator: View {
                     lastFailed = failed
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { finished = true }
                     hideTask = Task {
-                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
                         guard !Task.isCancelled else { return }
                         await MainActor.run {
                             withAnimation(.easeOut(duration: 0.2)) { finished = false }
