@@ -138,7 +138,8 @@ struct PullToRefresh: ViewModifier {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard !isRefreshing, !tracker.fired else { return }
-                tracker.crown = 0
+                // Hide the arrow, keep the travel: a crown turn is slow (simulator:
+                // ~3.5 pt per turn) and zeroing here meant the pull could never add up.
                 pull.reset()
             }
         }

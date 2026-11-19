@@ -577,7 +577,13 @@ final class CrownRoutingTests: XCTestCase {
             guard let before = self.read(feed), abs(before.y) > 150 else {
                 return .blocked("could not scroll \(feed) down first")
             }
-            guard let beforePlace = self.placeFields(feed)["live"], beforePlace != "-" else {
+            var beforePlace = self.placeFields(feed)["live"] ?? "-"
+            for _ in 0..<2 where beforePlace == "-" {
+                self.app.swipeUp()
+                Thread.sleep(forTimeInterval: 0.4)
+                beforePlace = self.placeFields(feed)["live"] ?? "-"
+            }
+            guard beforePlace != "-" else {
                 return .blocked("no place evidence before leaving (\(self.placeFields(feed)))")
             }
             guard away() else { return .blocked("could not leave \(feed) (\(self.pagerNote()))") }
@@ -595,11 +601,12 @@ final class CrownRoutingTests: XCTestCase {
             let saved = fields["saved"] ?? "-"
             let liveD = Double(fields["liveD"] ?? "") ?? .nan
             let savedD = Double(fields["savedD"] ?? "") ?? .nan
-            let place = String(format: "y %.0f -> %.0f, top %@ -> %@, d %.0f/%.0f",
-                               before.y, after.y, beforePlace, live, liveD, savedD)
-            // Same row on top (the reader's post) and within most of a row of the
-            // same depth; the estimates above it are why the raw offset differs.
-            guard live == beforePlace, live == saved, abs(liveD - savedD) <= 120 else {
+            let rowH = Double(fields["h"] ?? "") ?? 0
+            let place = String(format: "y %.0f -> %.0f, top %@ -> %@, d %.0f/%.0f (row %.0f)",
+                               before.y, after.y, beforePlace, live, liveD, savedD, rowH)
+            // The saved post must be the row on top again. The cut inside that row is
+            // lost (anchor semantics), so the depth may differ by up to the row height.
+            guard live == beforePlace, live == saved, abs(liveD - savedD) <= max(60, rowH) else {
                 return .blocked("BUG place moved: \(place) [\(fields)]")
             }
             return .ready("place kept: \(place)")
@@ -611,7 +618,7 @@ final class CrownRoutingTests: XCTestCase {
         let key = feed == "feed.forYou" ? "place.forYou" : "place.following"
         let raw = (element(key).value as? String) ?? ""
         var out: [String: String] = [:]
-        for field in raw.split(separator: " ") {
+        for field in raw.components(separatedBy: " tr=").first!.split(separator: " ") {
             let kv = field.split(separator: "=", maxSplits: 1)
             guard kv.count == 2 else { continue }
             out[String(kv[0])] = String(kv[1])

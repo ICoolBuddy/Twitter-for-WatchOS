@@ -291,7 +291,7 @@ struct HomeView: View {
     #if DEBUG
     /// Place evidence for the place tests (refreshed on each body pass).
     private var placeDebug: String {
-        "live=\(place.liveTopID ?? "-") saved=\(place.savedTopID ?? "-") d=\(Int(place.liveDepth))/\(Int(place.savedDepth)) tries=\(place.restoreTries) off=\(Int(place.savedOffset ?? -999)) inset=\(Int(place.topInset)) vh=\(Int(place.viewportHeight)) tr=[\(PerchTrace.place)]"
+        "live=\(place.liveTopID ?? "-") saved=\(place.savedTopID ?? "-") d=\(Int(place.liveDepth))/\(Int(place.savedDepth)) h=\(Int(place.savedHeight)) tries=\(place.restoreTries) off=\(Int(place.savedOffset ?? -999)) inset=\(Int(place.topInset)) vh=\(Int(place.viewportHeight)) tr=[\(PerchTrace.place)]"
     }
     #endif
 
@@ -389,12 +389,11 @@ final class FeedPlace {
     /// How many re-aims the current restore has done (the geometry action counts).
     var restoreTries = 0
 
-    /// The anchor that puts the point of the saved row that was at the top edge back
-    /// there (anchor y is a fraction of the row's height).
-    var savedAnchor: UnitPoint {
-        let frac = savedHeight > 1 ? min(1, max(0, savedDepth / savedHeight)) : 0
-        return UnitPoint(x: 0.5, y: frac)
-    }
+    /// `scrollTo(id, anchor:)` aligns the same unit point of the row and of the
+    /// viewport, so "depth inside the row" cannot be expressed: the row goes to the
+    /// top. (A `scrollPosition` pixel shift was tried and re-applied itself over the
+    /// row scroll.) The row is the reader's post; only the cut inside it is lost.
+    var savedAnchor: UnitPoint { UnitPoint(x: 0.5, y: 0) }
     /// The scroll view's visible height (what "on screen" means for a row frame).
     var viewportHeight: CGFloat = 0
     /// The scroll view's top inset (under the toolbar): where reading starts.
