@@ -609,6 +609,7 @@ final class CrownRoutingTests: XCTestCase {
             guard self.onScreen("feed.forYou") else {
                 return .blocked("For You is not on screen (\(self.pagerNote()))")
             }
+            var crownNote = ""
             if finger {
                 let start = self.app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
                 let end = self.app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95))
@@ -625,8 +626,13 @@ final class CrownRoutingTests: XCTestCase {
                     self.rotate(clockwise: true, times: 10)
                     self.rotate(clockwise: true, times: 10)
                 }
+                // `os` = the overscroll travel the crown actually produced. 0 means the
+                // crown never rubber-bands at the top, so no threshold can fire.
+                if let r = self.read("feed.forYou") {
+                    crownNote = String(format: " (crown overscroll os=%.1f mx=%.1f)", r.os, r.mx)
+                }
             }
-            // The status pill says the refresh ran (it shows "Updated" for 1.4 s).
+            // The status line says the refresh ran (it shows "Updated" for 1 s).
             let pill = ["Refreshing", "Updated", "Couldn't update"]
             let deadline = Date().addingTimeInterval(4)
             var seen = false
@@ -634,8 +640,8 @@ final class CrownRoutingTests: XCTestCase {
                 seen = pill.contains { self.app.staticTexts[$0].exists }
                 if !seen { Thread.sleep(forTimeInterval: 0.2) }
             }
-            guard seen else { return .blocked("BUG no refresh after \(finger ? "the pull + release" : "the crown at the top")") }
-            return .ready("refresh ran after \(finger ? "pull + release" : "crown at the top")")
+            guard seen else { return .blocked("BUG no refresh after \(finger ? "the pull + release" : "the crown at the top")\(crownNote)") }
+            return .ready("refresh ran after \(finger ? "pull + release" : "crown at the top")\(crownNote)")
         }
     }
 
@@ -1005,11 +1011,14 @@ final class CrownRoutingTests: XCTestCase {
 
     // MARK: Reading and reporting
 
-    /// `y=-3.0 h=980 v=248` from the probe.
+    /// `y=-3.0 h=980 v=248 os=12.0 mx=4.0` from the probe.
     private struct Reading {
         var y = 0.0
         var h = 0.0
         var v = 0.0
+        /// Positive overscroll travel accumulated since launch (crown refresh input).
+        var os = 0.0
+        var mx = 0.0
 
         init?(_ raw: String) {
             var sawY = false
@@ -1020,6 +1029,8 @@ final class CrownRoutingTests: XCTestCase {
                 case "y": y = value; sawY = true
                 case "h": h = value
                 case "v": v = value
+                case "os": os = value
+                case "mx": mx = value
                 default: break
                 }
             }

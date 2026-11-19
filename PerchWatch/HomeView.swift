@@ -11,6 +11,12 @@ struct HomeView: View {
     let kind: HomeKind
     /// This page is the one the root pager shows (crown focus follows it).
     var isActive: Bool = true
+    /// Bumped by `RootPager` when this feed is swiped back to. The scroll view gets a
+    /// new identity so it *appears* again — watchOS hands the Digital Crown to a
+    /// scroll view that appears, not to one a page swipe merely brings back (crown
+    /// test S3 fails without this) — and the exact offset is restored on the first
+    /// layout, so the reader lands on the same post with no visible jump.
+    var returnToken = 0
     /// Tapping the other tab at the top switches feeds (the pager owns the page).
     var onSelect: ((HomeKind) -> Void)? = nil
 
@@ -26,6 +32,17 @@ struct HomeView: View {
     @State private var visibility = PageVisibility()
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
+    /// The rebuilt scroll view's position: set to the saved offset when this feed
+    /// comes back (the row-id based `scrollTo` landed posts away because a rebuilt
+    /// `LazyVStack` only guesses the heights above the target).
+    @State private var position = ScrollPosition()
+    /// The `returnToken` whose scroll view is already at the saved offset. Starts
+    /// equal to the initial token (nothing to restore on a cold launch).
+    @State private var restoredToken = 0
+    /// Black over the list while a rebuilt scroll view is put back in place.
+    @State private var coverWhileRestoring = false
+
+    private var covered: Bool { coverWhileRestoring || returnToken != restoredToken }
 
     /// The top of the list: a zero-height anchor laid out before any row, so a refresh
     /// can scroll up without waiting for the new first post to exist.
@@ -36,11 +53,11 @@ struct HomeView: View {
     }
 
     var body: some View {
-        // `ScrollViewReader` instead of `.scrollPosition(id:)`: that binding is
-        // rewritten by the system on every scroll and re-applied on every list
-        // update, so the feed jumped back to a stale post after refreshes and
-        // while pages loaded. We only scroll explicitly, once, when the reader
-        // asks for a refresh.
+        // A `ScrollViewReader` for the refresh's scroll-to-top, and the offset-based
+        // `scrollPosition` binding for putting a rebuilt scroll view back exactly.
+        // (The id-based `.scrollPosition(id:)` was tried before: it is rewritten by
+        // the system on every scroll and re-applied on every list update, so the feed
+        // jumped back to a stale post. Offsets do not go stale.)
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -52,12 +69,31 @@ struct HomeView: View {
                 .padding(.horizontal, Metrics.horizontalPadding)
             }
             .background(Color.black)
-            .onScrollGeometryChange(for: CGSize.self) {
-                CGSize(width: $0.contentInsets.top, height: $0.containerSize.height)
-            } action: { _, g in
-                place.topInset = g.width
-                place.viewportHeight = g.height
+            .scrollPosition($position)
+            .overlay {
+                if covered { Color.black.allowsHitTesting(false) }
             }
+            .onScrollGeometryChange(for: FeedGeometry.self) { geo in
+                FeedGeometry(inset: geo.contentInsets.top,
+                             offset: geo.contentOffset.y,
+                             viewport: geo.containerSize.height)
+            } action: { _, g in
+                place.topInset = g.inset
+                place.viewportHeight = g.viewport
+                place.liveOffset = g.offset
+                if visibility.isActive, !covered {
+                    // The place a rebuilt scroll view comes back to: the exact offset,
+                    // not a row estimate.
+                    place.savedOffset = g.offset
+                    place.savedTopID = place.liveTopID
+                }
+                if coverWhileRestoring, let saved = place.savedOffset,
+                   abs(g.offset - saved) <= 2 {
+                    coverWhileRestoring = false
+                    restoredToken = returnToken
+                }
+            }
+            .id(returnToken)
             #if DEBUG
             .overlay(alignment: .topTrailing) {
                 Text(verbatim: "place")
@@ -69,6 +105,13 @@ struct HomeView: View {
                     .accessibilityValue(placeDebug)
             }
             #endif
+            .onChange(of: returnToken) { _, _ in
+                if isActive { restore(proxy) }
+            }
+            .onAppear {
+                // A page the system pager dropped and built again: put it back too.
+                if isActive { restore(proxy) }
+            }
             // The edge glow is drawn by `RootGlow` straight from the lists; pulling
             // or turning the crown only triggers the refresh.
             .pullToRefresh(isRefreshing: list.isRefreshing, failed: list.error != nil) {
@@ -93,7 +136,8 @@ struct HomeView: View {
             .postPresentation(profile: $profileTarget, media: $mediaTarget)
             .onChange(of: isActive, initial: true) { _, active in
                 visibility.isActive = active
-                // Leaving this feed (page swipe, menu, pushed screen): keep the place.
+                // Back on screen with a rebuilt scroll view that is not at the place.
+                if active, returnToken != restoredToken { restore(proxy) }
                 // Arriving on this feed: warm what it is about to show.
                 if active, !list.isEmpty { ImageLoader.shared.prefetchFeed(list.items.displayTweets) }
             }
@@ -175,17 +219,50 @@ struct HomeView: View {
                 // reported rows ~1000 pt above the viewport here: measured 2026-11-18.)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .scrollView) } action: { frame in
                     place.rowMoved(item, frame: frame, isFirst: item.id == list.items.first?.id,
-                                   active: visibility.isActive)
+                                   active: visibility.isActive && !covered)
                 }
             }
             PagingFooter(list: list)
         }
     }
 
+    /// Puts a rebuilt scroll view back at the exact offset it had. The offset is
+    /// applied on the next runloop (the new scroll view must exist); the row is the
+    /// fallback if it did not take, and the cover lifts as soon as the geometry
+    /// reports the saved offset (or after 0.6 s, so a failure cannot freeze it).
+    private func restore(_ proxy: ScrollViewProxy) {
+        let token = returnToken
+        guard let saved = place.savedOffset else {
+            restoredToken = token
+            return
+        }
+        coverWhileRestoring = true
+        DispatchQueue.main.async {
+            position.scrollTo(y: saved)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                guard abs(place.liveOffset - saved) > 4, let id = place.savedTopID,
+                      list.items.contains(where: { $0.id == id }) else { return }
+                // The exact offset did not take: the right post on top is better than
+                // the top of the feed (a rebuilt LazyVStack guesses the heights above).
+                proxy.scrollTo(id, anchor: .top)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    coverWhileRestoring = false
+                    restoredToken = token
+                }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            if coverWhileRestoring {
+                coverWhileRestoring = false
+                restoredToken = token
+            }
+        }
+    }
+
     #if DEBUG
     /// Place evidence for the place tests (refreshed on each body pass).
     private var placeDebug: String {
-        "live=\(place.liveTopID ?? "-") inset=\(Int(place.topInset)) vh=\(Int(place.viewportHeight))"
+        "live=\(place.liveTopID ?? "-") off=\(Int(place.savedOffset ?? -999)) inset=\(Int(place.topInset)) vh=\(Int(place.viewportHeight))"
     }
     #endif
 
@@ -257,15 +334,25 @@ struct HomeView: View {
     }
 }
 
-/// One home feed's place on screen, shared with `RootPager` so a page the system
-/// pager drops and builds again keeps its impressions. The scroll view itself is
-/// never recreated: watchOS keeps each page's offset, so there is nothing to
-/// restore (and a rebuild used to land on the wrong post).
+/// The scroll geometry the feed asks for in one value.
+struct FeedGeometry: Equatable {
+    var inset: CGFloat
+    var offset: CGFloat
+    var viewport: CGFloat
+}
+
+/// One home feed's place on screen, shared with `RootPager` so it outlives the
+/// scroll view being rebuilt for the crown (`returnToken`).
 final class FeedPlace {
     /// The first post on screen right now (only tracked while the feed is active).
     var liveTopID: String?
     /// How far (points) the viewport top is inside the top row.
     var liveDepth: CGFloat = 0
+    /// The live content offset, and the one a rebuilt scroll view comes back to.
+    var liveOffset: CGFloat = 0
+    var savedOffset: CGFloat?
+    /// The row on top when the offset was saved (the restore's fallback).
+    var savedTopID: String?
     /// The scroll view's visible height (what "on screen" means for a row frame).
     var viewportHeight: CGFloat = 0
     /// The scroll view's top inset (under the toolbar): where reading starts.

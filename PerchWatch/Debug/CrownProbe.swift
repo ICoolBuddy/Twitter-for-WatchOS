@@ -7,12 +7,18 @@ import SwiftUI
 /// A UI test cannot read a SwiftUI scroll view's offset, so this modifier
 /// republishes it as the `accessibilityValue` of an invisible marker element:
 ///
-///     probe.<name>   value: "y=-3.0 h=980 v=248"
+///     probe.<name>   value: "y=-3.0 h=980 v=248 os=12.0 mx=4.0"
 ///
 /// `y` is `ScrollGeometry.contentOffset.y` (the number the crown tests read), `h`
 /// the content height and `v` the viewport height, so a "did not move" line can say
 /// whether the list had any room to move at all (an empty Likes list cannot scroll,
 /// and that must not be reported as "the crown was not routed").
+///
+/// `os` and `mx` are for the crown-refresh tests: `os` is the positive overscroll
+/// travel accumulated since launch (exactly what `PullToRefresh`'s crown counter
+/// adds up) and `mx` the deepest single overscroll. `os == 0` after turning the
+/// crown at the top means the crown never rubber-bands there at all, so no
+/// threshold can ever fire.
 ///
 /// Inert by construction: no `.focusable`, no `@FocusState`, no `.disabled`, no
 /// gestures (`allowsHitTesting(false)` on the marker), and the marker lives in an
@@ -29,9 +35,10 @@ struct CrownProbe: ViewModifier {
             .onScrollGeometryChange(for: CrownScrollState.self) { geo in
                 CrownScrollState(offsetY: geo.contentOffset.y,
                                  contentHeight: geo.contentSize.height,
-                                 viewportHeight: geo.containerSize.height)
+                                 viewportHeight: geo.containerSize.height,
+                                 inset: geo.contentInsets.top)
             } action: { _, new in
-                box.text = new.valueText
+                box.record(new)
             }
             .overlay(alignment: .topLeading) {
                 CrownProbeMarker(name: name, box: box)
@@ -44,16 +51,28 @@ struct CrownScrollState: Equatable {
     var offsetY: CGFloat
     var contentHeight: CGFloat
     var viewportHeight: CGFloat
+    var inset: CGFloat
 
-    var valueText: String {
-        String(format: "y=%.1f h=%.0f v=%.0f",
-               Double(offsetY), Double(contentHeight), Double(viewportHeight))
-    }
+    /// Positive while pulled down past the top.
+    var overscroll: CGFloat { max(0, -(offsetY + inset)) }
 }
 
 /// Holds the last reading; only the marker observes it.
 final class CrownProbeBox: ObservableObject {
-    @Published var text = "y=0.0 h=0 v=0"
+    @Published var text = "y=0.0 h=0 v=0 os=0.0 mx=0.0"
+    private var last: CGFloat = 0
+    private var travel: CGFloat = 0
+    private var peak: CGFloat = 0
+
+    func record(_ s: CrownScrollState) {
+        let os = s.overscroll
+        if os > last { travel += os - last }
+        last = os
+        peak = max(peak, os)
+        text = String(format: "y=%.1f h=%.0f v=%.0f os=%.1f mx=%.1f",
+                      Double(s.offsetY), Double(s.contentHeight), Double(s.viewportHeight),
+                      Double(travel), Double(peak))
+    }
 }
 
 /// A 1 pt, fully transparent glyph. A `Text` is always in the accessibility tree
