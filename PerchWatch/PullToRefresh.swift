@@ -101,10 +101,9 @@ struct PullToRefresh: ViewModifier {
             if delta > 0, !t.interacting || t.last <= 2 {
                 t.crown = min(Self.crownThreshold, t.crown + delta)
             }
-        } else if overscroll < -20 {
-            // Clearly scrolled down the feed: a fresh start next time. (The crown's
-            // band unwinds a few points past the top between detents; resetting at
-            // -4 threw away every turn before it could add up.)
+        } else if overscroll < -80 {
+            // Clearly scrolled down the feed (half a viewport), not the crown band's
+            // own undershoot: the top turns keep adding up across a slow crown.
             t.crown = 0
         }
         t.last = overscroll

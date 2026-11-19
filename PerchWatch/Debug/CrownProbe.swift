@@ -66,6 +66,7 @@ final class CrownProbeBox: ObservableObject {
     private var peak: CGFloat = 0
     private var fresh: CGFloat = 0
     private var dips = 0
+    private var low: CGFloat = 0
 
     func record(_ s: CrownScrollState) {
         let os = s.overscroll
@@ -78,9 +79,11 @@ final class CrownProbeBox: ObservableObject {
         }
         last = os
         peak = max(peak, os)
-        text = String(format: "y=%.1f h=%.0f v=%.0f os=%.1f mx=%.1f fr=%.1f dip=%d t=%@",
+        low = min(low, os)
+        text = String(format: "y=%.1f h=%.0f v=%.0f os=%.1f mx=%.1f mn=%.1f fr=%.1f dip=%d t=%@",
                       Double(s.offsetY), Double(s.contentHeight), Double(s.viewportHeight),
-                      Double(travel), Double(peak), Double(fresh), dips, PerchTrace.refresh)
+                      Double(travel), Double(peak), Double(low), Double(fresh), dips,
+                      PerchTrace.refresh)
     }
 }
 

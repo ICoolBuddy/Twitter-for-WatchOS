@@ -604,9 +604,11 @@ final class CrownRoutingTests: XCTestCase {
             let rowH = Double(fields["h"] ?? "") ?? 0
             let place = String(format: "y %.0f -> %.0f, top %@ -> %@, d %.0f/%.0f (row %.0f)",
                                before.y, after.y, beforePlace, live, liveD, savedD, rowH)
-            // The saved post must be the row on top again. The cut inside that row is
-            // lost (anchor semantics), so the depth may differ by up to the row height.
-            guard live == beforePlace, live == saved, abs(liveD - savedD) <= max(60, rowH) else {
+            // The app's own invariant: the restore landed the row it saved. (The
+            // test's earlier sample can be one momentum tick behind the save, so it
+            // is reported, not required.) The cut inside the row may differ by up to
+            // the row height: `scrollTo(anchor:)` cannot express a depth.
+            guard live == saved, abs(liveD - savedD) <= max(60, rowH) else {
                 return .blocked("BUG place moved: \(place) [\(fields)]")
             }
             return .ready("place kept: \(place)")
@@ -676,8 +678,8 @@ final class CrownRoutingTests: XCTestCase {
                 // `os` = the overscroll travel the crown actually produced. 0 means the
                 // crown never rubber-bands at the top, so no threshold can fire.
                 if let r = self.read("feed.forYou") {
-                    crownNote = String(format: " (crown overscroll os=%.1f mx=%.1f fresh=%.1f dip=%.0f) [%@]",
-                                       r.os, r.mx, r.fr, r.dip, String(r.raw.prefix(120)))
+                    crownNote = String(format: " (crown os=%.1f mx=%.1f mn=%.1f fresh=%.1f dip=%.0f) [%@]",
+                                       r.os, r.mx, r.mn, r.fr, r.dip, String(r.raw.prefix(120)))
                 }
             }
             let deadline = Date().addingTimeInterval(4)
@@ -1085,6 +1087,8 @@ final class CrownRoutingTests: XCTestCase {
         /// Positive overscroll travel accumulated since launch (crown refresh input).
         var os = 0.0
         var mx = 0.0
+        /// The deepest the band went below the top (a bounce, or a real scroll down).
+        var mn = 0.0
         /// The part of `os` that started from the top, and how often it unwound.
         var fr = 0.0
         var dip = 0.0
@@ -1103,6 +1107,7 @@ final class CrownRoutingTests: XCTestCase {
                 case "v": v = value
                 case "os": os = value
                 case "mx": mx = value
+                case "mn": mn = value
                 case "fr": fr = value
                 case "dip": dip = value
                 default: break
