@@ -32,10 +32,6 @@ struct HomeView: View {
     @State private var visibility = PageVisibility()
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
-    /// The rebuilt scroll view's position: set to the saved offset when this feed
-    /// comes back (the row-id based `scrollTo` landed posts away because a rebuilt
-    /// `LazyVStack` only guesses the heights above the target).
-    @State private var position = ScrollPosition()
     /// The `returnToken` whose scroll view is already at the saved offset. Starts
     /// equal to the initial token (nothing to restore on a cold launch).
     @State private var restoredToken = 0
@@ -69,7 +65,6 @@ struct HomeView: View {
                 .padding(.horizontal, Metrics.horizontalPadding)
             }
             .background(Color.black)
-            .scrollPosition($position)
             .overlay {
                 if covered { Color.black.allowsHitTesting(false) }
             }
@@ -258,9 +253,10 @@ struct HomeView: View {
         coverWhileRestoring = true
         place.restoreTries = 0
         DispatchQueue.main.async {
-            // The exact offset is worth a try (it can land when the content is small);
-            // otherwise the geometry passes re-aim the saved row (see the action above).
-            position.scrollTo(y: saved)
+            // The saved row at the saved depth. A `scrollPosition` binding was tried
+            // here and fought it: the two-way binding re-applied the (clamped) offset
+            // on every layout pass, so the row scroll was undone (SP1-SP3 landed on
+            // the next post). The row anchor is relative, so estimates cannot move it.
             if let id = place.savedTopID, list.items.contains(where: { $0.id == id }) {
                 proxy.scrollTo(id, anchor: place.savedAnchor)
             }
