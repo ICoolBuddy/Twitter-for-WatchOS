@@ -48,6 +48,9 @@ enum PerchDebugScreen: String, CaseIterable, Sendable {
 enum PerchTrace {
     static var refresh = "-"
     static var place = "-"
+    /// Sticky counters: survive the per-frame trace overwrite.
+    static var fires = 0
+    static var maxCrown: CGFloat = 0
 }
 
 enum PerchDebug {

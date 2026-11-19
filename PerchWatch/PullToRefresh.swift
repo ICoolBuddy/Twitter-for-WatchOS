@@ -78,10 +78,12 @@ struct PullToRefresh: ViewModifier {
     private func update(_ overscroll: CGFloat) {
         let t = tracker
         #if DEBUG
-        PerchTrace.refresh = String(format: "o%.1f c%.1f ia%d f%d r%d",
+        PerchTrace.maxCrown = max(PerchTrace.maxCrown, t.crown)
+        PerchTrace.refresh = String(format: "o%.1f c%.1f mx%.1f ia%d f%d r%d fires%d",
                                     Double(overscroll), Double(t.crown),
+                                    Double(PerchTrace.maxCrown),
                                     t.interacting ? 1 : 0, t.fired ? 1 : 0,
-                                    isRefreshing ? 1 : 0)
+                                    isRefreshing ? 1 : 0, PerchTrace.fires)
         #endif
         // A refresh started: the list springs back, and those frames must not
         // bring the arrow back, or it would sit there until the next scroll.
@@ -99,8 +101,10 @@ struct PullToRefresh: ViewModifier {
             if delta > 0, !t.interacting || t.last <= 2 {
                 t.crown = min(Self.crownThreshold, t.crown + delta)
             }
-        } else if overscroll < -4 {
-            // Scrolling down the feed: a fresh start next time.
+        } else if overscroll < -20 {
+            // Clearly scrolled down the feed: a fresh start next time. (The crown's
+            // band unwinds a few points past the top between detents; resetting at
+            // -4 threw away every turn before it could add up.)
             t.crown = 0
         }
         t.last = overscroll
@@ -149,6 +153,7 @@ struct PullToRefresh: ViewModifier {
 
     private func fire() {
         #if DEBUG
+        PerchTrace.fires += 1
         PerchTrace.refresh += " FIRE(ok:\(!isRefreshing && !tracker.fired))"
         #endif
         guard !isRefreshing, !tracker.fired else { return }

@@ -577,12 +577,8 @@ final class CrownRoutingTests: XCTestCase {
             guard let before = self.read(feed), abs(before.y) > 150 else {
                 return .blocked("could not scroll \(feed) down first")
             }
-            // What the reader actually sees: the posts on screen, top first. The
-            // rebuilt LazyVStack estimates the rows above the target, so the raw
-            // offset is not comparable — the post on top is.
-            let beforePosts = self.visiblePosts()
-            guard let top = beforePosts.first else {
-                return .blocked("no post links on screen before leaving")
+            guard let beforePlace = self.placeFields(feed)["live"], beforePlace != "-" else {
+                return .blocked("no place evidence before leaving (\(self.placeFields(feed)))")
             }
             guard away() else { return .blocked("could not leave \(feed) (\(self.pagerNote()))") }
             guard back() else { return .blocked("could not return to \(feed) (\(self.pagerNote()))") }
@@ -590,23 +586,44 @@ final class CrownRoutingTests: XCTestCase {
             guard let after = self.read(feed) else {
                 return .blocked("probe.\(feed) unreadable after returning")
             }
-            let afterPosts = self.visiblePosts()
-            let afterTop = afterPosts.first { $0.id == top.id }
-            let nearby = afterPosts.prefix(2).map(\.id)
-            let depthOK = afterTop.map { abs($0.y - top.y) <= 40 } ?? false
-            let place = String(format: "y %.0f -> %.0f, top %@@%.0f -> %@",
-                               before.y, after.y, top.id, top.y,
-                               afterPosts.prefix(2).map { "\($0.id)@\(Int($0.y))" }
-                                   .joined(separator: ","))
-            // The same post must be back at the same height on screen: the depth
-            // inside a row is what a row-only restore used to lose.
-            if !nearby.contains(top.id) || !depthOK {
-                let key = feed == "feed.forYou" ? "place.forYou" : "place.following"
-                let evidence = (self.element(key).value as? String) ?? "no place marker"
-                return .blocked("BUG place moved: \(place) [\(evidence)]")
+            // What the app itself measured: the row that covers the top edge and how
+            // deep the viewport is inside it, before (saved) and after (live) the
+            // rebuild. A rebuilt LazyVStack estimates the rows above, so the raw
+            // offset is not comparable; the saved row + depth is the reading place.
+            let fields = self.placeFields(feed)
+            let live = fields["live"] ?? "-"
+            let saved = fields["saved"] ?? "-"
+            let liveD = Double(fields["liveD"] ?? "") ?? .nan
+            let savedD = Double(fields["savedD"] ?? "") ?? .nan
+            let place = String(format: "y %.0f -> %.0f, top %@ -> %@, d %.0f/%.0f",
+                               before.y, after.y, beforePlace, live, liveD, savedD)
+            // Same row on top (the reader's post) and within most of a row of the
+            // same depth; the estimates above it are why the raw offset differs.
+            guard live == beforePlace, live == saved, abs(liveD - savedD) <= 120 else {
+                return .blocked("BUG place moved: \(place) [\(fields)]")
             }
             return .ready("place kept: \(place)")
         }
+    }
+
+    /// The `place.<feed>` marker's `key=value` fields (`d` is split into liveD/savedD).
+    private func placeFields(_ feed: String) -> [String: String] {
+        let key = feed == "feed.forYou" ? "place.forYou" : "place.following"
+        let raw = (element(key).value as? String) ?? ""
+        var out: [String: String] = [:]
+        for field in raw.split(separator: " ") {
+            let kv = field.split(separator: "=", maxSplits: 1)
+            guard kv.count == 2 else { continue }
+            out[String(kv[0])] = String(kv[1])
+        }
+        if let d = out["d"] {
+            let parts = d.split(separator: "/")
+            if parts.count == 2 {
+                out["liveD"] = String(parts[0])
+                out["savedD"] = String(parts[1])
+            }
+        }
+        return out
     }
 
     /// SR1: crown turned *up* at the top of For You (past the top: the rubber band)
