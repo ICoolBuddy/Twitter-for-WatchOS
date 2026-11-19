@@ -42,6 +42,14 @@ enum PerchDebugScreen: String, CaseIterable, Sendable {
 ///         PerchDebug.install()
 ///         #endif
 ///     }
+/// Last values the crown-refresh and place-restore code computed. Read by the
+/// DEBUG probes (`probe.*`, `place.*`) so a CI run can say what the app thought,
+/// not only where the list ended up.
+enum PerchTrace {
+    static var refresh = "-"
+    static var place = "-"
+}
+
 enum PerchDebug {
     /// `-PerchScreen <name>` (or the `PERCH_SCREEN` environment variable for local use).
     static var screen: PerchDebugScreen? {

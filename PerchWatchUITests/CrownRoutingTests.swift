@@ -600,8 +600,10 @@ final class CrownRoutingTests: XCTestCase {
                                    .joined(separator: ","))
             // The same post must be back at the same height on screen: the depth
             // inside a row is what a row-only restore used to lose.
-            guard nearby.contains(top.id), depthOK else {
-                return .blocked("BUG place moved: \(place)")
+            if !nearby.contains(top.id) || !depthOK {
+                let key = feed == "feed.forYou" ? "place.forYou" : "place.following"
+                let evidence = (self.element(key).value as? String) ?? "no place marker"
+                return .blocked("BUG place moved: \(place) [\(evidence)]")
             }
             return .ready("place kept: \(place)")
         }
@@ -654,8 +656,8 @@ final class CrownRoutingTests: XCTestCase {
                 // `os` = the overscroll travel the crown actually produced. 0 means the
                 // crown never rubber-bands at the top, so no threshold can fire.
                 if let r = self.read("feed.forYou") {
-                    crownNote = String(format: " (crown overscroll os=%.1f mx=%.1f fresh=%.1f dip=%.0f)",
-                                       r.os, r.mx, r.fr, r.dip)
+                    crownNote = String(format: " (crown overscroll os=%.1f mx=%.1f fresh=%.1f dip=%.0f) [%@]",
+                                       r.os, r.mx, r.fr, r.dip, String(r.raw.prefix(120)))
                 }
             }
             let deadline = Date().addingTimeInterval(4)
@@ -1066,8 +1068,11 @@ final class CrownRoutingTests: XCTestCase {
         /// The part of `os` that started from the top, and how often it unwound.
         var fr = 0.0
         var dip = 0.0
+        /// The whole value, including the app's own trace (`t=`).
+        var raw = ""
 
         init?(_ raw: String) {
+            self.raw = raw
             var sawY = false
             for field in raw.split(separator: " ") {
                 let parts = field.split(separator: "=", maxSplits: 1)

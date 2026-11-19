@@ -78,9 +78,9 @@ final class CrownProbeBox: ObservableObject {
         }
         last = os
         peak = max(peak, os)
-        text = String(format: "y=%.1f h=%.0f v=%.0f os=%.1f mx=%.1f fr=%.1f dip=%d",
+        text = String(format: "y=%.1f h=%.0f v=%.0f os=%.1f mx=%.1f fr=%.1f dip=%d t=%@",
                       Double(s.offsetY), Double(s.contentHeight), Double(s.viewportHeight),
-                      Double(travel), Double(peak), Double(fresh), dips)
+                      Double(travel), Double(peak), Double(fresh), dips, PerchTrace.refresh)
     }
 }
 

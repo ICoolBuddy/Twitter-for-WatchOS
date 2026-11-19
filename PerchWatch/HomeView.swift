@@ -92,6 +92,9 @@ struct HomeView: View {
                 if coverWhileRestoring, let id = place.savedTopID,
                    place.liveTopID == id, abs(place.liveDepth - place.savedDepth) <= 40 {
                     // Same post, same height on screen: the restore landed.
+                    #if DEBUG
+                    PerchTrace.place = "landed \(id) d=\(Int(place.liveDepth))"
+                    #endif
                     coverWhileRestoring = false
                     restoredToken = returnToken
                 } else if coverWhileRestoring, let id = place.savedTopID,
@@ -99,6 +102,9 @@ struct HomeView: View {
                     // A rebuilt scroll view sometimes ignores scrollTo until it is
                     // laid out; every geometry pass is proof that it is. Re-aim.
                     place.restoreTries += 1
+                    #if DEBUG
+                    PerchTrace.place = "re-aim \(place.restoreTries) live=\(place.liveTopID ?? "-") d=\(Int(place.liveDepth)) covered=1"
+                    #endif
                     proxy.scrollTo(id, anchor: place.savedAnchor)
                 }
             }
@@ -246,6 +252,9 @@ struct HomeView: View {
             restoredToken = token
             return
         }
+        #if DEBUG
+        PerchTrace.place = "restore called saved=\(place.savedTopID ?? "-") d=\(Int(place.savedDepth))/\(Int(place.savedHeight)) off=\(Int(saved))"
+        #endif
         coverWhileRestoring = true
         place.restoreTries = 0
         DispatchQueue.main.async {
@@ -267,7 +276,7 @@ struct HomeView: View {
     #if DEBUG
     /// Place evidence for the place tests (refreshed on each body pass).
     private var placeDebug: String {
-        "live=\(place.liveTopID ?? "-") saved=\(place.savedTopID ?? "-") d=\(Int(place.liveDepth))/\(Int(place.savedDepth)) tries=\(place.restoreTries) off=\(Int(place.savedOffset ?? -999)) inset=\(Int(place.topInset)) vh=\(Int(place.viewportHeight))"
+        "live=\(place.liveTopID ?? "-") saved=\(place.savedTopID ?? "-") d=\(Int(place.liveDepth))/\(Int(place.savedDepth)) tries=\(place.restoreTries) off=\(Int(place.savedOffset ?? -999)) inset=\(Int(place.topInset)) vh=\(Int(place.viewportHeight)) tr=[\(PerchTrace.place)]"
     }
     #endif
 
