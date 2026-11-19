@@ -164,8 +164,11 @@ jobs:
           grep -oE 'CROWN S[0-9A-Za-z]+ [0-9]+/[0-9]+ [A-Z]+.*' build/crown.log \
             > "build/crown-lines-${{ matrix.variant }}.txt" || true
           grep -E 'CROWNDEBUG' build/crown.log | head -20 || true
+          grep -E 'PLACEDBG' build/crown.log > "build/place-lines-${{ matrix.variant }}.txt" || true
           echo "--- CROWN lines (${{ matrix.variant }}) ---"
           cat "build/crown-lines-${{ matrix.variant }}.txt" || true
+          echo "--- PLACE lines (${{ matrix.variant }}) ---"
+          cat "build/place-lines-${{ matrix.variant }}.txt" || true
           if [ ! -s "build/crown-lines-${{ matrix.variant }}.txt" ]; then
             echo "::error::no CROWN lines for ${{ matrix.variant }} (build or harness failure)"
             tail -80 build/crown.log
@@ -179,6 +182,7 @@ jobs:
           name: crown-lines-${{ matrix.variant }}
           path: |
             build/crown-lines-${{ matrix.variant }}.txt
+            build/place-lines-${{ matrix.variant }}.txt
             build/crown.log
           if-no-files-found: ignore
           retention-days: 7

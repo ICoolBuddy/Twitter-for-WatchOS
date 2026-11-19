@@ -3,6 +3,15 @@ import SwiftUI
 import WatchKit
 import XKit
 
+#if DEBUG
+/// Diagnostic trace for the feed-place restore (grepped out of the CI test log).
+func placeLog(_ s: @autoclosure () -> String) { print("PLACEDBG " + s()) }
+#else
+@inline(__always) func placeLog(_ s: @autoclosure () -> String) {}
+#endif
+func fmt(_ v: CGFloat) -> String { String(format: "%.1f", v) }
+func fmt(_ r: CGRect) -> String { String(format: "[%.1f %.1f %.1f %.1f]", r.minX, r.minY, r.width, r.height) }
+
 /// One home timeline, Parrot style: pure black, no platters, big 19 pt text,
 /// full-width media. Infinite scroll, pull- or crown-to-refresh, opens instantly
 /// from the on-disk cache. `RootPager` shows one of these per timeline (For You,
@@ -102,10 +111,12 @@ struct HomeView: View {
             // not lay its rows out, so the jump landed short (an older post) and there
             // were no row frames to correct it with (device: menu -> For You). A feed
             // rebuilt off screen stays covered and restores when it comes back.
-            .onChange(of: returnToken) { _, _ in
+            .onChange(of: returnToken) { _, new in
+                placeLog("\(kind.rawValue) returnToken \(returnToken) -> \(new) active=\(isActive)")
                 if isActive { restore(proxy) }
             }
             .onAppear {
+                placeLog("\(kind.rawValue) onAppear hasAppeared=\(hasAppeared) active=\(isActive) token=\(returnToken) restored=\(restoredToken)")
                 guard !hasAppeared else { return }
                 hasAppeared = true
                 // The pager creates the neighbouring page off screen: that one waits
@@ -136,6 +147,7 @@ struct HomeView: View {
             .postPresentation(profile: $profileTarget, media: $mediaTarget)
             .onChange(of: isActive, initial: true) { _, active in
                 visibility.isActive = active
+                placeLog("\(kind.rawValue) isActive=\(active) token=\(returnToken) restored=\(restoredToken) covered=\(covered)")
                 // Back on screen with a scroll view not yet put back at the place.
                 if active, returnToken != restoredToken { restore(proxy) }
                 // Arriving on this feed: warm what it is about to show.
@@ -235,7 +247,9 @@ struct HomeView: View {
     /// (the new list has not measured the rows above it, so one scroll is not exact).
     private func restore(_ proxy: ScrollViewProxy) {
         let token = returnToken
+        placeLog("\(kind.rawValue) restore() token=\(token) saved=\(place.savedTopID ?? "-") depth=\(Int(place.savedDepth)) items=\(list.items.count) active=\(isActive) inset=\(Int(place.topInset)) vh=\(Int(place.viewportHeight))")
         guard let id = place.savedTopID, list.items.contains(where: { $0.id == id }) else {
+            placeLog("\(kind.rawValue) restore() nothing to do (saved=\(place.savedTopID ?? "-") inList=\(list.items.contains { $0.id == place.savedTopID }))")
             restoredToken = token
             return
         }
@@ -353,6 +367,7 @@ final class FeedPlace {
     func rowMoved(_ item: TimelineItem, frame: CGRect, isFirst: Bool, active: Bool) {
         let top = topInset
         if let r = restoring, r.id == item.id {
+            placeLog("row target reported frame=\(fmt(frame)) try=\(r.tries) anchor=\(r.a)")
             correct(frame: frame)
             return
         }
@@ -375,7 +390,8 @@ final class FeedPlace {
         savedDepth = liveDepth
     }
 
-    private func finishRestore() {
+    private func finishRestore(_ why: String) {
+        placeLog("finishRestore why=\(why) tries=\(restoring?.tries ?? -1) lastTop=\(restoring?.lastTop.map(fmt) ?? "-")")
         restoring = nil
         let done = restoreDone
         restoreDone = nil
@@ -386,6 +402,7 @@ final class FeedPlace {
     /// the viewport top), then `correct` measures and re-aims.
     func beginRestore(_ scroll: @escaping (String, UnitPoint) -> Void, done: @escaping () -> Void) {
         guard let id = savedTopID else { done(); return }
+        placeLog("beginRestore id=\(id) depth=\(Int(savedDepth)) inset=\(Int(topInset)) vh=\(Int(viewportHeight))")
         scrollToRow = scroll
         restoreDone?()
         restoreDone = done
@@ -396,7 +413,7 @@ final class FeedPlace {
         // Belt: a row that never reports a frame must not freeze place tracking
         // (or leave the list covered).
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            if self?.restoring?.id == id { self?.finishRestore() }
+            if self?.restoring?.id == id { self?.finishRestore("belt-0.6s") }
         }
     }
 
@@ -407,13 +424,17 @@ final class FeedPlace {
     private func correct(frame: CGRect) {
         guard var r = restoring, let scroll = scrollToRow else { return }
         let rowTop = frame.minY
-        if let last = r.lastTop, abs(last - rowTop) < 0.25 { return }   // same frame again
+        if let last = r.lastTop, abs(last - rowTop) < 0.25 {
+            placeLog("correct same frame \(fmt(frame)) — no re-aim")
+            return
+        }   // same frame again
         r.lastTop = rowTop
         let desired = topInset - savedDepth
         let error = rowTop - desired
+        placeLog("correct try=\(r.tries) rowTop=\(fmt(rowTop)) desired=\(fmt(desired)) err=\(fmt(error)) a=\(r.a)")
         if abs(error) <= 1.5 || r.tries >= 4 {
             liveDepth = topInset - rowTop
-            finishRestore()
+            finishRestore(abs(error) <= 1.5 ? "ok err=\(fmt(error))" : "max-tries err=\(fmt(error))")
             return
         }
         let next: CGFloat
