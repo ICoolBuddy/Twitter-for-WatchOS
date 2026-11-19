@@ -66,7 +66,8 @@ struct PullToRefresh: ViewModifier {
             .onChange(of: isRefreshing) { _, refreshing in
                 idleTask?.cancel()
                 tracker.last = 0
-                tracker.crown = 0
+                // Keep the crown travel: a refresh from elsewhere (on open, account
+                // switch, a retry) must not zero a pull the reader is still turning.
                 tracker.ready = false
                 pull.reset()
                 // A refresh that starts consumes every leftover frame of the pull;
