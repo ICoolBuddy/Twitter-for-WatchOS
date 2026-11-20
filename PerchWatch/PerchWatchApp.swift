@@ -95,19 +95,25 @@ struct WatchRootView: View {
                     RootPager(rootActive: nav.path.isEmpty)
                         .navigationDestination(for: Route.self) { route in
                             RouteView(route: route, pop: { nav.back() })
-                                // The bar is hidden and the header is ours: the system
-                                // back is a tap-up control that watchOS ignores while a
-                                // list decelerates, and replacing it per-destination made
-                                // the departing screen flash the system chevron during
-                                // the pop (the destination's toolbar is torn down in the
-                                // same commit that starts the transition). With no system
-                                // bar there is nothing to flash.
-                                .toolbar(.hidden, for: .navigationBar)
-                                .safeAreaInset(edge: .top, spacing: 0) {
-                                    PushedHeader(title: route.title, back: { nav.back() })
+                                // The system chevron is a tap-up control that watchOS
+                                // ignores while a list decelerates; ours acts on touch-down.
+                                // (Hiding the whole bar and drawing a header was tried: on
+                                // watchOS the safeAreaInset header scrolls with the content
+                                // and takes the clock with it.)
+                                .navigationBarBackButtonHidden(true)
+                                .toolbar {
+                                    ToolbarItem(placement: .topBarLeading) {
+                                        TouchDownControl(action: { nav.back() }) {
+                                            Image(systemName: "chevron.left")
+                                        }
+                                        .accessibilityLabel("Back")
+                                        .accessibilityIdentifier("chrome.back")
+                                        .accessibilityAddTraits(.isButton)
+                                    }
                                 }
                         }
                 }
+                .navigationBarBackButtonHidden(true)
             } else {
                 NavigationStack { OnboardingView() }
             }
@@ -194,33 +200,6 @@ struct TouchDownControl<Label: View>: View {
                         action()
                     }
             )
-    }
-}
-
-/// The header of a pushed screen: our back control and the title, since the system
-/// navigation bar is hidden (so its chevron can never replace ours during a pop).
-struct PushedHeader: View {
-    let title: String
-    let back: () -> Void
-
-    var body: some View {
-        ZStack {
-            Text(title)
-                .font(.system(size: 15, weight: .semibold))
-                .lineLimit(1)
-            HStack {
-                TouchDownControl(action: back) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .semibold))
-                }
-                .accessibilityLabel("Back")
-                .accessibilityIdentifier("chrome.back")
-                .accessibilityAddTraits(.isButton)
-                Spacer(minLength: 0)
-            }
-        }
-        .padding(.horizontal, 6)
-        .frame(height: 34)
     }
 }
 

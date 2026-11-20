@@ -38,10 +38,16 @@ struct ProfileSheet: View {
                     .swipeBack()
                     .navigationDestination(for: Route.self) { route in
                         RouteView(route: route, pop: { if !path.isEmpty { path.removeLast() } })
-                            .toolbar(.hidden, for: .navigationBar)
-                            .safeAreaInset(edge: .top, spacing: 0) {
-                                PushedHeader(title: route.title) {
-                                    if !path.isEmpty { path.removeLast() }
+                            .navigationBarBackButtonHidden(true)
+                            .toolbar {
+                                ToolbarItem(placement: .topBarLeading) {
+                                    TouchDownControl(action: {
+                                        if !path.isEmpty { path.removeLast() }
+                                    }) {
+                                        Image(systemName: "chevron.left")
+                                    }
+                                    .accessibilityLabel("Back")
+                                    .accessibilityAddTraits(.isButton)
                                 }
                             }
                     }
@@ -58,6 +64,7 @@ struct ProfileSheet: View {
                         }
                     }
             }
+            .navigationBarBackButtonHidden(true)
             // A profile opened inside this sheet is pushed in its stack, never a
             // second sheet, so exactly one media host exists at a time.
             .environment(\.pushProfile, pushProfile)
