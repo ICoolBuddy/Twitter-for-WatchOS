@@ -10,6 +10,10 @@ struct MediaTarget: Identifiable {
     var title: String? = nil
     var caption: String? = nil
     var id: String { media.map(\.id).joined(separator: ",") + "-\(startIndex)" }
+    /// A video takes the crown (volume control) and needs the real presentation path
+    /// so dismissing it re-hands the crown to the feed (S14); photos/GIFs can be an
+    /// overlay, which is what lets the swipe-down reveal the feed.
+    var hasVideo: Bool { media.contains { $0.type == .video } }
 }
 
 /// App-wide full-screen media presentation. The viewer is drawn by a `MediaHost`
@@ -27,6 +31,7 @@ final class MediaPresenter: ObservableObject {
     /// How many sheets are above the root. Exactly one `MediaHost` draws at a
     /// time (a video would otherwise play twice).
     @Published private(set) var sheetDepth = 0
+    /// A video needs the presentation path for the crown; see WatchRootView.
 
     func show(_ target: MediaTarget) {
         // A finger lifted over an image at the end of a page swipe.

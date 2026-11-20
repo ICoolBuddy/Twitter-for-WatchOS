@@ -103,7 +103,8 @@ struct WatchRootView: View {
             // Media is an overlay, not a cover: a watchOS cover is always opaque, so
             // the swipe-down could never reveal the feed. The viewer's own background
             // fades from black to clear while it is dragged (and back on release).
-            if app.canBrowse, let target = presenter.target, presenter.sheetDepth == 0 {
+            if app.canBrowse, let target = presenter.target,
+               presenter.sheetDepth == 0, !target.hasVideo {
                 MediaViewer(media: target.media, startIndex: target.startIndex,
                             title: target.title, caption: target.caption,
                             onClose: { presenter.close() }, inCover: true)
@@ -127,6 +128,17 @@ struct WatchRootView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active, nav.path.isEmpty { presenter.resetSheetDepth() }
+        }
+        // A video needs a real presentation: dismissing it is what hands the Digital
+        // Crown back to the feed (S14 measured dead after an overlay close; S12 passes
+        // for photos). Photos and GIFs stay an overlay so the swipe-down can reveal the
+        // feed through the viewer's fading background.
+        .fullScreenCover(isPresented: videoCoverPresented) {
+            if let target = presenter.target {
+                MediaViewer(media: target.media, startIndex: target.startIndex,
+                            title: target.title, caption: target.caption,
+                            onClose: { presenter.close() }, inCover: true)
+            }
         }
         // One app-wide notice for a dead session (X answered 401) instead of an error
         // on every screen; it goes away by itself when the iPhone sends new cookies.
@@ -168,6 +180,17 @@ private struct BackCornerTap: View {
                     }
             )
             .accessibilityHidden(true)
+    }
+}
+
+extension WatchRootView {
+    var videoCoverPresented: Binding<Bool> {
+        Binding(
+            get: {
+                presenter.target?.hasVideo == true && presenter.sheetDepth == 0
+            },
+            set: { presented in if !presented { presenter.close() } }
+        )
     }
 }
 
