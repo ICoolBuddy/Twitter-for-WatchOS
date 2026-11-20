@@ -95,6 +95,21 @@ struct WatchRootView: View {
                     RootPager(rootActive: nav.path.isEmpty)
                         .navigationDestination(for: Route.self) { route in
                             RouteView(route: route, pop: { nav.back() })
+                                // The system chevron is a tap-up control: while a list
+                                // decelerates watchOS spends the touch stopping it, so it
+                                // did nothing until the screen was static. Our own control
+                                // acts on touch-down.
+                                .navigationBarBackButtonHidden(true)
+                                .toolbar {
+                                    ToolbarItem(placement: .topBarLeading) {
+                                        TouchDownControl(action: { nav.back() }) {
+                                            Image(systemName: "chevron.left")
+                                        }
+                                        .accessibilityLabel("Back")
+                                        .accessibilityIdentifier("chrome.back")
+                                        .accessibilityAddTraits(.isButton)
+                                    }
+                                }
                         }
                 }
             } else {
@@ -153,6 +168,31 @@ struct WatchRootView: View {
         .onChange(of: app.canBrowse) { _, canBrowse in
             if !canBrowse { nav.path = [] }
         }
+    }
+}
+
+/// A toolbar control that acts on touch-DOWN. watchOS spends the first touch of a
+/// decelerating scroll stopping it, so a normal Button (which acts on touch-up) is
+/// ignored until the screen is static.
+struct TouchDownControl<Label: View>: View {
+    let action: () -> Void
+    @ViewBuilder var label: Label
+    @State private var last = Date.distantPast
+
+    var body: some View {
+        label
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        guard abs(value.translation.width) < 10,
+                              abs(value.translation.height) < 10 else { return }
+                        let now = Date()
+                        guard now.timeIntervalSince(last) > 0.5 else { return }
+                        last = now
+                        action()
+                    }
+            )
     }
 }
 
@@ -283,12 +323,13 @@ struct RootPager: View {
         .overlay { RootGlow(forYou: forYou, following: following) }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button {
+                TouchDownControl(action: {
                     if page == 0 { go(lastFeed) } else { go(0) }
-                } label: {
+                }) {
                     Image(systemName: page == 0 ? "chevron.left" : "line.3.horizontal")
                 }
                 .accessibilityLabel(page == 0 ? "Back to feed" : "Menu")
+                .accessibilityAddTraits(.isButton)
                 // The crown routing tests press this one.
                 .accessibilityIdentifier("chrome.menuToggle")
             }

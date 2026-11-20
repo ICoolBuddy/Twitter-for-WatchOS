@@ -80,7 +80,8 @@ struct MediaViewer: View {
         // presented with a clear background), so the feed shows behind instead of a
         // black sheet. A full-screen Material blur was avoided: it is a per-frame GPU
         // pass on the Watch and can look grey.
-        .background(Color.black.opacity(1 - 0.9 * dismissProgress))
+        // Clear by ~40% of the drag so the feed is really visible, not dimmed.
+        .background(Color.black.opacity(max(0, 1 - dismissProgress * 2.5)))
         .simultaneousGesture(dismissDrag)
         .modifier(CoverChrome(hidden: inCover))
         .accessibilityAction(named: "Close") { close() }
@@ -185,9 +186,11 @@ struct MediaViewer: View {
                 let predicted = value.predictedEndTranslation.height
                 let shouldClose = dy > 60 || (dy > 25 && predicted > 140)
                 if shouldClose {
-                    // Let the cover's own dismissal be the animation. Snapping the
-                    // content back to 0 first made the viewer bounce up and then
-                    // vanish (the "awful" swipe-down).
+                    // Freeze the dragged position for the dismissal frame: the gesture
+                    // state resets to 0 the moment the finger lifts, and without this
+                    // the photo snapped back to the centre for a frame before fading
+                    // (the flash the owner saw on photos; videos use a cover).
+                    dragSettle = max(0, dy)
                     close()
                 } else if dy > 0 {
                     dragSettle = dy
