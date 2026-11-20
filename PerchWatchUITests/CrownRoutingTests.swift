@@ -753,6 +753,49 @@ final class CrownRoutingTests: XCTestCase {
         }
     }
 
+    /// S27 (device report 2026-11-20): the system edge swipe no longer pops a post.
+    func test43_S27_postEdgeSwipe() {
+        scenario("S27", probe: "feed.forYou") {
+            guard self.tap("post.open." + FixtureID.photoPost) else {
+                return .blocked("the first post's text link was not tappable")
+            }
+            guard self.probe("post").waitForExistence(timeout: 10) else {
+                return .blocked("the post page did not open")
+            }
+            self.settle()
+            let start = self.app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.55))
+            let end = self.app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.55))
+            start.press(forDuration: 0.05, thenDragTo: end)
+            self.settle()
+            guard !self.probe("post").exists else {
+                return .blocked("BUG the system edge swipe did not pop the post")
+            }
+            guard self.onScreen("feed.forYou") else {
+                return .blocked("edge swipe popped to the wrong page (\(self.pagerNote()))")
+            }
+            return .ready("system edge swipe popped the post")
+        }
+    }
+
+    /// SHOT2: screenshots of a pushed screen's toolbar (the "old glass back shows"
+    /// report) and of a profile sheet.
+    func test44_navBarShots() {
+        guard Self.selected("SHOT2") else { return }
+        launch()
+        guard tap("post.open." + FixtureID.photoPost) else { XCTFail("no post"); return }
+        _ = probe("post").waitForExistence(timeout: 10)
+        settle()
+        shot("20-post-toolbar")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.10, dy: 0.11)).tap()
+        shot("21-after-back-tap")
+        Thread.sleep(forTimeInterval: 0.6)
+        shot("22-after-600ms")
+        guard tap("avatar." + FixtureID.photoPost) else { XCTFail("no avatar"); return }
+        _ = probe("profile").waitForExistence(timeout: 10)
+        settle()
+        shot("23-profile-sheet")
+    }
+
     // MARK: The runner
 
     private enum StepResult {

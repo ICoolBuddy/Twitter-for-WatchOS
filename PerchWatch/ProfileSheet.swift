@@ -38,12 +38,29 @@ struct ProfileSheet: View {
                     .swipeBack()
                     .navigationDestination(for: Route.self) { route in
                         RouteView(route: route, pop: { if !path.isEmpty { path.removeLast() } })
+                            .navigationBarBackButtonHidden(true)
+                            .toolbar {
+                                ToolbarItem(placement: .topBarLeading) {
+                                    TouchDownControl(action: {
+                                        if !path.isEmpty { path.removeLast() }
+                                    }) {
+                                        Image(systemName: "chevron.left")
+                                    }
+                                    .accessibilityLabel("Back")
+                                    .accessibilityAddTraits(.isButton)
+                                }
+                            }
                     }
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("Close") { dismiss() }
-                                // crown-lab: the routing tests close the sheet with this.
-                                .accessibilityIdentifier("sheet.close")
+                            // Touch-down, like the root back: a profile that is still
+                            // scrolling must not swallow the close tap.
+                            TouchDownControl(action: { dismiss() }) {
+                                Text("Close")
+                            }
+                            // crown-lab: the routing tests close the sheet with this.
+                            .accessibilityIdentifier("sheet.close")
+                            .accessibilityAddTraits(.isButton)
                         }
                     }
             }

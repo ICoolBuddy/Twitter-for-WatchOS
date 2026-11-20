@@ -13,6 +13,8 @@ struct HomeView: View {
     var isActive: Bool = true
     /// Tapping the other tab at the top switches feeds (the pager owns the page).
     var onSelect: ((HomeKind) -> Void)? = nil
+    /// Refresh the other timeline too: the owner asked for one refresh to cover both.
+    var refreshOther: (() async -> Void)? = nil
 
     @EnvironmentObject private var app: AppModel
     @AppStorage(PerchSettings.autoRefreshOnOpen) private var autoRefreshOnOpen = true
@@ -76,6 +78,9 @@ struct HomeView: View {
             .pullToRefresh(isRefreshing: list.isRefreshing, failed: list.error != nil) {
                 // Like X: newer posts above the ones already loaded, never a reload.
                 await list.refreshNewer()
+                // One refresh refreshes both timelines (the other is off screen most
+                // of the time, so this is the only refresh it would get).
+                await refreshOther?()
                 await app.posts.flush(client: app.client)
                 // A refresh the reader asked for brings the new posts into view;
                 // animated, and a no-op when the pull already left the list at the top.

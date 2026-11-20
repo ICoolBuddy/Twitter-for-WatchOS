@@ -310,10 +310,12 @@ struct RootPager: View {
             MenuView(onPick: { kind in goFeed(kind) })
                 .tag(0)
             HomeView(kind: .forYou, isActive: rootActive && page == 1,
-                     onSelect: { goFeed($0) }, list: forYou, place: forYouPlace)
+                     onSelect: { goFeed($0) }, refreshOther: { await following.refreshNewer() },
+                     list: forYou, place: forYouPlace)
                 .tag(1)
             HomeView(kind: .following, isActive: rootActive && page == 2,
-                     onSelect: { goFeed($0) }, list: following, place: followingPlace)
+                     onSelect: { goFeed($0) }, refreshOther: { await forYou.refreshNewer() },
+                     list: following, place: followingPlace)
                 .tag(2)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
