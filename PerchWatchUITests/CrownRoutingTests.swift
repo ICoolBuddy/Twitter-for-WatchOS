@@ -819,6 +819,27 @@ final class CrownRoutingTests: XCTestCase {
         shot("44-profile-sheet")
     }
 
+    /// SHOT4: the stack-level toolbar item in every state (feed / menu / pushed /
+    /// after back), after moving it out of the per-screen toolbars.
+    func test49_barShots2() {
+        guard Self.selected("SHOT4") else { return }
+        launch()
+        shot("50-feed")
+        guard tap("chrome.menuToggle", attempts: 1) else { XCTFail("no leading item on the feed"); return }
+        settle()
+        shot("51-menu")
+        guard tap("chrome.menuToggle", attempts: 1) else { XCTFail("no leading item on the menu"); return }
+        settle()
+        shot("52-feed-again")
+        guard tap("post.open." + FixtureID.photoPost) else { XCTFail("no post"); return }
+        _ = probe("post").waitForExistence(timeout: 10)
+        settle()
+        shot("53-post")
+        guard tap("chrome.menuToggle", attempts: 1) else { XCTFail("no leading item on the post"); return }
+        Thread.sleep(forTimeInterval: 0.7)
+        shot("54-after-back")
+    }
+
     // MARK: The runner
 
     private enum StepResult {

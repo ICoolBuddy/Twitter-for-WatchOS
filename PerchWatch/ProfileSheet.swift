@@ -39,17 +39,6 @@ struct ProfileSheet: View {
                     .navigationDestination(for: Route.self) { route in
                         RouteView(route: route, pop: { if !path.isEmpty { path.removeLast() } })
                             .navigationBarBackButtonHidden(true)
-                            .toolbar {
-                                ToolbarItem(placement: .topBarLeading) {
-                                    TouchDownControl(action: {
-                                        if !path.isEmpty { path.removeLast() }
-                                    }) {
-                                        Image(systemName: "chevron.left")
-                                    }
-                                    .accessibilityLabel("Back")
-                                    .accessibilityAddTraits(.isButton)
-                                }
-                            }
                     }
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
@@ -65,6 +54,22 @@ struct ProfileSheet: View {
                     }
             }
             .navigationBarBackButtonHidden(true)
+            // One leading item for the whole sheet stack: visible as a back control
+            // while a route is pushed, invisible at the profile root (its Close lives
+            // in the cancellation slot). It never changes identity during a pop.
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    TouchDownControl(action: {
+                        if !path.isEmpty { path.removeLast() }
+                    }) {
+                        Image(systemName: "chevron.left")
+                    }
+                    .opacity(path.isEmpty ? 0 : 1)
+                    .allowsHitTesting(!path.isEmpty)
+                    .accessibilityLabel("Back")
+                    .accessibilityAddTraits(.isButton)
+                }
+            }
             // A profile opened inside this sheet is pushed in its stack, never a
             // second sheet, so exactly one media host exists at a time.
             .environment(\.pushProfile, pushProfile)

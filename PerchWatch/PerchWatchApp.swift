@@ -84,6 +84,10 @@ struct WatchRootView: View {
     @EnvironmentObject private var app: AppModel
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var presenter = MediaPresenter.shared
+    /// The pager's page lives here so the toolbar item can stay the same view across
+    /// push/pop (a per-screen leading item is torn down mid-pop, which is what made the
+    /// departing screen flash the system back and the icon jump a few points).
+    @StateObject private var pager = PagerControl()
     /// The navigation state, owned by the root: a screen is "on top" (and may
     /// own the crown) exactly while it is the last element of this path.
     @StateObject private var nav = Navigator()
@@ -92,28 +96,31 @@ struct WatchRootView: View {
         ZStack {
             if app.canBrowse {
                 NavigationStack(path: $nav.path) {
-                    RootPager(rootActive: nav.path.isEmpty)
+                    RootPager(rootActive: nav.path.isEmpty, control: pager)
                         .navigationDestination(for: Route.self) { route in
                             RouteView(route: route, pop: { nav.back() })
-                                // The system chevron is a tap-up control that watchOS
-                                // ignores while a list decelerates; ours acts on touch-down.
-                                // (Hiding the whole bar and drawing a header was tried: on
-                                // watchOS the safeAreaInset header scrolls with the content
-                                // and takes the clock with it.)
                                 .navigationBarBackButtonHidden(true)
-                                .toolbar {
-                                    ToolbarItem(placement: .topBarLeading) {
-                                        TouchDownControl(action: { nav.back() }) {
-                                            Image(systemName: "chevron.left")
-                                        }
-                                        .accessibilityLabel("Back")
-                                        .accessibilityIdentifier("chrome.back")
-                                        .accessibilityAddTraits(.isButton)
-                                    }
-                                }
                         }
                 }
                 .navigationBarBackButtonHidden(true)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        TouchDownControl(action: {
+                            if nav.path.isEmpty { pager.toggle() } else { nav.back() }
+                        }) {
+                            ZStack {
+                                Image(systemName: "line.3.horizontal")
+                                    .opacity(showsChevron ? 0 : 1)
+                                Image(systemName: "chevron.left")
+                                    .opacity(showsChevron ? 1 : 0)
+                            }
+                        }
+                        .animation(nil, value: showsChevron)
+                        .accessibilityLabel(showsChevron ? "Back" : "Menu")
+                        .accessibilityIdentifier("chrome.menuToggle")
+                        .accessibilityAddTraits(.isButton)
+                    }
+                }
             } else {
                 NavigationStack { OnboardingView() }
             }
@@ -231,6 +238,10 @@ private struct BackCornerTap: View {
 }
 
 extension WatchRootView {
+    /// The leading item is a back chevron on the menu and on any pushed screen; the
+    /// hamburger only on a feed. Same item, same position, always.
+    private var showsChevron: Bool { !nav.path.isEmpty || pager.page == 0 }
+
     var videoCoverPresented: Binding<Bool> {
         Binding(
             get: {
@@ -296,19 +307,34 @@ struct SessionExpiredBanner: View {
 /// `PerchWatchUITests/CrownRoutingTests.swift`; see `docs/crown/PHASE2-REPORT.md`.
 /// The system pager hands the crown to the page on screen by itself, so there is no
 /// focus code here (explicit focus on a scroll view suppresses that routing).
+/// The root pager's page, shared with the stack-level toolbar item.
+@MainActor
+final class PagerControl: ObservableObject {
+    @Published var page = 1
+    var lastFeed = 1
+
+    func go(_ target: Int) {
+        guard target != page else { return }
+        withAnimation(.easeInOut(duration: 0.2)) { page = target }
+    }
+
+    func toggle() {
+        if page == 0 { go(lastFeed) } else { go(0) }
+    }
+}
+
 struct RootPager: View {
     /// False while a detail screen is pushed.
     var rootActive = true
+    @ObservedObject var control: PagerControl
     @EnvironmentObject private var app: AppModel
     @AppStorage(PerchSettings.homeKind) private var kindRaw = HomeKind.forYou.rawValue
     @AppStorage(PerchSettings.autoRefreshOnOpen) private var autoRefreshOnOpen = true
-    @State private var page = 1
+
     /// The two feeds' lists live here (not in the pages) so the edge glow can read
     /// them directly.
     @StateObject private var forYou = PagedList<TimelineItem>(maxItems: 200, fetch: { _ in ([], nil, nil) })
     @StateObject private var following = PagedList<TimelineItem>(maxItems: 200, fetch: { _ in ([], nil, nil) })
-    /// The feed page to return to from the menu (1 = For You, 2 = Following).
-    @State private var lastFeed = 1
     @State private var didStart = false
     /// Each feed's reading place, kept here so it outlives the pages.
     @State private var forYouPlace = FeedPlace()
@@ -319,14 +345,14 @@ struct RootPager: View {
     @State private var followingVisibility = PageVisibility()
 
     var body: some View {
-        TabView(selection: $page) {
+        TabView(selection: $control.page) {
             MenuView(onPick: { kind in goFeed(kind) })
                 .tag(0)
-            HomeView(kind: .forYou, isActive: rootActive && page == 1,
+            HomeView(kind: .forYou, isActive: rootActive && control.page == 1,
                      onSelect: { goFeed($0) }, refreshOther: { await following.refreshNewer() },
                      list: forYou, place: forYouPlace, visibility: forYouVisibility)
                 .tag(1)
-            HomeView(kind: .following, isActive: rootActive && page == 2,
+            HomeView(kind: .following, isActive: rootActive && control.page == 2,
                      onSelect: { goFeed($0) }, refreshOther: { await forYou.refreshNewer() },
                      list: following, place: followingPlace, visibility: followingVisibility)
                 .tag(2)
@@ -336,32 +362,16 @@ struct RootPager: View {
         // One glow for the whole pager (not per page), so a refresh that is
         // still running stays visible after swiping to the other feed or the menu.
         .overlay { RootGlow(forYou: forYou, following: following) }
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                TouchDownControl(action: {
-                    if page == 0 { go(lastFeed) } else { go(0) }
-                }) {
-                    // Both symbols stay laid out: a ternary swapped their different
-                    // widths inside the page animation and the item snapped at the end.
-                    ZStack {
-                        Image(systemName: "line.3.horizontal").opacity(page == 0 ? 0 : 1)
-                        Image(systemName: "chevron.left").opacity(page == 0 ? 1 : 0)
-                    }
-                }
-                .animation(nil, value: page)
-                .accessibilityLabel(page == 0 ? "Back to feed" : "Menu")
-                .accessibilityAddTraits(.isButton)
-                // The crown routing tests press this one.
-                .accessibilityIdentifier("chrome.menuToggle")
-            }
-        }
         .onAppear {
             // Only once: re-assigning the page every time the root comes back
             // from a pushed screen made the pager flash while it settled.
             guard !didStart else { return }
             didStart = true
-            page = kindRaw == HomeKind.following.rawValue ? 2 : 1
-            lastFeed = page
+            // A cold start always opens For You (the owner's choice), whatever feed
+            // was open when the app was last used.
+            control.page = 1
+            control.lastFeed = 1
+            kindRaw = HomeKind.forYou.rawValue
         }
         // The pager builds a page only when it is first selected, so without this the
         // off-screen feed had no real fetch and was only refreshed on arrival. Start
@@ -374,17 +384,17 @@ struct RootPager: View {
         }
         // The page is the source of truth for the swipe; the stored kind follows
         // it so the menu checkmark, background refresh and account switch agree.
-        .onChange(of: page) { _, value in
+        .onChange(of: control.page) { _, value in
             guard value != 0 else { return }
-            lastFeed = value
+            control.lastFeed = value
             let kind = value == 2 ? HomeKind.following : HomeKind.forYou
             if kindRaw != kind.rawValue { kindRaw = kind.rawValue }
         }
         // And a kind change from elsewhere (menu row, account switch) moves the pager.
         .onChange(of: kindRaw) { _, value in
-            guard page != 0 else { return }
+            guard control.page != 0 else { return }
             let target = value == HomeKind.following.rawValue ? 2 : 1
-            if page != target { go(target) }
+            if control.page != target { control.go(target) }
         }
     }
 
@@ -404,12 +414,7 @@ struct RootPager: View {
 
     private func goFeed(_ kind: HomeKind) {
         kindRaw = kind.rawValue
-        go(kind == .following ? 2 : 1)
-    }
-
-    private func go(_ target: Int) {
-        guard target != page else { return }
-        withAnimation(.easeInOut(duration: 0.2)) { page = target }
+        control.go(kind == .following ? 2 : 1)
     }
 }
 
