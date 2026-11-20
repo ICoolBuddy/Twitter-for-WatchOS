@@ -796,6 +796,29 @@ final class CrownRoutingTests: XCTestCase {
         shot("23-profile-sheet")
     }
 
+    /// SHOT3: the pushed-screen header after the navigation bar was hidden (the
+    /// owner reports the back + title staying on screen, a big top gap, and the
+    /// clock moving to the middle).
+    func test47_barShots() {
+        guard Self.selected("SHOT3") else { return }
+        launch()
+        shot("40-feed")
+        guard tap("post.open." + FixtureID.photoPost) else { XCTFail("no post"); return }
+        _ = probe("post").waitForExistence(timeout: 10)
+        settle()
+        shot("41-post-top")
+        app.swipeUp()
+        Thread.sleep(forTimeInterval: 0.8)
+        shot("42-post-scrolled")
+        app.swipeDown()
+        Thread.sleep(forTimeInterval: 0.8)
+        shot("43-post-top-again")
+        guard tap("avatar." + FixtureID.photoPost) else { XCTFail("no avatar"); return }
+        _ = probe("profile").waitForExistence(timeout: 10)
+        settle()
+        shot("44-profile-sheet")
+    }
+
     // MARK: The runner
 
     private enum StepResult {
