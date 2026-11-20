@@ -1,6 +1,4 @@
 import Foundation
-import AVFoundation
-import ImageIO
 import Combine
 import XKit
 
@@ -235,15 +233,16 @@ final class SavedStore: ObservableObject {
                    let name = await get(url, "video-\(tweet.id).mp4", maxBytes: Limit.videoBytes) {
                     working.videoFile = name
                 }
+                // A still for the row. Generating one from the file is not possible on
+                // watchOS (AVAssetImageGenerator is unavailable), so save X's own
+                // thumbnail JPEG: it is the same image the feed shows.
+                if working.posterFile == nil,
+                   let poster = await get(media.feedURL, "poster-\(tweet.id).jpg") {
+                    working.posterFile = poster
+                }
             }
         }
         working.mediaFiles = files
-        if let name = working.videoFile, working.posterFile == nil,
-           let poster = await makePoster(for: directory.appendingPathComponent(name), id: tweet.id) {
-            working.posterFile = poster
-            written.append(poster)
-        }
-
         guard isSaved(tweet.id) else {
             // Removed while downloading: don't leave the files just written behind.
             for name in written { try? FileManager.default.removeItem(at: directory.appendingPathComponent(name)) }
@@ -299,30 +298,6 @@ final class SavedStore: ObservableObject {
         if size + usedBytes() > Limit.totalBytes { throw SaveError.noRoom }
         try? FileManager.default.removeItem(at: destination)
         try FileManager.default.moveItem(at: temporary, to: destination)
-        return name
-    }
-
-    /// One still from the saved video, written next to it. `AVAssetImageGenerator`
-    /// works on the local file, so this costs no network; a failure is not fatal
-    /// (the row falls back to the remote poster when online).
-    private func makePoster(for video: URL, id: String) async -> String? {
-        let name = "poster-\(id).jpg"
-        let destination = directory.appendingPathComponent(name)
-        if FileManager.default.fileExists(atPath: destination.path) { return name }
-        let image: CGImage? = await Task.detached(priority: .utility) {
-            let asset = AVURLAsset(url: video)
-            let generator = AVAssetImageGenerator(asset: asset)
-            generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = CGSize(width: 480, height: 480)
-            return try? generator.copyCGImage(at: CMTime(seconds: 0.3, preferredTimescale: 600),
-                                              actualTime: nil)
-        }.value
-        guard let image,
-              let dest = CGImageDestinationCreateWithURL(destination as CFURL, "public.jpeg" as CFString, 1, nil)
-        else { return nil }
-        CGImageDestinationAddImage(dest, image,
-                                   [kCGImageDestinationLossyCompressionQuality: 0.7] as CFDictionary)
-        guard CGImageDestinationFinalize(dest) else { return nil }
         return name
     }
 
