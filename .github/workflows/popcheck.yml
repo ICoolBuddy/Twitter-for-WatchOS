@@ -1,0 +1,129 @@
+name: Pop chrome check
+
+# Debug harness for the leading toolbar item across repeated push/pop cycles
+# (`PerchWatchUITests/PopChromeTests.swift`). Manual only: it exists to answer one
+# question with measurements — does the menu button keep its frame and exist after
+# several pops — and attaches a screenshot of each round.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: popcheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  popcheck:
+    runs-on: macos-26
+    timeout-minutes: 40
+    env:
+      XCODE_APP: /Applications/Xcode_26.6.app
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode
+        run: |
+          if [ ! -d "$XCODE_APP" ]; then
+            echo "::warning::$XCODE_APP not found, using newest installed Xcode"
+            XCODE_APP=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          fi
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Pick and boot a watch simulator
+        id: sim
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess, sys
+          def simctl(*a):
+              return subprocess.run(["xcrun", "simctl", *a], check=True,
+                                    capture_output=True, text=True).stdout
+          def vt(t): return tuple(int(n) for n in re.findall(r"\d+", t or "0"))[:4]
+          runtimes = [r for r in json.loads(simctl("list", "runtimes", "-j"))["runtimes"]
+                      if r.get("isAvailable") and "watch" in (r.get("platform","")+r.get("identifier","")).lower()]
+          if not runtimes:
+              print("::error::no watchOS runtime"); sys.exit(1)
+          runtimes.sort(key=lambda r: vt(r.get("version") or r.get("name")))
+          runtime = runtimes[-1]
+          devices = json.loads(simctl("list", "devices", "available", "-j"))["devices"].get(runtime["identifier"], [])
+          def rank(d):
+              i = d.get("deviceTypeIdentifier","")
+              if "Series-11-46mm" in i: return 0
+              if "Series-10-46mm" in i: return 1
+              if "46mm" in i: return 2
+              if "Ultra" in i: return 3
+              return 4
+          devices.sort(key=rank)
+          udid = devices[0]["udid"] if devices else simctl(
+              "create", "Perch Pop", "com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-10-46mm",
+              runtime["identifier"]).strip()
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"udid={udid}\n")
+          print("simulator:", udid, runtime.get("name"))
+          PY
+          xcrun simctl boot "${{ steps.sim.outputs.udid }}" 2>/dev/null || true
+          xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b
+
+      - name: Leading chrome across repeated pops
+        id: pop
+        continue-on-error: true
+        run: |
+          UDID="${{ steps.sim.outputs.udid }}"
+          mkdir -p build
+          rm -rf build/pop.xcresult
+          set +e
+          xcodebuild test \
+            -project Perch.xcodeproj \
+            -scheme PerchWatchCrown \
+            -configuration Debug \
+            -destination "platform=watchOS Simulator,id=$UDID" \
+            -derivedDataPath build/DerivedData \
+            -skipPackagePluginValidation \
+            -parallel-testing-enabled NO \
+            -resultBundlePath build/pop.xcresult \
+            -only-testing:PerchWatchUITests/PopChromeTests \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            ARCHS=arm64 \
+            > build/pop.log 2>&1
+          STATUS=$?
+          set -e
+          echo "xcodebuild test exit: $STATUS"
+          grep -E ': error:|error: ' build/pop.log | sort -u | head -30 || true
+          # The measurements, into the step summary and the log.
+          grep -E 'POPCHROME ' build/pop.log > build/pop-lines.txt || true
+          {
+            echo "## Leading chrome across repeated pops"
+            echo '```'
+            cat build/pop-lines.txt || echo "(no POPCHROME lines — build failure?)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat build/pop-lines.txt || true
+          exit $STATUS
+
+      - name: Export screenshots
+        if: always()
+        run: |
+          mkdir -p attachments
+          xcrun xcresulttool export attachments \
+            --path build/pop.xcresult --output-path attachments 2>&1 | tail -5 || true
+          ls -la attachments || true
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: popcheck
+          path: |
+            build/pop.log
+            build/pop-lines.txt
+            attachments/
+          if-no-files-found: warn
+          retention-days: 14
