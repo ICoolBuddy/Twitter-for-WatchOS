@@ -342,9 +342,12 @@ struct PagerChrome<Content: View>: View {
                             Image(systemName: "line.3.horizontal").opacity(control.page == 0 ? 0 : 1)
                             Image(systemName: "chevron.left").opacity(control.page == 0 ? 1 : 0)
                         }
-                        .font(.system(size: 16, weight: .semibold))
-                        .frame(width: 30, height: 30)
-                        .background(Circle().fill(Color.white.opacity(0.16)))
+                        .font(.system(size: 15, weight: .semibold))
+                        // Measured off a simulator screenshot of the system back button:
+                        // a 35 pt disc, 10% white fill, and a 1 pt rim at ~20% white.
+                        .frame(width: 35, height: 35)
+                        .background(Circle().fill(Color.white.opacity(0.10)))
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.20), lineWidth: 1))
                         .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
