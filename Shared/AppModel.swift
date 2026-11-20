@@ -113,7 +113,12 @@ final class AppModel: ObservableObject {
         let newAccounts = await store.accounts
         if accounts != newAccounts { accounts = newAccounts }
         let newActive = await store.activeAccountId
-        if activeAccountId != newActive { activeAccountId = newActive }
+        if activeAccountId != newActive {
+            activeAccountId = newActive
+            // The badge belongs to the account, not the device.
+            badge = XBadgeCounts(notifications: 0, dms: 0)
+            lastBadgeFetch = .distantPast
+        }
         // Offline taps are queued per account: only the active one's replay, and the
         // queues of accounts that no longer exist are dropped.
         posts.setAccount(activeAccountId)
@@ -327,8 +332,13 @@ final class AppModel: ObservableObject {
     }
 
     func clearNotificationBadge(topCursor: String?) async {
+        // Mark on X first: zeroing locally and swallowing the failure made the badge
+        // come back on the next poll (the user had already read the list).
+        if let topCursor {
+            do { try await client.markNotificationsSeen(topCursor: topCursor) }
+            catch { return }
+        }
         badge.notifications = 0
-        if let topCursor { try? await client.markNotificationsSeen(topCursor: topCursor) }
     }
 }
 

@@ -9,10 +9,12 @@ import SwiftUI
 /// layout pass on top of the gesture); `offsetX` is only the settled value used to
 /// animate a cancelled swipe back.
 ///
+/// The edge counts too. watchOS's own interactive pop is disabled by hiding the
+/// system back button (which we replaced with a touch-down control that works while
+/// a list decelerates), so there is no second pop to race here any more — the same
+/// drag now covers the edge and the middle.
+///
 /// Guarded against the black-screen pop seen on the Watch:
-/// - drags that start at the left edge are left to watchOS's own interactive
-///   swipe-back; handling them too made two pops race in one transition and
-///   could leave the navigation stack showing a black screen;
 /// - one dismiss per appearance (a second `dismiss()` during the pop animation
 ///   could hit the screen underneath);
 /// - the content offset is reset whenever the screen (re)appears or a pop does
@@ -24,8 +26,6 @@ struct SwipeBack: ViewModifier {
     @Environment(\.popScreen) private var popScreen
     var enabled = true
 
-    /// Leading strip that belongs to the system's edge swipe.
-    private static let systemEdge: CGFloat = 22
 
     /// The settled offset (0 except for the frame that starts a settle animation).
     @State private var offsetX: CGFloat = 0
@@ -42,7 +42,6 @@ struct SwipeBack: ViewModifier {
                 DragGesture(minimumDistance: 25)
                     .updating($dragLive) { _, live, _ in live = true }
                     .updating($dragDX) { value, state, _ in
-                        guard value.startLocation.x > Self.systemEdge else { state = 0; return }
                         let dx = value.translation.width
                         let dy = abs(value.translation.height)
                         // Follow the finger in BOTH directions for any roughly
@@ -58,8 +57,7 @@ struct SwipeBack: ViewModifier {
                     .onEnded { value in
                         SwipeGuard.end()
                         let dx = horizontal(value) ?? 0
-                        let fromContent = value.startLocation.x > Self.systemEdge
-                        let go = fromContent && dx > 55
+                        let go = dx > 55
                         if go {
                             // A pushed screen pops by state: one mutation, so it cannot
                             // race the system's own pop. The pop animates the screen
@@ -76,7 +74,7 @@ struct SwipeBack: ViewModifier {
                                 withAnimation(.easeOut(duration: 0.12)) { offsetX = 0 }
                                 dismiss()
                             }
-                        } else if fromContent, dx > 0 {
+                        } else if dx > 0 {
                             offsetX = dx
                             withAnimation(.easeOut(duration: 0.2)) { offsetX = 0 }
                         } else {

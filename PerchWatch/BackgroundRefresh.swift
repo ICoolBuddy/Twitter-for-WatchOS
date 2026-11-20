@@ -112,7 +112,8 @@ enum ComplicationPublisher {
     static func start() {
         let app = AppModel.shared
         subscription = app.$badge.map(\.notifications).removeDuplicates()
-            .combineLatest(app.$isLoggedIn.removeDuplicates(), app.$stateLoaded.removeDuplicates())
+            .combineLatest(app.$isLoggedIn.removeDuplicates(), app.$stateLoaded.removeDuplicates(),
+                           app.$activeAccountId.removeDuplicates())
             .filter { $0.2 }                       // not before the stored session is read
             .sink { _ in publish() }
     }

@@ -65,6 +65,10 @@ final class PostStateStore: ObservableObject {
 
     init() { loadQueue() }
 
+    /// The explicit optimistic value for a post, when the reader changed it in this
+    /// session (nil = the tweet's own flags).
+    func override(for id: String) -> State? { overrides[id] }
+
     /// The optimistic state, unless the post object already carries the same
     /// flags (fresh data from X): then its newer counts are shown.
     func state(for t: XTweet) -> State {

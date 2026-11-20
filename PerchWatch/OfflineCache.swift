@@ -18,7 +18,8 @@ enum OfflineCache {
         let next = accountId ?? "none"
         if next != namespace { namespace = next }
     }
-    private static var directory: URL? {
+    /// Resolved once: every profile/thread open used to stat the filesystem on main.
+    private static let directory: URL? = {
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         else { return nil }
         let dir = base.appendingPathComponent("PerchOffline", isDirectory: true)
@@ -26,7 +27,7 @@ enum OfflineCache {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
         return dir
-    }
+    }()
 
     private static func url(_ name: String) -> URL? {
         directory?.appendingPathComponent(namespace + "-" + name + ".json")

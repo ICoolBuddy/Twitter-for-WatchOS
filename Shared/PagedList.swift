@@ -347,7 +347,7 @@ enum DiskWriter {
 /// clearing (logout, account removal) cannot miss a kind of file.
 enum TimelineCacheScope: Hashable {
     case home(account: String, kind: HomeKind)
-    case profile(userId: String)
+    case profile(account: String, userId: String)
 
     static let homePrefix = "perch-home-"
     static let profilePrefix = "perch-profile-"
@@ -355,7 +355,7 @@ enum TimelineCacheScope: Hashable {
     var fileName: String {
         switch self {
         case .home(let account, let kind): return "\(Self.homePrefix)\(account)-\(kind.rawValue).json"
-        case .profile(let userId): return "\(Self.profilePrefix)\(userId).json"
+        case .profile(let account, let userId): return "\(Self.profilePrefix)\(account)-\(userId).json"
         }
     }
 }

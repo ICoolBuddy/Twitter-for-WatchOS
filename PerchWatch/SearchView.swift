@@ -8,6 +8,9 @@ struct SearchView: View {
     @StateObject private var list = PagedList<TimelineItem>(maxItems: 150, fetch: { _ in ([], nil, nil) })
     @State private var query = ""
     @State private var product: SearchProduct = .top
+    /// The last search survives leaving the screen (it used to be view state only).
+    @AppStorage("perch.search.query") private var storedQuery = ""
+    @AppStorage("perch.search.product") private var storedProduct = SearchProduct.top.rawValue
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
 
@@ -18,7 +21,7 @@ struct SearchView: View {
                 if !query.isEmpty { productPicker }
 
                 if query.isEmpty {
-                    Text("Search posts on X.")
+                    Text("Search posts or people on X.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
@@ -44,6 +47,12 @@ struct SearchView: View {
         // crown-lab measurement hook (DEBUG only): `probe.search`.
         .crownProbe("search")
         .swipeBack()
+        .onAppear {
+            guard query.isEmpty, !storedQuery.isEmpty else { return }
+            query = storedQuery
+            product = SearchProduct(rawValue: storedProduct) ?? .top
+            run()
+        }
     }
 
     private var searchField: some View {
@@ -64,6 +73,7 @@ struct SearchView: View {
             let q = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !q.isEmpty else { return }
             query = q
+            storedQuery = q
             run()
         }
         .buttonStyle(.swipeSafe)
@@ -75,6 +85,7 @@ struct SearchView: View {
         HStack(spacing: 6) {
             chip(.top, "Top")
             chip(.latest, "Latest")
+            chip(.people, "People")
         }
         .frame(maxWidth: .infinity)
         .padding(.bottom, 6)
@@ -84,6 +95,7 @@ struct SearchView: View {
         Button {
             guard product != p else { return }
             product = p
+            storedProduct = p.rawValue
             run()
         } label: {
             Text(label)

@@ -168,6 +168,11 @@ struct WatchRootView: View {
         .onChange(of: app.canBrowse) { _, canBrowse in
             if !canBrowse { nav.path = [] }
         }
+        // A synced account switch must not leave a pushed post/profile from the
+        // previous account (its flags and follow state would be the old account's).
+        .onChange(of: app.activeAccountId) { _, _ in
+            if app.canBrowse { nav.path = [] }
+        }
     }
 }
 

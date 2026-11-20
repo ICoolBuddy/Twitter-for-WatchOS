@@ -13,6 +13,7 @@ struct TimelineListView: View {
     let title: String
 
     @EnvironmentObject private var app: AppModel
+    @EnvironmentObject private var posts: PostStateStore
     @StateObject private var list = PagedList<TimelineItem>(maxItems: 200, fetch: { _ in ([], nil, nil) })
     @State private var configuredKey: String?
     @State private var profileTarget: ProfileTarget?
@@ -23,7 +24,7 @@ struct TimelineListView: View {
             LazyVStack(alignment: .leading, spacing: 0) {
                 PagedListStatus(list: list, emptyText: emptyText)
 
-                ForEach(list.items) { item in
+                ForEach(visibleItems) { item in
                     TimelineItemRows(item: item,
                                      onOpenProfile: { profileTarget = ProfileTarget(user: $0) },
                                      onMedia: { mediaTarget = $0 })
@@ -45,6 +46,17 @@ struct TimelineListView: View {
             await list.loadIfNeeded()
         }
         .swipeBack()
+    }
+
+    /// Likes/Bookmarks are "things I marked": a row the reader just un-marked must
+    /// leave the list, even though `list.items` still holds it.
+    private var visibleItems: [TimelineItem] {
+        guard kind == .likes || kind == .bookmarks else { return list.items }
+        return list.items.filter { item in
+            guard let t = item.tweets.first?.displayed,
+                  let o = posts.override(for: t.id) else { return true }
+            return kind == .likes ? o.liked : o.bookmarked
+        }
     }
 
     private var emptyText: String {

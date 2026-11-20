@@ -244,57 +244,67 @@ final class PullState: ObservableObject {
     }
 }
 
-/// The pull indicator: an iOS-like arrow that sits in the gap the pull opens and
-/// rides the content top down as you pull, flips when letting go will refresh, and
-/// becomes a small spinner while the refresh runs. No text here — the status is the
-/// bottom pill.
+/// The pull indicator. Everything is anchored to the CONTENT TOP, not the screen:
+/// the overlay's coordinate space starts there (the nav bar/clock are the
+/// `contentInsets` above it), so adding the inset again put the old arrow a full
+/// inset down — mid-screen.
+///
+/// - while pulling, the glyph rides the content top 1:1 with the gap (plus a shaft
+///   that grows), so it is always in the empty space the pull opens;
+/// - a crown turn opens almost no gap, so it gets a thin tick that grows instead
+///   of an arrow floating over the rows;
+/// - while refreshing the gap is gone, and the spinner takes a fixed slot in the
+///   chrome band (below the clock, above the tabs).
 private struct PullIndicator: View {
     @ObservedObject var state: PullState
     let isRefreshing: Bool
 
-    /// Tall enough for the arrow head plus a stretched shaft.
-    private static let band: CGFloat = 34
+    private static let box: CGFloat = 30      // constant: no layout churn per frame
+    private static let clock: CGFloat = 26    // the time glyph in the chrome band
 
     var body: some View {
-        content
-            .frame(width: 34, height: Self.band)
+        glyph
+            .frame(width: Self.box, height: Self.box, alignment: .bottom)
             .frame(maxWidth: .infinity)
-            .padding(.top, topPadding)
+            .opacity(alpha)
+            .offset(y: bottom - Self.box)     // a transform, never padding
             .animation(.spring(response: 0.25, dampingFraction: 0.8), value: state.ready)
     }
 
-    /// The band's bottom edge sits on the content top, so the arrow travels down
-    /// with the pull (a crown turn has almost no gap: its progress drives the travel).
-    private var topPadding: CGFloat {
-        if isRefreshing { return max(2, state.topInset - Self.band - 2) }
-        let travel = min(1, max(0, state.progress)) * PullToRefresh.threshold
-        return max(2, state.topInset + travel - Self.band)
+    /// Glyph bottom edge in the overlay's space (0 = content top at rest).
+    private var bottom: CGFloat {
+        if isRefreshing {
+            // Chrome band, lower half: clear of the clock, above the returning tabs.
+            return -min(5, max(2, state.topInset - Self.clock - 15))
+        }
+        return state.gap >= 12 ? state.gap - 3 : state.gap
     }
 
-    @ViewBuilder private var content: some View {
+    private var alpha: CGFloat {
+        if isRefreshing { return 1 }
+        if state.gap < 12 { return min(1, state.progress * 3) }
+        return min(1, max(0, (state.gap - 2) / 6))
+    }
+
+    @ViewBuilder private var glyph: some View {
         if isRefreshing {
             Spinner(size: 15)
-                .transition(.opacity)
+        } else if state.gap >= 12 {
+            VStack(spacing: 0) {
+                Capsule()
+                    .fill(Color.white)
+                    .frame(width: 3, height: min(12, max(0, state.gap - 20)))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 14, weight: .bold))
+                    .rotationEffect(.degrees(state.ready ? 180 : 0))
+            }
+            .foregroundStyle(.white)
         } else if state.progress > 0.02 {
-            arrow
-                .transition(.opacity)
-        }
-    }
-
-    private var arrow: some View {
-        let p = min(1, max(0, state.progress))
-        return VStack(spacing: -1) {
+            // The crown: no space is created, so no arrow — a growing underline.
             Capsule()
-                .fill(Color.white)
-                .frame(width: 3, height: 2 + 16 * p)
-            Image(systemName: "chevron.down")
-                .font(.system(size: 14, weight: .bold))
-                .offset(y: -3)
+                .fill(Color.white.opacity(0.85))
+                .frame(width: 10 + 24 * min(1, state.progress), height: 2)
         }
-        .foregroundStyle(.white)
-        .rotationEffect(.degrees(state.ready ? 180 : 0))
-        .scaleEffect(0.55 + 0.45 * p)
-        .opacity(Double(min(1, p * 1.5)))
     }
 }
 

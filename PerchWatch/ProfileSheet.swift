@@ -158,7 +158,7 @@ struct ProfileContent: View {
             .padding(.horizontal, Metrics.horizontalPadding)
         }
         .background(Color.black)
-        .task { await start(force: false) }
+        .task(id: app.activeAccountId) { await start(force: started) }
         .postPresentation(profile: $otherProfile, media: $mediaTarget)
         // crown-lab measurement hook (DEBUG only): `probe.profile`.
         .crownProbe("profile")
@@ -332,13 +332,17 @@ struct ProfileContent: View {
 
     private func apply(_ u: XUser) {
         user = u
+        // A response fetched before the follow tap must not flip the button back.
+        guard !followBusy else { return }
         following = u.following
         followers = u.followersCount
     }
 
     private func configurePosts(_ userId: String) {
-        guard configuredFor != userId else { return }
-        configuredFor = userId
+        let account = app.activeAccountId ?? "none"
+        let key = "\(account)|\(userId)"
+        guard configuredFor != key else { return }
+        configuredFor = key
         list.reset()
         let client = app.client
         list.fetch = { cursor in
@@ -349,11 +353,14 @@ struct ProfileContent: View {
             ImageLoader.shared.prefetchFeed(items.displayTweets)
         }
         list.onFirstPage = { items, _ in
-            TimelineDiskCache.save(items, scope: .profile(userId: userId))
+            // Per account: a cached profile carries that account's like/bookmark flags.
+            TimelineDiskCache.save(items, scope: .profile(account: account, userId: userId))
         }
         list.skip = { $0.isFiller }
         // Off the main thread; a seed that lands after the first network page is a no-op.
-        Task { [list] in list.seed(await TimelineDiskCache.loadAsync(.profile(userId: userId))) }
+        Task { [list] in
+            list.seed(await TimelineDiskCache.loadAsync(.profile(account: account, userId: userId)))
+        }
     }
 
     private func toggleFollow(_ u: XUser) {
