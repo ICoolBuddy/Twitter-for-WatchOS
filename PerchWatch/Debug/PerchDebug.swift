@@ -53,6 +53,11 @@ enum PerchTrace {
     static var maxCrown: CGFloat = 0
     static var updates = 0
     static var maxOverscroll: CGFloat = 0
+    static var acc = 0          // frames that added to the crown counter
+    static var iaFrames = 0     // frames where the phase said "interacting"
+    static var rFrames = 0      // frames while a refresh was running
+    static var firedFrames = 0  // frames ignored because a pull was already fired
+    static var zeroed = 0       // times the idle decay cleared the crown travel
 }
 
 enum PerchDebug {

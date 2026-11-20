@@ -94,16 +94,26 @@ struct PullToRefresh: ViewModifier {
         PerchTrace.updates += 1
         PerchTrace.maxCrown = max(PerchTrace.maxCrown, t.crown)
         PerchTrace.maxOverscroll = max(PerchTrace.maxOverscroll, overscroll)
-        PerchTrace.refresh = String(format: "n%d mo%.1f o%.1f c%.1f mx%.1f ia%d f%d r%d fires%d",
+        if t.interacting { PerchTrace.iaFrames += 1 }
+        if isRefreshing { PerchTrace.rFrames += 1 }
+        PerchTrace.refresh = String(
+            format: "n%d mo%.1f o%.1f l%.1f c%.1f mx%.1f ia%d f%d r%d fires%d acc%d iaf%d rf%d ff%d z%d",
+                                    PerchTrace.updates, Double(PerchTrace.maxOverscroll),
+                                    Double(overscroll), Double(t.last),
                                     PerchTrace.updates, Double(PerchTrace.maxOverscroll),
                                     Double(overscroll), Double(t.crown),
                                     Double(PerchTrace.maxCrown),
                                     t.interacting ? 1 : 0, t.fired ? 1 : 0,
-                                    isRefreshing ? 1 : 0, PerchTrace.fires)
+                                    isRefreshing ? 1 : 0, PerchTrace.fires,
+                                    PerchTrace.acc, PerchTrace.iaFrames, PerchTrace.rFrames,
+                                    PerchTrace.firedFrames, PerchTrace.zeroed)
         #endif
         // A refresh started: the list springs back, and those frames must not
         // bring the arrow back, or it would sit there until the next scroll.
         if t.fired {
+            #if DEBUG
+            PerchTrace.firedFrames += 1
+            #endif
             if overscroll <= 0 { t.fired = false; t.last = 0 }
             return
         }
@@ -117,6 +127,9 @@ struct PullToRefresh: ViewModifier {
             if delta > 0, !t.interacting || t.last <= 2 {
                 t.crown = min(Self.crownThreshold, t.crown + delta)
                 t.crownTouched = Date()
+                #if DEBUG
+                PerchTrace.acc += 1
+                #endif
             }
         } else if overscroll < -80 {
             // Clearly scrolled down the feed (half a viewport), not the crown band's
@@ -165,6 +178,9 @@ struct PullToRefresh: ViewModifier {
                 guard !isRefreshing, !tracker.fired, !tracker.interacting else { return }
                 if Date().timeIntervalSince(tracker.crownTouched) >= 3.0 {
                     tracker.crown = 0
+                    #if DEBUG
+                    PerchTrace.zeroed += 1
+                    #endif
                 }
             }
         }
