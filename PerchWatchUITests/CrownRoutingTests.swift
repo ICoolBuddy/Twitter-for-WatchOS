@@ -708,6 +708,48 @@ final class CrownRoutingTests: XCTestCase {
         add(a)
     }
 
+    /// S25 (device report 2026-11-20): the system back chevron was ignored while the
+    /// list was still decelerating. Tap it right after a swipe, with no settle.
+    func test41_S25_backWhileDecelerating() {
+        scenario("S25", probe: "feed.forYou") {
+            guard self.tap("post.open." + FixtureID.photoPost) else {
+                return .blocked("the first post's text link was not tappable")
+            }
+            guard self.probe("post").waitForExistence(timeout: 10) else {
+                return .blocked("the post page did not open")
+            }
+            self.settle()
+            self.app.swipeUp()                       // still decelerating below
+            let how = self.tapSystemBack()           // immediately, no settle
+            Thread.sleep(forTimeInterval: 1.2)
+            guard !self.probe("post").exists else {
+                return .blocked("BUG back ignored while decelerating (tapped via \(how))")
+            }
+            guard self.onScreen("feed.forYou") else {
+                return .blocked("back popped to the wrong page (\(self.pagerNote()))")
+            }
+            return .ready("back while decelerating, one tap (\(how))")
+        }
+    }
+
+    /// S26: the root toolbar button (back to the feed) right after scrolling the menu.
+    func test42_S26_menuBackWhileDecelerating() {
+        scenario("S26", probe: "feed.forYou") {
+            guard self.tap("chrome.menuToggle") else { return .blocked("hamburger not tappable") }
+            self.settle()
+            guard self.onScreen("menu") else { return .blocked("menu did not open") }
+            self.app.swipeUp()                       // menu list decelerating
+            guard self.tap("chrome.menuToggle", attempts: 1) else {
+                return .blocked("toolbar button not tappable on the menu")
+            }
+            Thread.sleep(forTimeInterval: 1.2)
+            guard self.onScreen("feed.forYou") else {
+                return .blocked("BUG toolbar back ignored while the menu was scrolling (\(self.pagerNote()))")
+            }
+            return .ready("menu toolbar back while decelerating")
+        }
+    }
+
     // MARK: The runner
 
     private enum StepResult {

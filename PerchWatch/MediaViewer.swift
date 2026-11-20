@@ -80,6 +80,7 @@ struct MediaViewer: View {
         // presented with a clear background), so the feed shows behind instead of a
         // black sheet. A full-screen Material blur was avoided: it is a per-frame GPU
         // pass on the Watch and can look grey.
+        .background(ClearPresentationBackground())
         .background(Color.black.opacity(1 - 0.9 * dismissProgress))
         .simultaneousGesture(dismissDrag)
         .modifier(CoverChrome(hidden: inCover))
@@ -163,6 +164,21 @@ struct MediaViewer: View {
 
     /// 0 at rest, 1 after a full-height drag (drives the background fade).
     private var dismissProgress: CGFloat { min(1, max(0, (dragLiveDown + dragSettle) / 240)) }
+
+    /// watchOS ignores `.presentationBackground(.clear)` on a full-screen cover: the
+    /// hosting controller stays opaque black. Clearing its background is the known
+    /// workaround, and it is what lets the feed show through the fading layer.
+    private struct ClearPresentationBackground: UIViewRepresentable {
+        func makeUIView(context: Context) -> UIView {
+            let view = UIView()
+            DispatchQueue.main.async {
+                // The hosting controller for the presentation is two levels up.
+                view.superview?.superview?.backgroundColor = .clear
+            }
+            return view
+        }
+        func updateUIView(_ uiView: UIView, context: Context) {}
+    }
 
     private var dismissDrag: some Gesture {
         DragGesture(minimumDistance: 20)

@@ -158,12 +158,19 @@ private struct BackCornerTap: View {
         Color.clear
             .frame(width: 56, height: 52)
             .contentShape(Rectangle())
-            .onTapGesture {
-                let now = Date()
-                guard now.timeIntervalSince(last) > 0.6 else { return }
-                last = now
-                action()
-            }
+            // Touch-DOWN, not a tap: while a list is decelerating watchOS spends the
+            // first touch stopping the scroll, so the tap-up never reaches a control.
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        guard abs(value.translation.width) < 10,
+                              abs(value.translation.height) < 10 else { return }
+                        let now = Date()
+                        guard now.timeIntervalSince(last) > 0.6 else { return }
+                        last = now
+                        action()
+                    }
+            )
             .accessibilityHidden(true)
     }
 }
