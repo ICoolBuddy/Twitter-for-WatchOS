@@ -9,14 +9,18 @@ struct NotificationsView: View {
     @State private var configuredKey: String?
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
+    @State private var kind: NotificationKind = .all
+    /// The first page marked everything seen: stop drawing "unread" dots.
+    @State private var markedRead = false
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
+                kindPicker
                 PagedListStatus(list: list, emptyText: "No notifications yet.")
 
                 ForEach(list.items) { n in
-                    NotificationRow(notification: n,
+                    NotificationRow(notification: n, read: markedRead,
                                     onOpenProfile: { profileTarget = ProfileTarget(user: $0) },
                                     onMedia: { mediaTarget = $0 })
                         .paginates(list, with: n)
@@ -40,7 +44,30 @@ struct NotificationsView: View {
     }
 
     private var taskKey: String {
-        "\(app.isLoggedIn)-\(app.activeAccountId ?? "none")"
+        "\(app.isLoggedIn)-\(app.activeAccountId ?? "none")-\(kind.rawValue)"
+    }
+
+    private var kindPicker: some View {
+        HStack(spacing: 8) {
+            ForEach(NotificationKind.allCases, id: \.self) { k in
+                Button {
+                    guard kind != k else { return }
+                    kind = k
+                    markedRead = false
+                } label: {
+                    Text(k.rawValue)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(kind == k ? Color.black : Color.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                        .background(kind == k ? Color.white : Color.white.opacity(0.1), in: Capsule())
+                }
+                .buttonStyle(.swipeSafe)
+                .accessibilityAddTraits(kind == k ? .isSelected : [])
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, 6)
     }
 
     private func configure() {
@@ -48,13 +75,17 @@ struct NotificationsView: View {
         configuredKey = taskKey
         list.reset()
         let client = app.client
+        let kind = self.kind
         list.fetch = { cursor in
-            let p = try await client.notifications(.all, cursor: cursor)
+            let p = try await client.notifications(kind, cursor: cursor)
             return (p.notifications, p.bottomCursor, p.topCursor)
         }
         list.onFirstPage = { _, top in
             guard let top else { return }
-            Task { await app.clearNotificationBadge(topCursor: top) }
+            Task {
+                await app.clearNotificationBadge(topCursor: top)
+                if app.badge.notifications == 0 { markedRead = true }
+            }
         }
     }
 }
@@ -63,13 +94,15 @@ struct NotificationsView: View {
 /// tweet it refers to.
 struct NotificationRow: View {
     let notification: XNotification
+    /// The page was marked seen: hide the per-row unread dot.
+    var read = false
     var onOpenProfile: ((XUser) -> Void)? = nil
     var onMedia: ((MediaTarget) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .center, spacing: 6) {
-                if notification.isUnread {
+                if notification.isUnread, !read {
                     Circle()
                         .fill(Color.accentColor)
                         .frame(width: 5, height: 5)

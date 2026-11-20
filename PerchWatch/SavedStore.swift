@@ -248,8 +248,20 @@ final class SavedStore: ObservableObject {
         return name
     }
 
+    /// The budget for everything in `PerchSaved` (for the usage line).
+    var budgetBytes: Int64 { Limit.totalBytes }
+
+    /// Retry an attachment that was given up on (after freeing space).
+    func retry(_ id: String) {
+        guard var post = byID[id] else { return }
+        post.failedAttempts = nil
+        post.problem = nil
+        update(post)
+        Task { await downloadNow(post) }
+    }
+
     /// Bytes currently stored in `PerchSaved`.
-    private func usedBytes() -> Int64 {
+    func usedBytes() -> Int64 {
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey])) ?? []
         return files.reduce(0) { total, url in
             total + Int64((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)

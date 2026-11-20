@@ -229,6 +229,8 @@ struct AccountPicker: View {
     @State private var switching: String?
     /// `finish` already reported how the picker closed (swipe-back reports in onDisappear).
     @State private var didFinish = false
+    /// `switchAccount` cannot throw; if the active account did not change, say so.
+    @State private var switchError: String?
 
     var body: some View {
         NavigationStack {
@@ -275,6 +277,12 @@ struct AccountPicker: View {
                         .foregroundStyle(.secondary)
                 }
 
+                if let switchError {
+                    Text(switchError)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+
                 Text("Add or remove accounts on your iPhone.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -298,10 +306,15 @@ struct AccountPicker: View {
             return
         }
         switching = account.id
+        switchError = nil
         Task {
             await app.switchAccount(to: account.id)
             switching = nil
-            finish(switched: true)
+            if app.activeAccountId == account.id {
+                finish(switched: true)
+            } else {
+                switchError = "Couldn't switch account. Try again."
+            }
         }
     }
 

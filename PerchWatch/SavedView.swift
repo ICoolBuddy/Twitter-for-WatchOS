@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import AVFoundation
+import WatchKit
 import XKit
 
 /// Offline posts, saved from the post page. Everything here renders from local
@@ -8,6 +9,7 @@ import XKit
 struct SavedView: View {
     @ObservedObject private var store = SavedStore.shared
     @State private var selected: SavedStore.SavedPost?
+    @State private var used: Int64 = 0
 
     var body: some View {
         ScrollView {
@@ -28,6 +30,14 @@ struct SavedView: View {
                     .padding(.vertical, 30)
                 }
 
+                if !store.items.isEmpty {
+                    Text("Used \(ByteCountFormatter.string(fromByteCount: used, countStyle: .file)) of 250 MB")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                }
+
                 ForEach(store.items) { post in
                     Button {
                         selected = post
@@ -42,6 +52,7 @@ struct SavedView: View {
         }
         .background(Color.black)
         .navigationTitle("Saved")
+        .task(id: store.items.count) { used = store.usedBytes() }
         // crown-lab measurement hook (DEBUG only): `probe.saved`.
         .crownProbe("saved")
         .swipeBack()
@@ -150,8 +161,21 @@ private struct SavedDetailView: View {
 
                 if let player {
                     VideoPlayer(player: player)
-                        .frame(height: 200)
+                        .frame(height: min(200, WKInterfaceDevice.current().screenBounds.height * 0.45))
                         .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+
+                if let live = SavedStore.shared.items.first(where: { $0.id == post.id }),
+                   let problem = live.problem {
+                    Label(problem, systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                    Button(role: .none) { SavedStore.shared.retry(post.id) } label: {
+                        Label("Retry download", systemImage: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.swipeSafe)
                 }
 
                 Button(role: .destructive, action: SwipeGuard.run {
