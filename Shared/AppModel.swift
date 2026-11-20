@@ -192,12 +192,27 @@ final class AppModel: ObservableObject {
         // reported after X answers one authenticated request. Without this, restoring a
         // cached account reported success while the session was already dead.
         var probe: XError?
-        do { _ = try await client.badgeCounts() } catch { probe = XError.from(error) }
+        var probeAnswered = false
+        do {
+            _ = try await client.badgeCounts()
+            probeAnswered = true
+        } catch {
+            switch XError.from(error) {
+            case .unauthorized:
+                probe = .unauthorized       // definitive: the session is dead
+                probeAnswered = true
+            case .network, .rateLimited, .server:
+                probe = XError.from(error)  // real verdict from X/the network
+            default:
+                // A missing/renamed operation or a refused endpoint says nothing about
+                // the session: do not turn a good login into "couldn't confirm".
+                break
+            }
+        }
         // Signing material makes some endpoints (search) work; best effort.
         Task { try? await self.refreshMaterial() }
-        if probe == nil, viewer != nil, activeAccountId == id { return .verified }
-        let error = probe ?? viewerError ?? .network("No response")
-        if error == .unauthorized || error == .notLoggedIn {
+        // A definitive auth rejection from either path wins, whatever else happened.
+        if viewerError == .unauthorized || viewerError == .notLoggedIn || probe == .unauthorized {
             if let previous {
                 _ = await store.upsertAccount(previous.credentials, user: previous.user)
             } else {
@@ -206,7 +221,8 @@ final class AppModel: ObservableObject {
             await reloadState()
             return .rejected
         }
-        return .unverified(error)
+        if probeAnswered, probe == nil, viewer != nil, activeAccountId == id { return .verified }
+        return .unverified(probe ?? viewerError ?? .network("Couldn't confirm the session yet"))
     }
 
     /// Switches the device-local active account. The other device keeps its own.

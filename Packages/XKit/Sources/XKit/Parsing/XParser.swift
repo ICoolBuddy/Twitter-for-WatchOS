@@ -21,6 +21,12 @@ public enum XParser {
         json["errors"].array.compactMap { $0["code"].int }
     }
 
+    /// X's *named* error codes (`"GRAPHQL_VALIDATION_FAILED"`), which `graphQLCodes`
+    /// cannot see: schema drift is reported either as 336 or as that name.
+    public static func graphQLCodeNames(_ json: JSON) -> [String] {
+        json["errors"].array.compactMap { $0["code"].string }.filter { Int($0) == nil }
+    }
+
     // MARK: Timeline
 
     /// `instructionsFound == false` means the response had no `instructions` at all: a

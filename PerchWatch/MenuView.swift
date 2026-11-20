@@ -18,8 +18,8 @@ struct MenuView: View {
     @State private var postStatus: String?
     /// A post that failed to send, kept so it can be retried without dictating again.
     @State private var failedPost: String?
-    /// A draft over the limit: retrying cannot succeed, so it is offered as "Discard",
-    /// with the text still kept for the iPhone.
+    /// A draft over the limit: retrying cannot succeed, so it is shown as "not sent"
+    /// with a Discard action instead of a button that can never work.
     @State private var tooLongMessage: String?
 
     var body: some View {
@@ -104,7 +104,7 @@ struct MenuView: View {
         .task {
             if failedPost == nil, DraftStore.failed(replyTo: nil) != nil {
                 if DraftStore.isTooLong(nil) {
-                    tooLongMessage = "Draft is too long — edit it on your iPhone"
+                    tooLongMessage = "Draft is too long — not sent"
                 } else {
                     failedPost = DraftStore.failed(replyTo: nil)
                 }
@@ -135,8 +135,8 @@ struct MenuView: View {
             .buttonStyle(.swipeSafeRow)
         }
         if let tooLongMessage, !posting {
-            // The system text input cannot be pre-filled, so the only honest actions
-            // are to keep the text for the iPhone or throw it away — never "retry".
+            // The system text input cannot be pre-filled and nothing on the iPhone reads
+            // this draft, so the honest actions are "know it failed" or "throw it away".
             Text(tooLongMessage)
                 .font(.caption2)
                 .foregroundStyle(.orange)

@@ -227,6 +227,10 @@ public enum XError: Error, Sendable, Equatable, LocalizedError {
     case notLoggedIn
     case unauthorized              // 401 — session expired / logged out
     case forbidden(String)         // 403 — locked account, outdated feature switches…
+    /// 403 with no body and no X code: the edge/anti-bot layer refused this request.
+    /// Not "offline" and not "the endpoint changed" — the same request can work again,
+    /// but it must not be queued as an offline tap.
+    case refused
     /// 403/353 that survived the csrf retry: the signing material is the suspect, not
     /// the query IDs, so the remedy is a new signing key.
     case transactionRejected(String)
@@ -248,6 +252,7 @@ public enum XError: Error, Sendable, Equatable, LocalizedError {
         case .notLoggedIn: return "Not logged in. Log in on your iPhone."
         case .unauthorized: return "Your X session expired. Please log in again."
         case .forbidden(let m): return "X refused the request (403). \(m)"
+        case .refused: return "X refused the request (403). Try again in a moment."
         case .transactionRejected(let m): return "X rejected the request signature (403). \(m)"
         case .accountChanged: return "The account changed while loading."
         case .notFound: return "This X endpoint has changed (404). Refresh endpoints."
@@ -289,14 +294,21 @@ public enum XError: Error, Sendable, Equatable, LocalizedError {
     ///   mutation (a mutation that reports errors did not do what was asked);
     /// - an unknown code with data on a read is a soft error: X sends them alongside
     ///   usable timeline data, so reads keep working.
-    public static func graphQLBodyError(codes: [Int], messages: [String], hasData: Bool,
-                                        isMutation: Bool) -> XError? {
-        guard !codes.isEmpty || !messages.isEmpty else { return nil }
+    public static func graphQLBodyError(codes: [Int], names: [String] = [], messages: [String],
+                                        hasData: Bool, isMutation: Bool) -> XError? {
+        guard !codes.isEmpty || !names.isEmpty || !messages.isEmpty else { return nil }
         let text = messages.first ?? "X returned an error."
-        // 32 not authenticated, 89 invalid/expired token, 215 bad authentication data.
-        if codes.contains(32) || codes.contains(89) || codes.contains(215) { return .unauthorized }
+        // 32 is the account's session. 89 (invalid token) and 215 (bad auth data) are
+        // this request's auth data — expiring the whole session for them would flip the
+        // app between "logged out" and "logged in" while the session is fine.
+        if codes.contains(32) { return .unauthorized }
+        if codes.contains(89) || codes.contains(215) {
+            return .graphQL(messages.isEmpty ? [text] : messages)
+        }
         if codes.contains(88) { return .rateLimited(until: nil) }
-        if codes.contains(336) { return .schemaChanged(text) }
+        if codes.contains(336) || names.contains("GRAPHQL_VALIDATION_FAILED") {
+            return .schemaChanged(text)
+        }
         if isMutation { return .graphQL(messages.isEmpty ? [text] : messages) }
         if !hasData { return .graphQL(messages.isEmpty ? [text] : messages) }
         return nil

@@ -131,19 +131,28 @@ final class WatchSync: NSObject, ObservableObject, SyncChannel {
     }
 
     private func apply(_ p: SyncPayload) {
+        let origin = p.origin ?? "legacy"
         // "Reset sync" on the iPhone: forget the applied floor and take this payload
-        // whatever its seq. It is the only escape hatch when the two sides disagree.
+        // whatever its seq. It is the only escape hatch when the two sides disagree —
+        // but a *re-delivered* copy of a reset we already applied must not downgrade
+        // whatever landed since (the phone sends on two channels).
         if p.reset == true {
+            if let a = applied, a.origin == origin, let seq = p.seq, seq > 0, seq <= a.seq {
+                return
+            }
             applied = nil
             scheduled = nil
             UserDefaults.standard.removeObject(forKey: Self.legacySeqKey)
         }
-        let origin = p.origin ?? "legacy"
         if let seq = p.seq, seq > 0 {
             // Queued deliveries can arrive out of order and the phone re-delivers the
             // context it already has: only a strictly newer payload may proceed.
             if let s = scheduled, s.origin == origin, seq <= s.seq { return }
             if let a = applied, a.origin == origin, seq <= a.seq { return }
+            // Another installation (reinstall restarts `seq` at 1) is accepted, but only
+            // when it is newer in time: a queued payload from the *previous* install must
+            // not resurrect the account that was replaced.
+            if let a = applied, a.origin != origin, p.sentAt <= lastAppliedAt { return }
             scheduled = (origin, seq)
         } else {
             guard p.sentAt > lastAppliedAt else { return }
@@ -199,8 +208,16 @@ final class WatchSync: NSObject, ObservableObject, SyncChannel {
     private func sendAck() {
         guard let applied else { return }
         let s = WCSession.default
-        guard s.activationState == .activated, s.isReachable else { return }
-        s.sendMessage(["ack": "\(applied.origin):\(applied.seq)"], replyHandler: nil, errorHandler: nil)
+        guard s.activationState == .activated else { return }
+        let ack: [String: Any] = ["ack": "\(applied.origin):\(applied.seq)"]
+        if s.isReachable {
+            s.sendMessage(ack, replyHandler: nil, errorHandler: nil)
+        } else {
+            // A receipt is an event, not state: `transferUserInfo` queues it until the
+            // iPhone is running again. The common sync happens while the phone is in a
+            // pocket (not reachable), so `sendMessage` alone would drop almost every ack.
+            s.transferUserInfo(ack)
+        }
     }
 }
 

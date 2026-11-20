@@ -68,6 +68,22 @@ final class ReviewFixTests: XCTestCase {
         XCTAssertEqual(e, .unauthorized)
     }
 
+    /// 89/215 describe *this request's* auth data, not the account's session: expiring
+    /// the session for them made the app flip between logged out and logged in.
+    func testRequestAuthCodesDoNotExpireTheSession() {
+        XCTAssertNotEqual(XError.graphQLBodyError(codes: [89], messages: ["invalid token"],
+                                                  hasData: false, isMutation: false), .unauthorized)
+        XCTAssertNotEqual(XError.graphQLBodyError(codes: [215], messages: ["bad auth"],
+                                                  hasData: false, isMutation: false), .unauthorized)
+    }
+
+    func testNamedSchemaCodeSuggestsEndpointRefresh() {
+        let e = XError.graphQLBodyError(codes: [], names: ["GRAPHQL_VALIDATION_FAILED"],
+                                        messages: ["must be defined"], hasData: true, isMutation: false)
+        XCTAssertNotNil(e)
+        XCTAssertEqual(e?.recovery, .refreshEndpoints)
+    }
+
     func testRateLimitCode88() {
         let e = XError.graphQLBodyError(codes: [88], messages: ["Rate limit exceeded"],
                                         hasData: false, isMutation: false)

@@ -1,4 +1,5 @@
 import Foundation
+import XKit
 
 /// The sideloaded app is signed with a free Apple ID, whose provisioning profile
 /// expires after 7 days. When it does, the app stops launching — and until now
@@ -14,7 +15,11 @@ enum ProvisioningInfo {
         /// Whole days left (0 = expires today, negative = already expired).
         var daysLeft: Int? {
             guard let expiresAt else { return nil }
-            return Int(ceil(expiresAt.timeIntervalSinceNow / 86_400))
+            let seconds = expiresAt.timeIntervalSinceNow
+            // An expiry 6 hours ago must read "expired", not "expires today" (ceil(-0.25)
+            // is 0 in integer terms).
+            guard seconds > 0 else { return -1 }
+            return Int(ceil(seconds / 86_400))
         }
     }
 
@@ -36,7 +41,13 @@ enum ProvisioningInfo {
 
     private static func load() -> Info {
         guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
-              let data = try? Data(contentsOf: url) else { return Info(expiresAt: nil) }
+              let data = try? Data(contentsOf: url) else {
+            // Expected in an unsigned CI archive; unexpected in a sideloaded build, where
+            // it is the only thing that can warn before the app stops launching.
+            Task { await RequestLog.shared.record(method: "-", url: nil, status: nil,
+                                                  durationMs: 0, note: "no embedded.mobileprovision") }
+            return Info(expiresAt: nil)
+        }
         guard let start = data.range(of: Data("<?xml".utf8)),
               let end = data.range(of: Data("</plist>".utf8), options: [],
                                    in: start.lowerBound..<data.endIndex) else {

@@ -87,6 +87,6 @@ enum TweetText {
     static let limit = 280
 
     static func tooLong(_ text: String) -> String? {
-        text.count > limit ? "Too long · \(text.count)/\(limit) — edit on iPhone" : nil
+        text.count > limit ? "Too long · \(text.count)/\(limit) — not sent" : nil
     }
 }

@@ -347,6 +347,7 @@ public actor LiveXClient: XClient {
         // X reports a dead session, a rate limit and a moved schema in the *body* while
         // answering 200, so the status line alone cannot tell success from failure.
         if let bodyError = XError.graphQLBodyError(codes: XParser.graphQLCodes(json),
+                                                  names: XParser.graphQLCodeNames(json),
                                                   messages: errors,
                                                   hasData: !json["data"].object.isEmpty,
                                                   isMutation: info.isMutation) {
@@ -479,7 +480,7 @@ public actor LiveXClient: XClient {
                 // No body and no X code: this is not "the endpoint changed", it is an
                 // anti-bot/edge refusal. Retrying is the honest remedy.
                 if codes.isEmpty, errorText.isEmpty, data.isEmpty {
-                    throw XError.network("X refused the request (403) — try again")
+                    throw XError.refused
                 }
                 throw XError.forbidden(errorText)
             case 404:

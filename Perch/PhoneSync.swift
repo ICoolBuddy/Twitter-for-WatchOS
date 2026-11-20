@@ -102,7 +102,13 @@ final class PhoneSync: NSObject, ObservableObject, SyncChannel {
     private static let configSentKey = "perch.sync.configSent"
     private var lastSentConfigUpdatedAt: String? {
         get { UserDefaults.standard.string(forKey: Self.configSentKey) }
-        set { UserDefaults.standard.set(newValue, forKey: Self.configSentKey) }
+        set {
+            if let newValue {
+                UserDefaults.standard.set(newValue, forKey: Self.configSentKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.configSentKey)
+            }
+        }
     }
 
     private var lastSentSeq: UInt64 = 0
@@ -248,12 +254,18 @@ final class PhoneSync: NSObject, ObservableObject, SyncChannel {
 
     fileprivate func handleIncoming(_ message: [String: Any]) {
         if let ack = message["ack"] as? String, let applied = Self.parseIdentity(ack) {
+            // A receipt from the previous installation (or another phone) says nothing
+            // about what this one sent: comparing its seq would report "confirmed"
+            // while the Watch holds an old account.
+            guard applied.origin == origin else { return }
             lastAckSeq = applied.seq
             lastAckAt = Date()
-            // A daemon that stops sending once an ack mismatch is possible would be
-            // stuck; retry, but bounded, so a broken Watch cannot spin the phone.
-            if applied.seq < lastSentSeq, resendAttempts < 3,
-               Date().timeIntervalSince(lastResendAt) > 10 {
+            if applied.seq >= lastSentSeq {
+                // Caught up. The repair budget is only for real mismatches: an ack that
+                // is one behind is normal (the next payload went out first), and spending
+                // the budget on it would disable the repair for the rest of the launch.
+                resendAttempts = 0
+            } else if resendAttempts < 3, Date().timeIntervalSince(lastResendAt) > 10 {
                 resendAttempts += 1
                 lastResendAt = Date()
                 scheduleSend()

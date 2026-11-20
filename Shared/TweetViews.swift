@@ -364,7 +364,7 @@ struct PostActionRow: View {
     /// making the reader dictate it twice.
     @State private var failedReply: String?
     /// A stored draft over the limit: no retry can succeed, so it is shown as a
-    /// discardable draft (the text stays on the device for the iPhone).
+    /// discardable "not sent" notice.
     @State private var tooLongMessage: String?
     /// Replies sent from this row (the count from X lags behind).
     @State private var sentReplies = 0
@@ -424,7 +424,7 @@ struct PostActionRow: View {
             guard failedReply == nil, tooLongMessage == nil,
                   let saved = DraftStore.failed(replyTo: tweet.id) else { return }
             if DraftStore.isTooLong(tweet.id) {
-                tooLongMessage = "Draft too long — edit on iPhone"
+                tooLongMessage = "Draft too long — not sent"
             } else {
                 failedReply = saved
             }
