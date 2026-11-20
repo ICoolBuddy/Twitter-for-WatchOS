@@ -111,6 +111,9 @@ struct WatchRootView: View {
                 MediaViewer(media: target.media, startIndex: target.startIndex,
                             title: target.title, caption: target.caption,
                             onClose: { presenter.close() }, inCover: true)
+                    // Let the viewer's fading background reveal the feed during the
+                    // swipe-down instead of the cover's opaque black.
+                    .presentationBackground(.clear)
             }
         }
         // watchOS swallows the first tap while a list is still decelerating, and the

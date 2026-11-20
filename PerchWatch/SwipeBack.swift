@@ -42,9 +42,14 @@ struct SwipeBack: ViewModifier {
                 DragGesture(minimumDistance: 25)
                     .updating($dragLive) { _, live, _ in live = true }
                     .updating($dragDX) { value, state, _ in
-                        guard value.startLocation.x > Self.systemEdge,
-                              let dx = horizontal(value) else { return }
-                        state = dx
+                        guard value.startLocation.x > Self.systemEdge else { state = 0; return }
+                        let dx = value.translation.width
+                        let dy = abs(value.translation.height)
+                        // Follow the finger in BOTH directions for any roughly
+                        // horizontal drag (a loose 0.8 rule), so dragging back left
+                        // returns the screen instead of freezing half-shifted. A
+                        // vertical scroll still never moves the screen.
+                        if dx > 0, dx > dy * 0.8 { state = min(dx, 140) } else { state = 0 }
                     }
                     .onChanged { value in
                         // Guard the taps under the finger while a horizontal swipe is on.

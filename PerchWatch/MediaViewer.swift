@@ -76,7 +76,11 @@ struct MediaViewer: View {
                 .accessibilityIdentifier("media.viewer")
             #endif
         }
-        .background(Color.black)
+        // Fades from black to clear as the viewer is dragged down (the cover is
+        // presented with a clear background), so the feed shows behind instead of a
+        // black sheet. A full-screen Material blur was avoided: it is a per-frame GPU
+        // pass on the Watch and can look grey.
+        .background(Color.black.opacity(1 - 0.9 * dismissProgress))
         .simultaneousGesture(dismissDrag)
         .modifier(CoverChrome(hidden: inCover))
         .accessibilityAction(named: "Close") { close() }
@@ -157,6 +161,9 @@ struct MediaViewer: View {
         neighbourPrefetch = ImageLoader.shared.prefetch(urls, maxPixel: 1200)
     }
 
+    /// 0 at rest, 1 after a full-height drag (drives the background fade).
+    private var dismissProgress: CGFloat { min(1, max(0, (dragLiveDown + dragSettle) / 240)) }
+
     private var dismissDrag: some Gesture {
         DragGesture(minimumDistance: 20)
             .updating($dragLiveDown) { value, state, _ in
@@ -167,9 +174,13 @@ struct MediaViewer: View {
             }
             .onEnded { value in
                 guard !zoomed else { return }
+                // A horizontal page swipe must never close the viewer: the pager's
+                // gesture is simultaneous, so an ordinary left/right swipe with a bit
+                // of downward drift used to end here and dismiss the photo.
+                let dy = value.translation.height
+                guard dy > 0, dy > abs(value.translation.width) * 1.2 else { return }
                 // Distance or speed: a quick flick should close even if it travelled
                 // less than the slow-drag threshold.
-                let dy = value.translation.height
                 let predicted = value.predictedEndTranslation.height
                 let shouldClose = dy > 60 || (dy > 25 && predicted > 140)
                 if shouldClose {
@@ -275,8 +286,10 @@ private struct MediaPhotoPage: View {
                 .offset(clamped(offset, in: geo.size))
                 .gesture(panGesture(in: geo.size), including: zoom > 1 ? GestureMask.all : GestureMask())
                 .onTapGesture { toggleZoom() }
-                .onAppear { container = geo.size }
-                .onChange(of: geo.size) { _, size in container = size }
+                // Only when it really changed: a write per page appearance is an
+                // extra layout pass in the middle of the open animation.
+                .onAppear { if container != geo.size { container = geo.size } }
+                .onChange(of: geo.size) { _, size in if container != size { container = size } }
         }
         // No crown zoom (owner, 2026-11-18): a focusable page with
         // `digitalCrownRotation` swallowed the swipe-down that closes the viewer
