@@ -96,24 +96,23 @@ struct WatchRootView: View {
         ZStack {
             if app.canBrowse {
                 NavigationStack(path: $nav.path) {
-                    RootPager(rootActive: nav.path.isEmpty, control: pager)
-                        .navigationDestination(for: Route.self) { route in
-                            RouteView(route: route, pop: { nav.back() })
-                                .navigationBarBackButtonHidden(true)
-                                .toolbar {
-                                    ToolbarItem(placement: .topBarLeading) {
-                                        TouchDownControl(action: { nav.back() }) {
-                                            Image(systemName: "chevron.left")
-                                                .leadingGlyphBox()
-                                        }
-                                        .accessibilityLabel("Back")
-                                        .accessibilityIdentifier("chrome.back")
-                                        .accessibilityAddTraits(.isButton)
-                                    }
-                                }
-                        }
+                    // The root's leading item lives in a wrapper whose body does NOT
+                    // depend on `nav.path`: the item's host view is the same view across
+                    // a push and a pop, so watchOS is not asked to tear one item down
+                    // and insert another while the stack animates.
+                    PagerChrome(control: pager) {
+                        RootPager(rootActive: nav.path.isEmpty, control: pager)
+                    }
+                    .navigationDestination(for: Route.self) { route in
+                        // No custom back item: half of this page's history was spent
+                        // replacing watchOS' chevron so it could act on touch-down, and
+                        // the replacement is what the pop animates from the wrong slot.
+                        // The system chevron stays visible; `BackCornerTap` (below) is
+                        // the 56×52 touch-down target on top of it, so the control still
+                        // works while the list is decelerating.
+                        RouteView(route: route, pop: { nav.back() })
+                    }
                 }
-                .navigationBarBackButtonHidden(true)
             } else {
                 NavigationStack { OnboardingView() }
             }
@@ -142,6 +141,14 @@ struct WatchRootView: View {
         // A sheet's own onDisappear can be missed; a stale depth kills the viewer.
         .onChange(of: nav.path) { _, path in
             if path.isEmpty { presenter.resetSheetDepth() }
+        }
+        // Device diagnostics: what the leading item's frame really is after a pop.
+        .onChange(of: nav.path.count) { _, count in
+            guard count == 0 else { return }
+            Task {
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                ChromeTrace.settled(pathCount: count)
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active, nav.path.isEmpty { presenter.resetSheetDepth() }
@@ -312,6 +319,77 @@ final class PagerControl: ObservableObject {
     }
 }
 
+/// Hosts the root's leading toolbar item. Its body depends only on the pager control,
+/// never on `nav.path`, so a push or a pop does not rebuild the item's host view. The
+/// old placement (inside `RootPager`, which takes `rootActive`) rebuilt it on exactly
+/// the two occasions where watchOS is animating the stack.
+struct PagerChrome<Content: View>: View {
+    @ObservedObject var control: PagerControl
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    TouchDownControl(action: { control.toggle() }) {
+                        // Both symbols stay laid out: a ternary swapped their different
+                        // widths inside the page animation and the item snapped.
+                        ZStack {
+                            Image(systemName: "line.3.horizontal").opacity(control.page == 0 ? 0 : 1)
+                            Image(systemName: "chevron.left").opacity(control.page == 0 ? 1 : 0)
+                        }
+                        .leadingGlyphBox()
+                    }
+                    .animation(nil, value: control.page)
+                    .accessibilityLabel(control.page == 0 ? "Back to feed" : "Menu")
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier("chrome.menuToggle")
+                    .onAppear { ChromeTrace.itemAppeared(control.page) }
+                    .onDisappear { ChromeTrace.itemDisappeared() }
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                        ChromeTrace.itemFrame($0)
+                    }
+                }
+            }
+    }
+}
+
+/// Device diagnostics for the leading item (the pop jump only happens on watchOS 27;
+/// the 26.5 simulator is stable, so the device has to report). Every line lands in the
+/// app's Request log (Settings → Request log), where the owner can read it without a
+/// Mac. Deliberately tiny: an appear/disappear line, and one line per pop with the
+/// final frame.
+@MainActor
+enum ChromeTrace {
+    private static var lastFrame: CGRect = .zero
+    private static var appearances = 0
+
+    static func itemAppeared(_ page: Int) {
+        appearances += 1
+        write("menu item appeared (page \(page), appearance \(appearances))")
+    }
+
+    static func itemDisappeared() {
+        write("menu item disappeared")
+    }
+
+    /// Called on every geometry change: keeps the last frame, logs nothing per frame.
+    static func itemFrame(_ frame: CGRect) {
+        lastFrame = frame
+    }
+
+    static func settled(pathCount: Int) {
+        write(String(format: "pop settled: path %d, item x=%.1f y=%.1f w=%.1f h=%.1f, appearances %d",
+                     pathCount, lastFrame.minX, lastFrame.minY,
+                     lastFrame.width, lastFrame.height, appearances))
+    }
+
+    private static func write(_ text: String) {
+        Task { await RequestLog.shared.record(method: "ui", url: nil, status: nil,
+                                              durationMs: 0, note: text) }
+    }
+}
+
 struct RootPager: View {
     /// False while a detail screen is pushed.
     var rootActive = true
@@ -351,26 +429,6 @@ struct RootPager: View {
         // One glow for the whole pager (not per page), so a refresh that is
         // still running stays visible after swiping to the other feed or the menu.
         .overlay { RootGlow(forYou: forYou, following: following) }
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                TouchDownControl(action: { control.toggle() }) {
-                    // Both symbols stay laid out: a ternary swapped their different
-                    // widths inside the page animation and the item snapped at the end.
-                    ZStack {
-                        Image(systemName: "line.3.horizontal").opacity(control.page == 0 ? 0 : 1)
-                        Image(systemName: "chevron.left").opacity(control.page == 0 ? 1 : 0)
-                    }
-                    // Same box as the pushed screen's back chevron: the pop cross-fades
-                    // the two, and equal geometry is what stops the incoming glyph from
-                    // landing left and snapping into place.
-                    .leadingGlyphBox()
-                }
-                .animation(nil, value: control.page)
-                .accessibilityLabel(control.page == 0 ? "Back to feed" : "Menu")
-                .accessibilityAddTraits(.isButton)
-                .accessibilityIdentifier("chrome.menuToggle")
-            }
-        }
         .onAppear {
             // Only once: re-assigning the page every time the root comes back
             // from a pushed screen made the pager flash while it settled.

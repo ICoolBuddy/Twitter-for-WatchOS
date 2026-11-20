@@ -49,7 +49,11 @@ final class PopChromeTests: XCTestCase {
                 XCTFail("round \(round): the post page did not open"); return
             }
             Thread.sleep(forTimeInterval: Self.settle)
+            // The pushed screen now uses watchOS' own chevron; report what the bar has.
             _ = measure("\(round)-pushed", id: "chrome.back")
+            let barButtons = app.navigationBars.buttons.allElementsBoundByIndex
+                .map { "\($0.label)|\($0.identifier)|\($0.exists)" }
+            print("POPCHROME \(round)-navbar buttons=[\(barButtons.joined(separator: ", "))]")
 
             // Pop it the way the owner does: a mid-screen swipe right (the same drag
             // CrownRoutingTests S11 uses; SwipeBack needs >22 pt from the edge).

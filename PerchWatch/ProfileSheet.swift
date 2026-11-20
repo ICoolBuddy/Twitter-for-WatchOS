@@ -37,20 +37,10 @@ struct ProfileSheet: View {
                     // post *and* dismissed the sheet.
                     .swipeBack()
                     .navigationDestination(for: Route.self) { route in
+                        // Same rule as the root stack: the system chevron is visible and
+                        // the pop therefore uses watchOS' own transition instead of
+                        // replacing the leading item mid-animation.
                         RouteView(route: route, pop: { if !path.isEmpty { path.removeLast() } })
-                            .navigationBarBackButtonHidden(true)
-                            .toolbar {
-                                ToolbarItem(placement: .topBarLeading) {
-                                    TouchDownControl(action: {
-                                        if !path.isEmpty { path.removeLast() }
-                                    }) {
-                                        Image(systemName: "chevron.left")
-                                            .leadingGlyphBox()
-                                    }
-                                    .accessibilityLabel("Back")
-                                    .accessibilityAddTraits(.isButton)
-                                }
-                            }
                     }
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
@@ -65,7 +55,6 @@ struct ProfileSheet: View {
                         }
                     }
             }
-            .navigationBarBackButtonHidden(true)
             // A profile opened inside this sheet is pushed in its stack, never a
             // second sheet, so exactly one media host exists at a time.
             .environment(\.pushProfile, pushProfile)
