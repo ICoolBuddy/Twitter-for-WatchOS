@@ -82,6 +82,7 @@ struct PerchWatchApp: App {
 
 struct WatchRootView: View {
     @EnvironmentObject private var app: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var presenter = MediaPresenter.shared
     /// The navigation state, owned by the root: a screen is "on top" (and may
     /// own the crown) exactly while it is the last element of this path.
@@ -112,6 +113,22 @@ struct WatchRootView: View {
                             onClose: { presenter.close() }, inCover: true)
             }
         }
+        // watchOS swallows the first tap while a list is still decelerating, and the
+        // system back chevron sits under the scrolling content: a tap there did nothing
+        // until the list stopped. This overlay is above the scroll view, so its tap
+        // lands immediately (with a short guard against a double pop).
+        .overlay(alignment: .topLeading) {
+            if app.canBrowse, !nav.path.isEmpty {
+                BackCornerTap { nav.back() }
+            }
+        }
+        // A sheet's own onDisappear can be missed; a stale depth kills the viewer.
+        .onChange(of: nav.path) { _, path in
+            if path.isEmpty { presenter.resetSheetDepth() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active, nav.path.isEmpty { presenter.resetSheetDepth() }
+        }
         // One app-wide notice for a dead session (X answered 401) instead of an error
         // on every screen; it goes away by itself when the iPhone sends new cookies.
         .overlay(alignment: .bottom) {
@@ -125,6 +142,26 @@ struct WatchRootView: View {
         .onChange(of: app.canBrowse) { _, canBrowse in
             if !canBrowse { nav.path = [] }
         }
+    }
+}
+
+/// The top-left corner where watchOS draws the back chevron, as a tap target that
+/// works while the list below is still moving.
+private struct BackCornerTap: View {
+    let action: () -> Void
+    @State private var last = Date.distantPast
+
+    var body: some View {
+        Color.clear
+            .frame(width: 56, height: 52)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                let now = Date()
+                guard now.timeIntervalSince(last) > 0.6 else { return }
+                last = now
+                action()
+            }
+            .accessibilityHidden(true)
     }
 }
 

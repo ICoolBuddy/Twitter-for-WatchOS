@@ -164,8 +164,14 @@ struct MediaViewer: View {
             }
             .onEnded { _ in
                 let shouldClose = !zoomed && dragDown > 60
-                withAnimation(.easeOut(duration: 0.2)) { dragDown = 0 }
-                if shouldClose { close() }
+                if shouldClose {
+                    // Let the cover's own dismissal be the animation. Snapping the
+                    // content back to 0 first made the viewer bounce up and then
+                    // vanish (the "awful" swipe-down).
+                    close()
+                } else {
+                    withAnimation(.easeOut(duration: 0.2)) { dragDown = 0 }
+                }
             }
     }
 

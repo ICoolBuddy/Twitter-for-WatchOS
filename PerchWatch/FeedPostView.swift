@@ -83,6 +83,9 @@ final class MediaPresenter: ObservableObject {
     private var transitionSafety: Task<Void, Never>?
 
     func sheetOpened() { sheetDepth += 1 }
+    /// The sheet's own bookkeeping can miss a dismissal (a push/pop under it); a stale
+    /// depth leaves the media viewer undrawable until relaunch. The root clears it.
+    func resetSheetDepth() { sheetDepth = 0 }
     func sheetClosed() { sheetDepth = max(0, sheetDepth - 1) }
 }
 
@@ -272,7 +275,7 @@ struct FeedPostView: View {
                     // The handle gives way first: the time must stay readable on 41 mm.
                     Text("@" + t.author.screenName).lineLimit(1).truncationMode(.tail)
                     if let d = t.createdAt {
-                        Text("· " + RelativeTime.short(d))
+                        RelativeTimeText(date: d, prefix: "· ")
                             .lineLimit(1)
                             .fixedSize()
                             .layoutPriority(1)

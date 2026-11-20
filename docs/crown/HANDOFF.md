@@ -1,5 +1,11 @@
 # Crown fix — handoff (2026-11-18 13:00, laptop battery died)
 
+> **2026-11-20: the rebuild described below was removed.** Building each feed's scroll
+> view for the crown (and restoring its place) laid a video row out with a black media
+> box for 1–2 s on every switch back. Feeds are never rebuilt now: the offset is exact,
+> and the crown follows the *programmatic* page changes (tabs / hamburger). A gesture
+> swipe still switches feeds but leaves the crown needing one finger scroll.
+
 Continue from here (cloud session OK; device install needs the laptop).
 
 ## Problem

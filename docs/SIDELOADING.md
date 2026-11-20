@@ -27,9 +27,12 @@ complication snapshot; on a free team the signed build may not get that containe
 degrades gracefully without it (see `Shared/AppGroup.swift`), and Watch **Settings → iPhone**
 shows which App Group, if any, the installed app is in.
 
-Use your certificate + a provisioning profile that includes **both** UDIDs (iPhone 15 Pro **and**
-Apple Watch Series 10). A **wildcard App ID** (`TEAMID.*`) is easiest because it covers both
-bundle IDs with one profile.
+Use your certificate + a profile that includes **both** UDIDs (iPhone 15 Pro **and** Apple Watch
+Series 10). Do **not** use a wildcard App ID (`TEAMID.*`): both watch targets declare the
+`com.apple.security.application-groups` entitlement, and a wildcard profile cannot carry
+capabilities. Register three explicit App IDs (`<id>`, `<id>.watchkitapp`, `<id>.watchkitapp.widget`)
+plus the App Group `group.<id>`, and use one profile per bundle ID (or a profile covering the apps
+you sign).
 
 - The **Watch app and everything inside it must be re-signed too**, not just the outer app.
   Most tools (Sideloadly, ksign/esign, zsign, FlareStore) do this when "sign nested bundles /
@@ -42,7 +45,7 @@ bundle IDs with one profile.
 With `zsign` for example:
 
 ```sh
-zsign -k cert.p12 -p 'password' -m wildcard.mobileprovision -o Perch-signed.ipa Perch-unsigned.ipa
+zsign -k cert.p12 -p 'password' -m profile.mobileprovision -o Perch-signed.ipa Perch-unsigned.ipa
 ```
 
 ## 3. Install

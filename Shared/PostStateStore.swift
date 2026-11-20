@@ -254,6 +254,10 @@ final class PostStateStore: ObservableObject {
                 guard account == accountId else { return }
                 let e = XError.from(error)
                 if e.isTransientWhileOffline { return }
+                // Permanently refused: the optimistic state must go back, or the post
+                // shows "liked" for the rest of the session (the online path reverts).
+                if let c = confirmed[key] { revert(key, to: c) }
+                Haptics.failure()
                 remove(action)
             }
         }

@@ -92,7 +92,7 @@ struct NotificationRow: View {
                 }
                 Spacer(minLength: 0)
                 if let d = notification.date {
-                    Text(RelativeTime.short(d))
+                    RelativeTimeText(date: d)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }

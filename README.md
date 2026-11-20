@@ -26,7 +26,7 @@ https://raw.githubusercontent.com/<you>/<repo>/main/endpoints.json
 ## Layout
 
 ```
-Packages/XKit/   networking, parsing, transaction-id, endpoints (Swift package, tests run on CI and Linux)
+Packages/XKit/   networking, parsing, transaction-id, endpoints (Swift package; tests run in CI)
 Perch/           iOS app
 PerchWatch/      watchOS app
 Shared/          SwiftUI/view-model code compiled into both apps
@@ -36,7 +36,8 @@ project.yml      XcodeGen spec (the .xcodeproj is generated on CI)
 ## Development without a Mac
 
 - Push → CI generates the project, runs XKit tests, archives unsigned, uploads `Perch-unsigned-ipa`.
-- XKit tests also run on Linux: `cd Packages/XKit && swift test` (Swift 6.x toolchain).
+- The same tests run in CI on the macOS runner; the package is Foundation-only, so
+  `cd Packages/XKit && swift test` also works on Linux (Swift 6.x toolchain).
 
 ## Account safety
 

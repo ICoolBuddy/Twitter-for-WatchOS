@@ -138,7 +138,8 @@ struct HomeView: View {
                     .fill(current ? Self.tabBlue : Color.clear)
                     .frame(width: 26, height: 3)
             }
-            .contentShape(Rectangle())
+            // Bigger tap area without moving the tabs: the visual stays 14 pt text.
+            .contentShape(Rectangle().inset(by: -9))
         }
         .buttonStyle(.swipeSafe)
         .accessibilityLabel(title + " timeline")

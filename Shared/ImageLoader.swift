@@ -11,6 +11,22 @@ import XKit
 final class ImageLoader: @unchecked Sendable {
     static let shared = ImageLoader()
 
+    /// URLs that will never decode (4xx / bad bytes). Remembered for the session so a
+    /// dead row cannot re-download on every appearance, and prefetch skips them too.
+    private let failedLock = NSLock()
+    private var permanentFailures: Set<String> = []
+
+    private func isPermanentFailure(_ url: URL) -> Bool {
+        failedLock.withLock { permanentFailures.contains(url.absoluteString) }
+    }
+
+    private func markPermanentFailure(_ url: URL) {
+        failedLock.withLock {
+            if permanentFailures.count > 600 { permanentFailures.removeAll() }
+            permanentFailures.insert(url.absoluteString)
+        }
+    }
+
     private let cache = NSCache<NSString, CGImageBox>()
     private let session: URLSession
     /// `Caches/perch-img` — downloaded bytes keyed by a hash of the URL (see `fileStem`).
@@ -96,6 +112,7 @@ final class ImageLoader: @unchecked Sendable {
     }
 
     private func fetchAndDecode(_ url: URL, maxPixel: Int, key k: NSString) async throws -> CGImage {
+        if isPermanentFailure(url) { throw URLError(.badServerResponse) }
         if let bytes = await diskData(for: url) {
             if let img = Self.downsample(bytes, maxPixel: maxPixel) {
                 cache.setObject(CGImageBox(img), forKey: k, cost: img.bytesPerRow * img.height)
@@ -109,9 +126,11 @@ final class ImageLoader: @unchecked Sendable {
         // Images are most of the traffic: let the link-speed estimate see them.
         TransferMonitor.shared.record(bytes: downloaded.count, over: Date().timeIntervalSince(startedAt))
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            if (400..<500).contains(http.statusCode) { markPermanentFailure(url) }
             throw URLError(.badServerResponse)
         }
         guard let img = Self.downsample(downloaded, maxPixel: maxPixel) else {
+            markPermanentFailure(url)
             throw URLError(.cannotDecodeContentData)
         }
         // Only bytes that really decode go to the disk cache; anything else would
@@ -432,6 +451,14 @@ struct RemoteImage: View {
                 return
             } catch {
                 if error is CancellationError || Task.isCancelled { return }
+                // A 4xx or undecodable body will not get better: no retries (the loader
+                // remembers it too). Only a flaky link is worth three attempts.
+                if let u = error as? URLError,
+                   ![.timedOut, .networkConnectionLost, .notConnectedToInternet,
+                     .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed].contains(u.code) {
+                    failed = true
+                    return
+                }
                 if attempt == 2 { failed = true; return }
                 try? await Task.sleep(nanoseconds: 700_000_000 << UInt64(attempt))
                 if Task.isCancelled { return }

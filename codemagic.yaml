@@ -133,7 +133,6 @@ workflows:
           xcrun simctl boot "$UDID" 2>/dev/null || true
           xcrun simctl bootstatus "$UDID" -b
       - name: Crown routing UI tests
-        ignore_failure: true
         script: |
           mkdir -p build
           export TEST_RUNNER_CROWN_VARIANT="$CROWN_VARIANT"

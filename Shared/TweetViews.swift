@@ -5,6 +5,19 @@ import XKit
 import WatchKit
 #endif
 
+/// A relative timestamp that stays true while the row is on screen (a plain
+/// `Text(RelativeTime.short(date))` froze at "3m" for as long as it was visible).
+struct RelativeTimeText: View {
+    let date: Date
+    var prefix: String = ""
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { _ in
+            Text(prefix + RelativeTime.short(date))
+        }
+    }
+}
+
 /// Navigation destinations shared by both apps.
 /// Navigation payload whose identity is its id. `Route` values are NavigationLink
 /// values (Hashable): hashing a whole post/user meant the route changed whenever a like
@@ -99,7 +112,7 @@ struct TweetHeader: View {
                 HStack(spacing: 3) {
                     Text("@" + tweet.author.screenName).lineLimit(1).truncationMode(.tail)
                     if let d = tweet.createdAt {
-                        Text("· " + RelativeTime.short(d))
+                        RelativeTimeText(date: d, prefix: "· ")
                             .lineLimit(1)
                             .fixedSize()
                             .layoutPriority(1)
@@ -438,7 +451,7 @@ struct PostActionRow: View {
         }
         .foregroundStyle(active ? color : Color.secondary)
         .frame(maxWidth: .infinity)
-        .frame(height: 32)
+        .frame(height: 44)
         .contentShape(Rectangle())
     }
 

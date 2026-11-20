@@ -54,13 +54,20 @@ struct SwipeBack: ViewModifier {
                         let dx = value.translation.width
                         let go = dx > 55 && abs(dx) > abs(value.translation.height) * 1.8
                         if go {
-                            // Back to rest first: the pop animates the whole
-                            // screen away; a half-shifted screen is what showed
-                            // black beside it when the pop did not complete.
-                            withAnimation(.easeOut(duration: 0.12)) { offsetX = 0 }
                             // A pushed screen pops by state: one mutation, so it
-                            // cannot race the system's own pop. A sheet dismisses.
-                            if let popScreen { popScreen() } else { dismiss() }
+                            // cannot race the system's own pop. The pop animation
+                            // carries the screen away from where the finger left it;
+                            // snapping back to rest first read as a bounce.
+                            if let popScreen {
+                                popScreen()
+                                // If the pop did not go through, never leave the
+                                // screen shifted with black beside it.
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { settle() }
+                            } else {
+                                // A sheet's dismissal does not carry the offset.
+                                withAnimation(.easeOut(duration: 0.12)) { offsetX = 0 }
+                                dismiss()
+                            }
                         } else {
                             settle()
                         }

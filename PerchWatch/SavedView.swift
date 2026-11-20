@@ -170,7 +170,9 @@ private struct SavedDetailView: View {
         }
         .background(Color.black)
         .navigationTitle("Saved post")
-        .swipeBack()
+        // Item-based destination: `nav.back()` would pop the Saved list underneath, so
+        // the swipe is off here (the system edge swipe still pops the detail).
+        .swipeBack(enabled: false)
         .onAppear {
             if let name = post.videoFile,
                let url = SavedStore.shared.fileURL(name),

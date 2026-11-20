@@ -26,6 +26,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Debug files must be excluded from Release
+        run: |
+          # project.yml excludes the DEBUG harness by file name; a new file under
+          # PerchWatch/Debug would silently ship if its author forgot #if DEBUG.
+          for f in PerchWatch/Debug/*.swift; do
+            b=$(basename "$f")
+            grep -q "$b" project.yml || { echo "::error::$f is not in EXCLUDED_SOURCE_FILE_NAMES"; exit 1; }
+          done
+
       - name: Select Xcode
         run: |
           if [ ! -d "$XCODE_APP" ]; then

@@ -28,6 +28,8 @@ enum LinkBudget {
     /// How many posts of a feed page to warm images for.
     static var prefetchPostCount: Int {
         guard let rate = bytesPerSecond else { return 6 }     // unknown: a handful
-        return rate < slowBytesPerSecond ? 4 : 40
+        // A fast link used to warm 40 posts; on the 150 pt viewport that decodes far
+        // more than the cache holds and evicts the images actually on screen.
+        return rate < slowBytesPerSecond ? 4 : 14
     }
 }
