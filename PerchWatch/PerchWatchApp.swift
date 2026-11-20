@@ -100,28 +100,24 @@ struct WatchRootView: View {
             } else {
                 NavigationStack { OnboardingView() }
             }
-
-        }
-        // Full-screen media is a real presentation (crown fix, 2026-11-18): when an
-        // overlay viewer went away, watchOS did not hand the crown back to the feed;
-        // dismissing a presentation is a moment it re-picks the crown's scroll view.
-        // The viewer hides the cover's X and clock (`inCover`); it closes by swipe down.
-        .fullScreenCover(isPresented: mediaCoverPresented) {
-            if let target = presenter.target {
+            // Media is an overlay, not a cover: a watchOS cover is always opaque, so
+            // the swipe-down could never reveal the feed. The viewer's own background
+            // fades from black to clear while it is dragged (and back on release).
+            if app.canBrowse, let target = presenter.target, presenter.sheetDepth == 0 {
                 MediaViewer(media: target.media, startIndex: target.startIndex,
                             title: target.title, caption: target.caption,
                             onClose: { presenter.close() }, inCover: true)
-                    // Let the viewer's fading background reveal the feed during the
-                    // swipe-down instead of the cover's opaque black.
-                    .presentationBackground(.clear)
+                    .zIndex(2)
+                    .transition(.opacity)
             }
+
         }
         // watchOS swallows the first tap while a list is still decelerating, and the
         // system back chevron sits under the scrolling content: a tap there did nothing
         // until the list stopped. This overlay is above the scroll view, so its tap
         // lands immediately (with a short guard against a double pop).
         .overlay(alignment: .topLeading) {
-            if app.canBrowse, !nav.path.isEmpty {
+            if app.canBrowse, !nav.path.isEmpty, presenter.target == nil {
                 BackCornerTap { nav.back() }
             }
         }
@@ -172,17 +168,6 @@ private struct BackCornerTap: View {
                     }
             )
             .accessibilityHidden(true)
-    }
-}
-
-extension WatchRootView {
-    /// The root media viewer is presented while there is a target and no sheet is up
-    /// (a sheet draws its own `MediaHost`).
-    var mediaCoverPresented: Binding<Bool> {
-        Binding(
-            get: { presenter.target != nil && presenter.sheetDepth == 0 },
-            set: { presented in if !presented { presenter.close() } }
-        )
     }
 }
 

@@ -720,8 +720,11 @@ final class CrownRoutingTests: XCTestCase {
             }
             self.settle()
             self.app.swipeUp()                       // still decelerating below
-            let how = self.tapSystemBack()           // immediately, no settle
+            // A plain coordinate tap in the back corner: no accessibility query, which
+            // itself timed out while the main thread was busy (the symptom under test).
+            self.app.coordinate(withNormalizedOffset: CGVector(dx: 0.10, dy: 0.11)).tap()
             Thread.sleep(forTimeInterval: 1.2)
+            let how = "coordinate (0.10, 0.11)"
             guard !self.probe("post").exists else {
                 return .blocked("BUG back ignored while decelerating (tapped via \(how))")
             }
