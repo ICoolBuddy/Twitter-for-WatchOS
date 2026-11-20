@@ -152,6 +152,9 @@ struct ProfileContent: View {
         .background(Color.black)
         .task(id: app.activeAccountId) { await start(force: started) }
         .postPresentation(profile: $otherProfile, media: $mediaTarget)
+        .overlay {
+            EdgeGlow(loading: loadingProfile || list.isRefreshing || list.phase == .loading)
+        }
         // crown-lab measurement hook (DEBUG only): `probe.profile`.
         .crownProbe("profile")
     }

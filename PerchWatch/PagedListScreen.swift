@@ -77,6 +77,9 @@ extension View {
     ) -> some View {
         self
             .background(Color.black)
+            // Fetch activity, the same edge glow the feeds use: a pushed list used to
+            // fetch silently (the pager's glow is behind the pushed screen).
+            .overlay { EdgeGlow(loading: list.isRefreshing || list.phase == .loading) }
             .modifier(OptionalPullToRefresh(isRefreshing: list.isRefreshing, failed: list.error != nil,
                                             action: onRefresh))
             .postPresentation(profile: profile, media: media)

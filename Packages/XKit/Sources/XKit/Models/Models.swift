@@ -17,6 +17,12 @@ public struct XUser: Codable, Hashable, Sendable, Identifiable {
     public var followedBy: Bool
     public var createdAt: Date?
 
+    private enum CodingKeys: String, CodingKey {
+        case id, name, screenName, avatarURL, bannerURL, bio, location
+        case followersCount, followingCount, postsCount
+        case isVerified, isProtected, following, followedBy, createdAt
+    }
+
     public init(
         id: String, name: String, screenName: String, avatarURL: URL? = nil, bannerURL: URL? = nil,
         bio: String = "", location: String = "", followersCount: Int = 0, followingCount: Int = 0,
@@ -28,6 +34,29 @@ public struct XUser: Codable, Hashable, Sendable, Identifiable {
         self.followersCount = followersCount; self.followingCount = followingCount
         self.postsCount = postsCount; self.isVerified = isVerified; self.isProtected = isProtected
         self.following = following; self.followedBy = followedBy; self.createdAt = createdAt
+    }
+
+    /// Tolerant decode, for **our own persisted JSON** (offline caches, saved posts):
+    /// a field added or renamed since the data was written must not make the entry
+    /// unreadable. X's live responses never go through Codable (XParser builds the
+    /// models), so this cannot hide a parsing bug.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? ""
+        name = (try? c.decode(String.self, forKey: .name)) ?? ""
+        screenName = (try? c.decode(String.self, forKey: .screenName)) ?? ""
+        avatarURL = try? c.decodeIfPresent(URL.self, forKey: .avatarURL)
+        bannerURL = try? c.decodeIfPresent(URL.self, forKey: .bannerURL)
+        bio = (try? c.decode(String.self, forKey: .bio)) ?? ""
+        location = (try? c.decode(String.self, forKey: .location)) ?? ""
+        followersCount = (try? c.decode(Int.self, forKey: .followersCount)) ?? 0
+        followingCount = (try? c.decode(Int.self, forKey: .followingCount)) ?? 0
+        postsCount = (try? c.decode(Int.self, forKey: .postsCount)) ?? 0
+        isVerified = (try? c.decode(Bool.self, forKey: .isVerified)) ?? false
+        isProtected = (try? c.decode(Bool.self, forKey: .isProtected)) ?? false
+        following = (try? c.decode(Bool.self, forKey: .following)) ?? false
+        followedBy = (try? c.decode(Bool.self, forKey: .followedBy)) ?? false
+        createdAt = try? c.decodeIfPresent(Date.self, forKey: .createdAt)
     }
 
     /// Small avatar variant (48x48) — X serves `_normal` by default; `_mini` is 24px, `_bigger` 73px.
@@ -72,6 +101,28 @@ public struct XMedia: Codable, Hashable, Sendable, Identifiable {
     public init(id: String, type: XMediaType, url: URL, width: Int, height: Int, altText: String? = nil, variants: [XVideoVariant] = []) {
         self.id = id; self.type = type; self.url = url; self.width = width; self.height = height
         self.altText = altText; self.variants = variants
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, type, url, width, height, altText, variants
+    }
+
+    /// Tolerant decode for persisted JSON (see `XTweet.init(from:)`). Only the URL is
+    /// essential; a missing size or kind degrades instead of dropping the attachment.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let url = try? c.decode(URL.self, forKey: .url) else {
+            throw DecodingError.keyNotFound(CodingKeys.url, .init(
+                codingPath: decoder.codingPath, debugDescription: "media without a url"))
+        }
+        self.url = url
+        id = (try? c.decode(String.self, forKey: .id)) ?? url.absoluteString
+        type = (try? c.decode(XMediaType.self, forKey: .type)) ?? .photo
+        width = (try? c.decode(Int.self, forKey: .width)) ?? 16
+        height = (try? c.decode(Int.self, forKey: .height)) ?? 9
+        altText = try? c.decodeIfPresent(String.self, forKey: .altText)
+        variants = ((try? c.decode([Failable<XVideoVariant>].self, forKey: .variants)) ?? [])
+            .compactMap(\.value)
     }
 
     /// X image sizes: thumb (150x150 crop), small (680), medium (1200), large (2048).
@@ -167,10 +218,61 @@ public struct XTweet: Codable, Hashable, Sendable, Identifiable {
         self.tombstoneText = tombstoneText; self.lang = lang
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case id, text, author, createdAt, replyCount, retweetCount, likeCount, quoteCount
+        case bookmarkCount, viewCount, liked, retweeted, bookmarked, media
+        case inReplyToScreenName, inReplyToStatusId, conversationId
+        case retweetedTweet, quotedTweet, tombstoneText, lang
+    }
+
+    /// Tolerant decode, for **our own persisted JSON** (offline feed/thread caches and
+    /// The saved-posts index). A field added since the data was written must not make an
+    /// entry unreadable — one missing `bookmarkCount` used to fail the whole entry, and
+    /// an unreadable index is what a reader experiences as "my saved posts are gone".
+    /// X's live responses never pass through Codable (XParser maps them by hand), so
+    /// this cannot hide a parsing bug.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let id = try? c.decode(String.self, forKey: .id) else {
+            throw DecodingError.keyNotFound(CodingKeys.id, .init(
+                codingPath: decoder.codingPath, debugDescription: "post without an id"))
+        }
+        self.id = id
+        text = (try? c.decode(String.self, forKey: .text)) ?? ""
+        author = (try? c.decode(XUser.self, forKey: .author))
+            ?? XUser(id: "", name: "", screenName: "")
+        createdAt = try? c.decodeIfPresent(Date.self, forKey: .createdAt)
+        replyCount = (try? c.decode(Int.self, forKey: .replyCount)) ?? 0
+        retweetCount = (try? c.decode(Int.self, forKey: .retweetCount)) ?? 0
+        likeCount = (try? c.decode(Int.self, forKey: .likeCount)) ?? 0
+        quoteCount = (try? c.decode(Int.self, forKey: .quoteCount)) ?? 0
+        bookmarkCount = (try? c.decode(Int.self, forKey: .bookmarkCount)) ?? 0
+        viewCount = try? c.decodeIfPresent(Int.self, forKey: .viewCount)
+        liked = (try? c.decode(Bool.self, forKey: .liked)) ?? false
+        retweeted = (try? c.decode(Bool.self, forKey: .retweeted)) ?? false
+        bookmarked = (try? c.decode(Bool.self, forKey: .bookmarked)) ?? false
+        // Element-wise: one bad attachment must not cost the other photos.
+        let mediaBoxes = (try? c.decode([Failable<XMedia>].self, forKey: .media)) ?? []
+        media = mediaBoxes.compactMap(\.value)
+        inReplyToScreenName = try? c.decodeIfPresent(String.self, forKey: .inReplyToScreenName)
+        inReplyToStatusId = try? c.decodeIfPresent(String.self, forKey: .inReplyToStatusId)
+        conversationId = try? c.decodeIfPresent(String.self, forKey: .conversationId)
+        retweetedTweet = try? c.decodeIfPresent(XTweetBox.self, forKey: .retweetedTweet)
+        quotedTweet = try? c.decodeIfPresent(XTweetBox.self, forKey: .quotedTweet)
+        tombstoneText = try? c.decodeIfPresent(String.self, forKey: .tombstoneText)
+        lang = try? c.decodeIfPresent(String.self, forKey: .lang)
+    }
+
     /// The post whose content should be displayed (the original for reposts).
     public var displayed: XTweet { retweetedTweet?.value ?? self }
     public var isRetweet: Bool { retweetedTweet != nil }
     public var isTombstone: Bool { tombstoneText != nil }
+}
+
+/// Decodes a value as `nil` instead of failing the surrounding array.
+struct Failable<T: Decodable>: Decodable {
+    let value: T?
+    init(from decoder: Decoder) throws { value = try? T(from: decoder) }
 }
 
 /// Box to allow recursive value types (repost/quote nesting).

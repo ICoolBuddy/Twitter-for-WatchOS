@@ -73,8 +73,17 @@ struct PullToRefresh: ViewModifier {
                 // Do NOT zero the crown travel here: watchOS reports a crown turn as
                 // `.interacting` too, and this reset (once per turn) is why ten turns
                 // never added up (trace: 271 pt seen, counter stuck at 4).
-                // Released (finger up) while the arrow pointed up.
+                // Released (finger up) while the arrow pointed up: a real pull.
                 if phase != .interacting, tracker.ready { fire() }
+                // Momentum is not a pull. A fast flick to the top rubber-bands tens of
+                // points while the finger is up; those frames used to count as crown
+                // travel and fired a refresh on their own.
+                tracker.decelerating = phase == .decelerating
+                if tracker.decelerating {
+                    tracker.crown = 0
+                    tracker.ready = false
+                    pull.reset()
+                }
             }
             .onChange(of: isRefreshing) { _, refreshing in
                 idleTask?.cancel()
@@ -118,6 +127,12 @@ struct PullToRefresh: ViewModifier {
             if overscroll <= 0 { t.fired = false; t.last = 0 }
             return
         }
+        // A decelerating list is coasting: no credit, no indicator, no refresh. This is
+        // what made "scroll fast to the top" refresh by itself.
+        if t.decelerating {
+            t.last = overscroll
+            return
+        }
         if overscroll > 0 {
             // Every nudge at the top adds up. A crown detent is a fresh overscroll
             // (it starts from the top, peaks, and unwinds), while a finger drag keeps
@@ -125,7 +140,9 @@ struct PullToRefresh: ViewModifier {
             // makes the crown work even though watchOS reports its turns with the
             // scroll view "interacting" like a touch (measured: S17 os=272.5).
             let delta = overscroll - t.last
-            if delta > 0, !t.interacting || t.last <= 2 {
+            // A crown nudge moves the band a few points; tens of points in one frame is
+            // a fling, and must not count even if the phase has not updated yet.
+            if delta > 0, delta <= 8, !t.interacting || t.last <= 2 {
                 t.crown = min(Self.crownThreshold, t.crown + delta)
                 t.crownTouched = Date()
                 scheduleCrownDecay()
@@ -140,6 +157,13 @@ struct PullToRefresh: ViewModifier {
         }
         t.last = overscroll
         guard !isRefreshing else { return }
+        // With the finger up, only accumulated crown travel may act: a raw overscroll
+        // there is momentum, and momentum is not a pull (the "scroll fast to the top
+        // refreshes by itself" report).
+        if !t.interacting, t.crown < Self.crownThreshold {
+            pull.reset()
+            return
+        }
 
         let finger = max(0, overscroll) / Self.threshold
         let crown = t.crown / Self.crownThreshold
@@ -410,6 +434,8 @@ private final class OverscrollTracker {
     var interacting = false
     /// A refresh was fired from this pull: ignore the spring-back frames.
     var fired = false
+    /// The list is coasting after a finger release (momentum). Never a pull.
+    var decelerating = false
     /// When the crown travel last grew (the idle decay measures quiet from here).
     var crownTouched = Date.distantPast
 }

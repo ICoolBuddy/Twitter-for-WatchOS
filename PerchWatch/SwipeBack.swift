@@ -25,6 +25,9 @@ struct SwipeBack: ViewModifier {
     /// fall back to `dismiss()`.
     @Environment(\.popScreen) private var popScreen
     var enabled = true
+    /// An explicit pop, for a destination that is not a `Route` (the saved-post detail
+    /// is item-based: popping it means clearing the item, not `nav.back()`).
+    var onPop: (() -> Void)?
 
 
     /// The settled offset (0 except for the frame that starts a settle animation).
@@ -64,8 +67,8 @@ struct SwipeBack: ViewModifier {
                             // away from where the finger left it; snapping back to rest
                             // first read as a bounce.
                             offsetX = dx
-                            if let popScreen {
-                                popScreen()
+                            if let pop = onPop ?? popScreen {
+                                pop()
                                 // If the pop did not go through, never leave the screen
                                 // shifted with black beside it.
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { settle() }
@@ -109,7 +112,7 @@ struct SwipeBack: ViewModifier {
 }
 
 extension View {
-    func swipeBack(enabled: Bool = true) -> some View {
-        modifier(SwipeBack(enabled: enabled))
+    func swipeBack(enabled: Bool = true, onPop: (() -> Void)? = nil) -> some View {
+        modifier(SwipeBack(enabled: enabled, onPop: onPop))
     }
 }

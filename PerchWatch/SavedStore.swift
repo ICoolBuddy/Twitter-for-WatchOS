@@ -15,15 +15,46 @@ final class SavedStore: ObservableObject {
         var savedAt: Date
         var avatarFile: String?
         /// Parallel to `tweet.displayed.media`; "" for videos.
-        var mediaFiles: [String] = []
+        var mediaFiles: [String]
         var videoFile: String?
         /// Attachment downloads that already failed: a post whose media is gone
         /// (404/403) stops re-downloading on every launch after a few tries.
-        var failedAttempts: Int? = nil
+        var failedAttempts: Int?
         /// Why an attachment is missing (gone, too large, no room); shown in the row.
-        var problem: String? = nil
+        var problem: String?
 
         var id: String { tweet.id }
+
+        init(tweet: XTweet, savedAt: Date, avatarFile: String? = nil,
+             mediaFiles: [String] = [], videoFile: String? = nil,
+             failedAttempts: Int? = nil, problem: String? = nil) {
+            self.tweet = tweet
+            self.savedAt = savedAt
+            self.avatarFile = avatarFile
+            self.mediaFiles = mediaFiles
+            self.videoFile = videoFile
+            self.failedAttempts = failedAttempts
+            self.problem = problem
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case tweet, savedAt, avatarFile, mediaFiles, videoFile, failedAttempts, problem
+        }
+
+        /// Tolerant decode, on purpose. A field added later (`mediaFiles`) is not in an
+        /// older entry; with the synthesised decoder that made the *whole entry*
+        /// unreadable, and with every entry unreadable the list came back empty — the
+        /// reader saw "all saved posts are gone" and a cold boot changed nothing.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            tweet = try c.decode(XTweet.self, forKey: .tweet)
+            savedAt = (try? c.decode(Date.self, forKey: .savedAt)) ?? .distantPast
+            avatarFile = try? c.decodeIfPresent(String.self, forKey: .avatarFile)
+            mediaFiles = (try? c.decode([String].self, forKey: .mediaFiles)) ?? []
+            videoFile = try? c.decodeIfPresent(String.self, forKey: .videoFile)
+            failedAttempts = try? c.decodeIfPresent(Int.self, forKey: .failedAttempts)
+            problem = try? c.decodeIfPresent(String.self, forKey: .problem)
+        }
     }
 
     /// One named constant each (the Watch shares its storage with everything else).
@@ -57,6 +88,9 @@ final class SavedStore: ObservableObject {
     private var byID: [String: SavedPost] = [:]
     /// Ids whose attachments are still downloading.
     @Published private(set) var saving: Set<String> = []
+    /// How many entries the index had when it was loaded. An empty in-memory list after
+    /// a failed/corrupt load must never be written over a non-empty file.
+    private var loadedCount = 0
 
     let directory: URL
     private var indexURL: URL { directory.appendingPathComponent("saved.json") }
@@ -135,6 +169,7 @@ final class SavedStore: ObservableObject {
         for name in ([post.avatarFile, post.videoFile].compactMap { $0 } + post.mediaFiles) where !name.isEmpty {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
         }
+        if items.isEmpty { loadedCount = 0 }
         persist()
     }
 
@@ -271,10 +306,16 @@ final class SavedStore: ObservableObject {
     // MARK: Index
 
     private func load() {
-        guard let data = try? Data(contentsOf: indexURL) else { return }
-        if let decoded = try? JSONDecoder().decode([SavedPost].self, from: data) {
-            items = decoded
+        guard let data = try? Data(contentsOf: indexURL), !data.isEmpty else { return }
+        do {
+            items = try JSONDecoder().decode([SavedPost].self, from: data)
+            loadedCount = items.count
             return
+        } catch {
+            // Name the field that broke: CodingError descriptions carry the key path,
+            // and this line is readable in the app's Request log on the Watch.
+            Task { await RequestLog.shared.record(method: "-", url: nil, status: nil, durationMs: 0,
+                                                 note: "saved.json unreadable: \(error)") }
         }
         // One unreadable entry (an older schema, a truncated write) must not cost the
         // whole list, which the next persist() would then overwrite.
@@ -284,16 +325,22 @@ final class SavedStore: ObservableObject {
             guard let bytes = try? JSONSerialization.data(withJSONObject: element) else { return nil }
             return try? decoder.decode(SavedPost.self, from: bytes)
         }
+        loadedCount = items.count
         let lost = raw.count - items.count
         // Keep the unreadable file: the next persist() writes only the survivors.
         let backup = indexURL.deletingLastPathComponent()
             .appendingPathComponent("saved.corrupt-\(Int(Date().timeIntervalSince1970)).json")
         try? FileManager.default.copyItem(at: indexURL, to: backup)
         Task { await RequestLog.shared.record(method: "-", url: nil, status: nil, durationMs: 0,
-                                             note: "saved.json: \(lost) unreadable entr\(lost == 1 ? "y" : "ies") skipped (backup kept)") }
+                                             note: "saved.json: \(lost) unreadable entr\(lost == 1 ? "y" : "ies") skipped (backup kept, \(raw.count) entries were there)") }
     }
 
     private func persist() {
+        // A load that could not read the file leaves `items` empty; writing that back
+        // would turn a decode problem into permanent data loss (what the reader saw as
+        // "all saved posts are gone"). Only an explicit removal of the last post may
+        // write an empty index (remove() clears `loadedCount` for that).
+        if items.isEmpty, loadedCount > 0 { return }
         let snapshot = items
         let url = indexURL
         DiskWriter.queue.async {

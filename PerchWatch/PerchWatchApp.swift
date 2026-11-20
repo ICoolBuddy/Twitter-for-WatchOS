@@ -331,18 +331,22 @@ struct PagerChrome<Content: View>: View {
         content
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    TouchDownControl(action: { control.toggle() }) {
+                    // A real Button, in watchOS' own circular platter: this is the item
+                    // the system knows how to place (and re-place) during a pop. The
+                    // gesture-based control had no platter and sat differently from the
+                    // system back chevron next to it.
+                    Button(action: { control.toggle() }) {
                         // Both symbols stay laid out: a ternary swapped their different
                         // widths inside the page animation and the item snapped.
                         ZStack {
                             Image(systemName: "line.3.horizontal").opacity(control.page == 0 ? 0 : 1)
                             Image(systemName: "chevron.left").opacity(control.page == 0 ? 1 : 0)
                         }
-                        .leadingGlyphBox()
+                        .frame(width: 20, height: 20)
                     }
+                    .buttonStyle(.bordered)
                     .animation(nil, value: control.page)
                     .accessibilityLabel(control.page == 0 ? "Back to feed" : "Menu")
-                    .accessibilityAddTraits(.isButton)
                     .accessibilityIdentifier("chrome.menuToggle")
                     .onAppear { ChromeTrace.itemAppeared(control.page) }
                     .onDisappear { ChromeTrace.itemDisappeared() }
@@ -429,6 +433,14 @@ struct RootPager: View {
         // One glow for the whole pager (not per page), so a refresh that is
         // still running stays visible after swiping to the other feed or the menu.
         .overlay { RootGlow(forYou: forYou, following: following) }
+        // The refresh status pill, also pager-wide: inside a page it slid away with
+        // that page while the refresh it described was still running.
+        .overlay(alignment: .bottom) {
+            RefreshStatus(isRefreshing: forYou.isRefreshing || following.isRefreshing,
+                          failed: visibleError)
+                .padding(.bottom, 4)
+                .allowsHitTesting(false)
+        }
         .onAppear {
             // Only once: re-assigning the page every time the root comes back
             // from a pushed screen made the pager flash while it settled.
@@ -477,6 +489,12 @@ struct RootPager: View {
         setup.seed(await TimelineDiskCache.loadAsync(app.homeCacheScope(kind)))
         await setup.start(client: app.client, posts: app.posts,
                           autoRefreshOnOpen: autoRefreshOnOpen)
+    }
+
+    /// The error of the feed on screen: the pill must not say "Couldn't update"
+    /// because of a failure in the feed the reader is not looking at.
+    private var visibleError: Bool {
+        (control.page == 2 ? following.error : forYou.error) != nil
     }
 
     private func goFeed(_ kind: HomeKind) {

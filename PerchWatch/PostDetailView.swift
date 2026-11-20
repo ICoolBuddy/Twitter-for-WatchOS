@@ -81,6 +81,7 @@ struct PostDetailView: View {
             .padding(.horizontal, Metrics.horizontalPadding)
         }
         .background(Color.black)
+        .overlay { EdgeGlow(loading: list.isRefreshing || list.phase == .loading) }
         .navigationTitle("Post")
         // crown-lab measurement hook (DEBUG only): `probe.post`.
         .crownProbe("post")

@@ -56,9 +56,11 @@ struct SavedView: View {
         // crown-lab measurement hook (DEBUG only): `probe.saved`.
         .crownProbe("saved")
         .swipeBack()
-        // Pushed, not a sheet: swipe right goes back like everywhere else.
+        // Pushed, not a sheet: swipe right goes back like everywhere else. The
+        // destination is item-based, so the pop clears the item instead of `nav.back()`
+        // (which would pop the Saved list underneath).
         .navigationDestination(item: $selected) { post in
-            SavedDetailView(post: post)
+            SavedDetailView(post: post, onPop: { selected = nil })
         }
     }
 }
@@ -122,9 +124,13 @@ private struct SavedRow: View {
 
 private struct SavedDetailView: View {
     let post: SavedStore.SavedPost
+    /// Pops this item-based destination (clearing `selected` in `SavedView`).
+    let onPop: () -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var player: AVPlayer?
+    /// The saved file, opened full screen (the inline player was a 200 pt box with the
+    /// video's own controls, and its gesture swallowed the swipe-back).
+    @State private var fullScreenVideo: SavedVideoFile?
 
     private var tweet: XTweet { post.tweet.displayed }
 
@@ -159,10 +165,25 @@ private struct SavedDetailView: View {
                     }
                 }
 
-                if let player {
-                    VideoPlayer(player: player)
-                        .frame(height: min(200, WKInterfaceDevice.current().screenBounds.height * 0.45))
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                if let name = post.videoFile, let url = SavedStore.shared.fileURL(name) {
+                    Button { fullScreenVideo = SavedVideoFile(url: url) } label: {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.white.opacity(0.08))
+                            VStack(spacing: 4) {
+                                Image(systemName: "play.circle.fill")
+                                    .font(.system(size: 34))
+                                Text("Play video")
+                                    .font(.system(size: 12, weight: .semibold))
+                                Text("Full screen, with sound")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(height: min(120, WKInterfaceDevice.current().screenBounds.height * 0.3))
+                    }
+                    .buttonStyle(.swipeSafe)
+                    .accessibilityLabel("Play saved video with sound")
                 }
 
                 if let live = SavedStore.shared.items.first(where: { $0.id == post.id }),
@@ -194,24 +215,70 @@ private struct SavedDetailView: View {
         }
         .background(Color.black)
         .navigationTitle("Saved post")
-        // Item-based destination: `nav.back()` would pop the Saved list underneath, so
-        // the swipe is off here (the system edge swipe still pops the detail).
-        .swipeBack(enabled: false)
-        .onAppear {
-            if let name = post.videoFile,
-               let url = SavedStore.shared.fileURL(name),
-               player == nil {
-                let p = AVPlayer(url: url)
-                player = p
+        // Swipe right pops this detail by clearing the item. It used to be disabled
+        // because `nav.back()` would pop the list underneath; the explicit `onPop`
+        // makes the pop safe, and there is no inline player left to eat the drag.
+        .swipeBack(onPop: onPop)
+        .fullScreenCover(item: $fullScreenVideo) { file in
+            SavedVideoViewer(url: file.url)
+        }
+    }
+}
+
+/// `fullScreenCover(item:)` needs an `Identifiable`: a file URL is not one.
+private struct SavedVideoFile: Identifiable {
+    let url: URL
+    var id: String { url.absoluteString }
+}
+
+/// Full-screen playback of a saved video file.
+///
+/// The inline `VideoPlayer` in the detail had two problems: the file played silently
+/// (no audio session was ever activated) and its gesture area swallowed the
+/// swipe-back. This presents over the whole screen, activates a playback session so
+/// the sound is really there, and keeps the system's own controls.
+private struct SavedVideoViewer: View {
+    let url: URL
+
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            if let player {
+                VideoPlayer(player: player)
+                    .ignoresSafeArea()
             }
+        }
+        .onAppear {
+            Self.activateAudio()
+            let p = AVPlayer(url: url)
+            p.volume = 1
+            player = p
+            p.play()
         }
         .onDisappear {
             // Release the item, not just pause: a paused player keeps the decoder and
-            // file open for as long as SwiftUI keeps this state around.
+            // the file open for as long as SwiftUI keeps this state around.
             player?.pause()
             player?.replaceCurrentItem(with: nil)
             player = nil
+            Self.deactivateAudio()
         }
+        .accessibilityLabel("Saved video")
+    }
+
+    /// Without an active `.playback` session watchOS can play the file silently; the
+    /// Saved detail never configured one (the feed's viewer does, for background audio).
+    private static func activateAudio() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .default, options: [])
+        try? session.setActive(true)
+    }
+
+    private static func deactivateAudio() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setActive(false, options: .notifyOthersOnDeactivation)
     }
 }
 

@@ -111,6 +111,29 @@ final class ReviewFixTests: XCTestCase {
                                              hasData: true, isMutation: false))
     }
 
+    /// A cached post written by an older build (a field added since, or one renamed)
+    /// must still decode: the saved-posts index and the offline caches are this
+    /// format, and one missing key used to make every entry unreadable.
+    func testCachedPostDecodesWithoutNewerFields() throws {
+        let json = #"""
+        {"id":"100","text":"hello","author":{"id":"1","name":"A","screenName":"a"},
+         "media":[],"liked":false,"retweeted":false,"bookmarked":false}
+        """#
+        let tweet = try JSONDecoder().decode(XTweet.self, from: Data(json.utf8))
+        XCTAssertEqual(tweet.id, "100")
+        XCTAssertEqual(tweet.text, "hello")
+        XCTAssertEqual(tweet.bookmarkCount, 0)
+        XCTAssertEqual(tweet.author.screenName, "a")
+    }
+
+    func testCachedMediaDecodesWithoutKindOrSize() throws {
+        let json = #"{"url":"https://pbs.twimg.com/media/a.jpg"}"#
+        let media = try JSONDecoder().decode(XMedia.self, from: Data(json.utf8))
+        XCTAssertEqual(media.type, .photo)
+        XCTAssertEqual(media.width, 16)
+        XCTAssertEqual(media.height, 9)
+    }
+
     func testGraphQLBaseHostAllowList() {
         XCTAssertTrue(EndpointConfig.isAllowedGraphQLBase("https://x.com/i/api/graphql"))
         XCTAssertTrue(EndpointConfig.isAllowedGraphQLBase("https://api.x.com/graphql"))

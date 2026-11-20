@@ -76,7 +76,11 @@ struct HomeView: View {
             #endif
             // The edge glow is drawn by `RootGlow` straight from the lists; pulling
             // or turning the crown only triggers the refresh.
-            .pullToRefresh(isRefreshing: list.isRefreshing, failed: list.error != nil) {
+            // The status pill lives on the pager (RootPager), so it stays on screen
+            // while the reader swipes between feeds; this screen only owns the
+            // pull/crown gesture and the top arrow.
+            .pullToRefresh(isRefreshing: list.isRefreshing, failed: list.error != nil,
+                           showsIndicator: false) {
                 // Like X: newer posts above the ones already loaded, never a reload.
                 await list.refreshNewer()
                 // One refresh refreshes both timelines (the other is off screen most
