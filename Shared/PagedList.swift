@@ -227,8 +227,12 @@ final class PagedList<Item: Identifiable & Hashable>: ObservableObject {
     /// Call from a row's `onAppear`; loads the next page when the row is near the end.
     func loadMoreIfNeeded(current item: Item) {
         guard !isLoading, !isRefreshing, !reachedEnd, error == nil else { return }
-        guard let idx = items.firstIndex(where: { $0.id == item.id }),
-              idx >= items.count - Self.prefetchDistance else { return }
+        // O(1): only the row at the prefetch threshold arms the next page. The old
+        // firstIndex(where:) scanned up to 400 rows for every row that appeared.
+        let trigger = items.count > Self.prefetchDistance
+            ? items[items.count - Self.prefetchDistance].id
+            : items.last?.id
+        guard item.id == trigger else { return }
         if cursor == nil {
             // Rows seeded from the disk have no cursor of their own (e.g. "Refresh when
             // opening" is off): the first page is how paging starts, instead of a dead end.

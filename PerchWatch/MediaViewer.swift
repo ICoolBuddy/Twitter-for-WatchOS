@@ -34,7 +34,10 @@ struct MediaViewer: View {
     @State private var selection: Int
     /// The visible photo is zoomed: a downward drag pans instead of closing.
     @State private var zoomed = false
-    @State private var dragDown: CGFloat = 0
+    /// Live drag offset (gesture state: no per-frame `@State` write), and the settled
+    /// value used only to animate a cancelled swipe back.
+    @GestureState private var dragLiveDown: CGFloat = 0
+    @State private var dragSettle: CGFloat = 0
     /// Warms the full-size photo a swipe would land on.
     @State private var neighbourPrefetch: Task<Void, Never>?
 
@@ -57,7 +60,7 @@ struct MediaViewer: View {
                 emptyState
             } else {
                 activePage
-                    .offset(y: dragDown)
+                    .offset(y: dragLiveDown + dragSettle)
                 if media.count > 1 { counter }
             }
 
@@ -82,7 +85,7 @@ struct MediaViewer: View {
             // visible page can write it: paging away from a zoomed photo used to leave
             // it true, which killed swipe-down-to-close on the next page.
             zoomed = false
-            dragDown = 0
+            dragSettle = 0
             prefetchNeighbours(around: index)
         }
         .onDisappear { neighbourPrefetch?.cancel() }
@@ -156,21 +159,27 @@ struct MediaViewer: View {
 
     private var dismissDrag: some Gesture {
         DragGesture(minimumDistance: 20)
-            .onChanged { value in
+            .updating($dragLiveDown) { value, state, _ in
                 guard !zoomed else { return }
                 let dy = value.translation.height
                 guard dy > 0, abs(dy) > abs(value.translation.width) else { return }
-                dragDown = dy
+                state = dy
             }
-            .onEnded { _ in
-                let shouldClose = !zoomed && dragDown > 60
+            .onEnded { value in
+                guard !zoomed else { return }
+                // Distance or speed: a quick flick should close even if it travelled
+                // less than the slow-drag threshold.
+                let dy = value.translation.height
+                let predicted = value.predictedEndTranslation.height
+                let shouldClose = dy > 60 || (dy > 25 && predicted > 140)
                 if shouldClose {
                     // Let the cover's own dismissal be the animation. Snapping the
                     // content back to 0 first made the viewer bounce up and then
                     // vanish (the "awful" swipe-down).
                     close()
-                } else {
-                    withAnimation(.easeOut(duration: 0.2)) { dragDown = 0 }
+                } else if dy > 0 {
+                    dragSettle = dy
+                    withAnimation(.easeOut(duration: 0.2)) { dragSettle = 0 }
                 }
             }
     }

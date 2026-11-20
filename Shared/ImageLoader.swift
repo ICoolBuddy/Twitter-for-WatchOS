@@ -408,7 +408,7 @@ struct RemoteImage: View {
                 picture(image)
             } else if let placeholder {
                 picture(placeholder)
-                    .blur(radius: 8)
+                    .opacity(0.65)
             } else {
                 Skeleton(corner: 0)
                     .overlay {

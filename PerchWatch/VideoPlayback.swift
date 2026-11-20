@@ -347,7 +347,7 @@ final class VideoPlayback: ObservableObject {
             updateNowPlaying()
         }
 
-        if length.isFinite, length > 0 {
+        if loading, length.isFinite, length > 0 {
             let fraction = min(1, max(0, bufferedSeconds(item) / length))
             if abs(fraction - buffered) > 0.01 { buffered = fraction }
         }

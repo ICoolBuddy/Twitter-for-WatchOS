@@ -49,17 +49,16 @@ struct HomeView: View {
                     timelineLabel
                     content
                 }
-                .scrollTargetLayout()
                 .padding(.horizontal, Metrics.horizontalPadding)
             }
             .background(Color.black)
-            .onScrollGeometryChange(for: FeedGeometry.self) { geo in
-                FeedGeometry(inset: geo.contentInsets.top,
-                             offset: geo.contentOffset.y,
-                             viewport: geo.containerSize.height)
+            // Only the inset and viewport are needed; including the offset made this
+            // run on every scrolled pixel for no reason.
+            .onScrollGeometryChange(for: CGSize.self) { geo in
+                CGSize(width: geo.contentInsets.top, height: geo.containerSize.height)
             } action: { _, g in
-                place.topInset = g.inset
-                place.viewportHeight = g.viewport
+                place.topInset = g.width
+                place.viewportHeight = g.height
             }
             #if DEBUG
             .overlay(alignment: .topTrailing) {
@@ -97,7 +96,12 @@ struct HomeView: View {
             .onChange(of: isActive, initial: true) { _, active in
                 visibility.isActive = active
                 // Arriving on this feed: warm what it is about to show.
-                if active, !list.isEmpty { ImageLoader.shared.prefetchFeed(list.items.displayTweets) }
+                if active, !list.isEmpty {
+                    // Only the posts the prefetcher will actually warm: building
+                    // displayTweets over 400 items was a visible pop-time hitch.
+                    let warm = Array(list.items.prefix(LinkBudget.prefetchPostCount))
+                    ImageLoader.shared.prefetchFeed(warm.displayTweets)
+                }
             }
         }
     }
@@ -172,13 +176,20 @@ struct HomeView: View {
                     if item.id != list.items.last?.id { PostSeparator() }
                 }
                 .id(item.id)
-                // Where this row is on screen: the reading place and the "seen"
-                // impressions come from real row frames. (onScrollTargetVisibilityChange
-                // reported rows ~1000 pt above the viewport here: measured 2026-11-18.)
+                // Impressions while scrolling (cheap): half of the row on screen counts.
+                .onScrollVisibilityChange(threshold: 0.5) { visible in
+                    guard visible, visibility.isActive else { return }
+                    place.markSeen(item)
+                }
+                #if DEBUG
+                // The reading place (liveTopID/depth) only feeds the DEBUG place marker
+                // and the UI tests now: per-row frame callbacks were the most expensive
+                // thing in the feed during a scroll.
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .scrollView) } action: { frame in
                     place.rowMoved(item, frame: frame, isFirst: item.id == list.items.first?.id,
                                    active: visibility.isActive)
                 }
+                #endif
             }
             PagingFooter(list: list)
         }
@@ -228,7 +239,8 @@ struct HomeView: View {
         list.onPage = { items in
             // Both feeds stay alive in the pager: only the one on screen warms images.
             guard visibility.isActive else { return }
-            ImageLoader.shared.prefetchFeed(items.displayTweets)
+            let warm = Array(items.prefix(LinkBudget.prefetchPostCount))
+            ImageLoader.shared.prefetchFeed(warm.displayTweets)
         }
         list.skip = { $0.isFiller }
     }
@@ -259,13 +271,6 @@ struct HomeView: View {
     }
 }
 
-/// The scroll geometry the feed asks for in one value.
-struct FeedGeometry: Equatable {
-    var inset: CGFloat
-    var offset: CGFloat
-    var viewport: CGFloat
-}
-
 /// One home feed's reading place and impressions, shared with `RootPager`. The
 /// scroll view is never recreated: watchOS keeps each page's offset, so there is
 /// nothing to restore (and rebuilding it for the crown left a black box on screen).
@@ -280,6 +285,9 @@ final class FeedPlace {
     var topInset: CGFloat = 0
     /// Posts the reader has had on screen in this feed (see `FeedSeen`).
     let seen = FeedSeen()
+
+    /// Half of this row is on screen: an impression for the next home request.
+    func markSeen(_ item: TimelineItem) { seen.mark(item) }
 
     /// One row's frame in the scroll view's visible coordinates changed.
     func rowMoved(_ item: TimelineItem, frame: CGRect, isFirst: Bool, active: Bool) {

@@ -364,6 +364,8 @@ struct FeedPostView: View {
     private var isLong: Bool {
         if t.text.count > 500 { return true }
         let perLine = max(10, Int((20 / textScale).rounded()))
+        // Cannot reach 14 lines: skip splitting the text on every body pass.
+        if t.text.count < perLine * 14 { return false }
         var lines = 0
         for line in t.text.components(separatedBy: "\n") {
             lines += max(1, (line.count + perLine - 1) / perLine)
