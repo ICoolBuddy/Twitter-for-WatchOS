@@ -187,6 +187,7 @@ jobs:
           name: crown-lines-${{ matrix.variant }}
           path: |
             build/crown-lines-${{ matrix.variant }}.txt
+            build/attachments/**
             build/crown.log
           if-no-files-found: ignore
           retention-days: 7
