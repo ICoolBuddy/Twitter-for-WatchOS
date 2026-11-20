@@ -58,8 +58,9 @@ struct PullToRefresh: ViewModifier {
             }
             .onScrollPhaseChange { _, phase in
                 tracker.interacting = phase == .interacting
-                // A touch starts a finger pull: forget the crown's partial travel.
-                if tracker.interacting { tracker.crown = 0 }
+                // Do NOT zero the crown travel here: watchOS reports a crown turn as
+                // `.interacting` too, and this reset (once per turn) is why ten turns
+                // never added up (trace: 271 pt seen, counter stuck at 4).
                 // Released (finger up) while the arrow pointed up.
                 if phase != .interacting, tracker.ready { fire() }
             }
