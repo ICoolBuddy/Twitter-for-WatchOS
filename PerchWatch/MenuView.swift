@@ -142,7 +142,7 @@ struct MenuView: View {
                 .foregroundStyle(.orange)
             Button {
                 DraftStore.clear(replyTo: nil)
-                tooLongMessage = nil
+                self.tooLongMessage = nil
                 postStatus = nil
             } label: {
                 Label("Discard draft", systemImage: "trash")
