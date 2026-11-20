@@ -36,12 +36,14 @@ struct PullToRefresh: ViewModifier {
     /// threshold, forget the partial pull instead of leaving the arrow up.
     static let crownIdle: UInt64 = 900_000_000
     /// After this much quiet the crown travel itself is dropped (not just the arrow):
-    /// a few leftover points must not turn a later nudge into a refresh.
-    static let crownDecay: UInt64 = 3_000_000_000
+    /// a few leftover points must not turn a later nudge into a refresh. Generous on
+    /// purpose — a crown turn can be seconds apart (the simulator measured ~4 s).
+    static let crownDecay: UInt64 = 30_000_000_000
 
     @State private var tracker = OverscrollTracker()
     @State private var pull = PullState()
     @State private var idleTask: Task<Void, Never>?
+    @State private var decayTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
         content
@@ -126,6 +128,7 @@ struct PullToRefresh: ViewModifier {
             if delta > 0, !t.interacting || t.last <= 2 {
                 t.crown = min(Self.crownThreshold, t.crown + delta)
                 t.crownTouched = Date()
+                scheduleCrownDecay()
                 #if DEBUG
                 PerchTrace.acc += 1
                 #endif
@@ -170,17 +173,23 @@ struct PullToRefresh: ViewModifier {
                 // ~3.5 pt per turn) and zeroing here meant the pull could never add up.
                 pull.reset()
             }
-            // ...but a pull left half-done must not wait forever to trip a later nudge.
+        }
+    }
+
+    /// A pull left half-done must not wait forever to trip a later nudge. Restarted on
+    /// every accumulation, so slow crown turns never lose their travel.
+    private func scheduleCrownDecay() {
+        decayTask?.cancel()
+        decayTask = Task {
             try? await Task.sleep(nanoseconds: Self.crownDecay)
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                guard !isRefreshing, !tracker.fired, !tracker.interacting else { return }
-                if Date().timeIntervalSince(tracker.crownTouched) >= 3.0 {
-                    tracker.crown = 0
-                    #if DEBUG
-                    PerchTrace.zeroed += 1
-                    #endif
-                }
+                guard !isRefreshing, !tracker.fired else { return }
+                tracker.crown = 0
+                pull.reset()
+                #if DEBUG
+                PerchTrace.zeroed += 1
+                #endif
             }
         }
     }
