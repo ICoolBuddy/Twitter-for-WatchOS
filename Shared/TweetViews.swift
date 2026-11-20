@@ -342,6 +342,9 @@ struct PostActionRow: View {
     @State private var failedReply: String?
     /// Replies sent from this row (the count from X lags behind).
     @State private var sentReplies = 0
+    /// The post page reloads its thread after a reply lands (the new reply is not in
+    /// the page it already has).
+    var onReplySent: (() -> Void)? = nil
 
     var body: some View {
         let s = posts.state(for: tweet)
@@ -375,6 +378,11 @@ struct PostActionRow: View {
                     .frame(maxWidth: .infinity)
                     .transition(.opacity)
                     .accessibilityLabel(replyStatus)
+            }
+        }
+        .onAppear {
+            if failedReply == nil, let saved = DraftStore.failed(replyTo: tweet.id) {
+                failedReply = saved
             }
         }
     }
@@ -461,6 +469,13 @@ struct PostActionRow: View {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty, !sendingReply, let client = posts.client else { return }
         let replyTo = tweet.id
+        if let why = TweetText.tooLong(body) {
+            replyStatus = why
+            failedReply = body
+            DraftStore.saveFailed(body, replyTo: replyTo)
+            return
+        }
+        DraftStore.saveFailed(body, replyTo: replyTo)   // until it lands
         sendingReply = true
         statusToken += 1
         let token = statusToken
@@ -471,7 +486,9 @@ struct PostActionRow: View {
                 Haptics.success()
                 sendingReply = false
                 failedReply = nil
+                DraftStore.clear(replyTo: replyTo)
                 sentReplies += 1
+                onReplySent?()
                 withAnimation(.easeOut(duration: 0.15)) { replyStatus = "Sent" }
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                 if statusToken == token {
@@ -481,6 +498,7 @@ struct PostActionRow: View {
                 Haptics.failure()
                 sendingReply = false
                 // Keep the text: the row turns into a retry button until it works.
+                DraftStore.saveFailed(body, replyTo: replyTo)
                 withAnimation(.easeOut(duration: 0.15)) {
                     replyStatus = nil
                     failedReply = body

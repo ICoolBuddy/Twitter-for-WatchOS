@@ -196,16 +196,16 @@ final class SavedStore: ObservableObject {
             return
         }
         if isIncomplete(working) {
-            working.failedAttempts = (working.failedAttempts ?? 0) + 1
-            // A size/room problem never fixes itself: give up right away.
-            if case .tooBig = problem { working.failedAttempts = Limit.attempts }
-            if case .noRoom = problem { working.failedAttempts = Limit.attempts }
             if let problem {
+                working.failedAttempts = (working.failedAttempts ?? 0) + 1
+                // A size/room problem never fixes itself: give up right away.
+                if case .tooBig = problem { working.failedAttempts = Limit.attempts }
+                if case .noRoom = problem { working.failedAttempts = Limit.attempts }
                 working.problem = problem.message
-            } else if (working.failedAttempts ?? 0) >= Limit.attempts {
-                working.problem = "Some media couldn't be saved"
             } else {
-                working.problem = nil        // e.g. offline: retried on the next launch
+                // A network failure is not the post's fault: it must not consume the
+                // three attempts (three offline launches used to abandon it for good).
+                working.problem = nil
             }
         } else {
             working.failedAttempts = nil
@@ -224,6 +224,17 @@ final class SavedStore: ObservableObject {
     private func fetch(_ url: URL, as name: String, maxBytes: Int64? = nil) async throws -> String {
         let destination = directory.appendingPathComponent(name)
         if FileManager.default.fileExists(atPath: destination.path) { return name }
+        // Ask the size before pulling a 200 MB clip over a Bluetooth-relayed link.
+        if let maxBytes {
+            var head = URLRequest(url: url)
+            head.httpMethod = "HEAD"
+            if let (_, resp) = try? await URLSession.shared.data(for: head),
+               let http = resp as? HTTPURLResponse,
+               let raw = http.value(forHTTPHeaderField: "Content-Length"),
+               let length = Int64(raw), length > maxBytes {
+                throw SaveError.tooBig
+            }
+        }
         let (temporary, response) = try await URLSession.shared.download(from: url)
         defer { try? FileManager.default.removeItem(at: temporary) }
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
@@ -262,8 +273,12 @@ final class SavedStore: ObservableObject {
             return try? decoder.decode(SavedPost.self, from: bytes)
         }
         let lost = raw.count - items.count
+        // Keep the unreadable file: the next persist() writes only the survivors.
+        let backup = indexURL.deletingLastPathComponent()
+            .appendingPathComponent("saved.corrupt-\(Int(Date().timeIntervalSince1970)).json")
+        try? FileManager.default.copyItem(at: indexURL, to: backup)
         Task { await RequestLog.shared.record(method: "-", url: nil, status: nil, durationMs: 0,
-                                             note: "saved.json: \(lost) unreadable entr\(lost == 1 ? "y" : "ies") skipped") }
+                                             note: "saved.json: \(lost) unreadable entr\(lost == 1 ? "y" : "ies") skipped (backup kept)") }
     }
 
     private func persist() {

@@ -130,6 +130,7 @@ struct ProfileContent: View {
                     if !u.bio.isEmpty {
                         Text(u.bio)
                             .font(.system(size: 15))
+                            .lineLimit(3)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.top, 4)

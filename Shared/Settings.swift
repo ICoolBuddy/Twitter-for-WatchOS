@@ -47,3 +47,35 @@ enum PerchTextSize: String, CaseIterable, Identifiable {
         }
     }
 }
+
+/// Text that failed to send (a reply or a new post), persisted so it survives a
+/// relaunch or the row being recycled by the LazyVStack. The system text input
+/// cannot be pre-filled, so this is the only draft that exists: the one you already
+/// dictated once.
+enum DraftStore {
+    private static func key(replyTo: String?) -> String {
+        replyTo.map { "perch.replyDraft.\($0)" } ?? "perch.postDraft"
+    }
+
+    static func failed(replyTo: String?) -> String? {
+        UserDefaults.standard.string(forKey: key(replyTo: replyTo))
+    }
+
+    static func saveFailed(_ text: String, replyTo: String?) {
+        UserDefaults.standard.set(text, forKey: key(replyTo: replyTo))
+    }
+
+    static func clear(replyTo: String?) {
+        UserDefaults.standard.removeObject(forKey: key(replyTo: replyTo))
+    }
+}
+
+/// X's standard post limit. The watch cannot edit a failed text in place, so it is
+/// checked before sending; the message says how far over it is.
+enum TweetText {
+    static let limit = 280
+
+    static func tooLong(_ text: String) -> String? {
+        text.count > limit ? "Too long · \(text.count)/\(limit). Tap to retry" : nil
+    }
+}

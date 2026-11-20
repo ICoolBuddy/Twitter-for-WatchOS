@@ -42,7 +42,9 @@ struct SearchView: View {
             }
             .padding(.horizontal, Metrics.horizontalPadding)
         }
-        .pagedListChrome(list, profile: $profileTarget, media: $mediaTarget)
+        .pagedListChrome(list,
+                         onRefresh: query.isEmpty ? nil : { await list.refresh() },
+                         profile: $profileTarget, media: $mediaTarget)
         .navigationTitle("Search")
         // crown-lab measurement hook (DEBUG only): `probe.search`.
         .crownProbe("search")

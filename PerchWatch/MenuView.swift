@@ -99,6 +99,7 @@ struct MenuView: View {
             })
         }
         .task {
+            if failedPost == nil { failedPost = DraftStore.failed(replyTo: nil) }
             await app.refreshBadge()
         }
     }
@@ -129,12 +130,20 @@ struct MenuView: View {
     private func publish(_ text: String) {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty, !posting else { return }
+        if let why = TweetText.tooLong(body) {
+            postStatus = why
+            failedPost = body
+            DraftStore.saveFailed(body, replyTo: nil)
+            return
+        }
+        DraftStore.saveFailed(body, replyTo: nil)   // until it lands
         posting = true
         Task {
             do {
                 _ = try await app.client.createTweet(text: body, replyTo: nil)
                 Haptics.success()
                 failedPost = nil
+                DraftStore.clear(replyTo: nil)
                 posting = false
                 postStatus = "Posted"
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -143,6 +152,7 @@ struct MenuView: View {
                 Haptics.failure()
                 posting = false
                 failedPost = body
+                DraftStore.saveFailed(body, replyTo: nil)
             }
         }
     }

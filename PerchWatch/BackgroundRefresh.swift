@@ -63,7 +63,13 @@ enum BackgroundRefresh {
         var newest: XTweet?
         if let page = try? await app.client.homeTimeline(kind, cursor: nil) {
             guard !Task.isCancelled else { return }
-            TimelineDiskCache.save(page.items.filter { !$0.isFiller }, scope: scope)
+            // Merge above the cache: replacing it with one page used to drop every
+            // page the reader had below.
+            let cached = TimelineDiskCache.load(scope)
+            var seen = Set<String>()
+            let merged = (page.items.filter { !$0.isFiller } + cached)
+                .filter { seen.insert($0.id).inserted }
+            TimelineDiskCache.save(Array(merged.prefix(80)), scope: scope)
             let tweets = page.items.flatMap(\.tweets)
             newest = tweets.first { !$0.isTombstone }
             // Warm what the feed shows first, off this budget: the wake-up must not

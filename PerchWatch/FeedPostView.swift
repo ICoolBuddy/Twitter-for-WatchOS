@@ -172,6 +172,8 @@ struct FeedPostView: View {
     var clampLongText = true
     var onOpenProfile: ((XUser) -> Void)? = nil
     var onMedia: ((MediaTarget) -> Void)? = nil
+    /// Called when a reply sent from this row lands (the post page reloads its thread).
+    var onReplySent: (() -> Void)? = nil
 
     @State private var expanded = false
     @AppStorage(PerchSettings.textSize) private var textSizeRaw = PerchTextSize.medium.rawValue
@@ -237,7 +239,7 @@ struct FeedPostView: View {
                     .foregroundStyle(.secondary)
                 }
                 if showActions {
-                    PostActionRow(tweet: t)
+                    PostActionRow(tweet: t, onReplySent: onReplySent)
                 }
             }
         }
@@ -449,17 +451,20 @@ struct TimelineItemRows: View {
     var compact = false
     var onOpenProfile: ((XUser) -> Void)? = nil
     var onMedia: ((MediaTarget) -> Void)? = nil
+    var onReplySent: (() -> Void)? = nil
 
     var body: some View {
         switch item {
         case .tweet(let t):
             FeedPostView(tweet: t, compact: compact,
-                         onOpenProfile: onOpenProfile, onMedia: onMedia)
+                         onOpenProfile: onOpenProfile, onMedia: onMedia,
+                         onReplySent: onReplySent)
         case .conversation(let ts):
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(ts.enumerated()), id: \.element.id) { idx, t in
                     FeedPostView(tweet: t, compact: compact,
-                                 onOpenProfile: onOpenProfile, onMedia: onMedia)
+                                 onOpenProfile: onOpenProfile, onMedia: onMedia,
+                                 onReplySent: onReplySent)
                     if idx < ts.count - 1 { PostSeparator() }
                 }
             }

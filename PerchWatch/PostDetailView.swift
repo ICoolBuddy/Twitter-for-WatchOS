@@ -68,7 +68,10 @@ struct PostDetailView: View {
                 ForEach(list.items) { item in
                     TimelineItemRows(item: item,
                                      onOpenProfile: { profileTarget = ProfileTarget(user: $0) },
-                                     onMedia: { mediaTarget = $0 })
+                                     onMedia: { mediaTarget = $0 },
+                                     onReplySent: {
+                                         Task { await list.refresh(merge: true) }
+                                     })
                         .paginates(list, with: item)
                     PostSeparator()
                 }

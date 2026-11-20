@@ -327,8 +327,14 @@ final class AppModel: ObservableObject {
     func refreshBadge(force: Bool = false) async {
         guard canBrowse else { return }
         guard force || Date().timeIntervalSince(lastBadgeFetch) > Self.pollInterval else { return }
-        lastBadgeFetch = Date()
-        if let b = try? await client.badgeCounts(), b != badge { badge = b }
+        do {
+            let b = try await client.badgeCounts()
+            lastBadgeFetch = Date()
+            if b != badge { badge = b }
+        } catch {
+            // Retry in a minute, not in fifteen (a single failure used to freeze it).
+            lastBadgeFetch = Date().addingTimeInterval(-Self.pollInterval + 60)
+        }
     }
 
     func clearNotificationBadge(topCursor: String?) async {
