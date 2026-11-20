@@ -638,7 +638,7 @@ final class CrownRoutingTests: XCTestCase {
                 // crown never rubber-bands at the top, so no threshold can fire.
                 if let r = self.read("feed.forYou") {
                     crownNote = String(format: " (crown os=%.1f mx=%.1f mn=%.1f fresh=%.1f dip=%.0f) [%@]",
-                                       r.os, r.mx, r.mn, r.fr, r.dip, String(r.raw.prefix(120)))
+                                       r.os, r.mx, r.mn, r.fr, r.dip, String(r.raw.prefix(220)))
                 }
             }
             let deadline = Date().addingTimeInterval(4)
