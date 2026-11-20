@@ -5,6 +5,11 @@ name: Pop chrome check
 # question with measurements — does the menu button keep its frame and exist after
 # several pops — and attaches a screenshot of each round.
 on:
+  # Manual dispatch needs the file on the default branch; this push trigger is the
+  # way to run it from a working branch. Touch `.github/popcheck-trigger` to run it.
+  push:
+    branches: [sprint-a]
+    paths: ['.github/popcheck-trigger']
   workflow_dispatch:
 
 permissions:
