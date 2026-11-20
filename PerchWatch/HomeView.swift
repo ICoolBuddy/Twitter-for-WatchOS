@@ -24,8 +24,9 @@ struct HomeView: View {
     /// Where the reader was (impressions + debug evidence), owned by `RootPager`.
     let place: FeedPlace
     /// `PagedList` keeps the closures it was configured with, so they cannot read the
-    /// `isActive` struct property later: this box carries the live value.
-    @State private var visibility = PageVisibility()
+    /// `isActive` struct property later: this box carries the live value. Owned by
+    /// `RootPager`, so both feeds can be configured before either page is built.
+    let visibility: PageVisibility
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
 
@@ -35,7 +36,7 @@ struct HomeView: View {
     private static let topAnchor = "perch-feed-top"
 
     private var taskKey: String {
-        "\(kind.rawValue)-\(app.isLoggedIn)-\(app.activeAccountId ?? "none")"
+        HomeFeedSetup.key(kind, loggedIn: app.isLoggedIn, accountId: app.activeAccountId)
     }
 
     var body: some View {
@@ -92,10 +93,13 @@ struct HomeView: View {
             // this list's offset as `probe.feed.forYou` / `probe.feed.following`.
             .crownProbe(kind == .forYou ? "feed.forYou" : "feed.following")
             .task(id: taskKey) {
-                configure()
+                let setup = HomeFeedSetup(kind: kind, list: list, place: place,
+                                          visibility: visibility, key: taskKey)
+                setup.configure(client: app.client, scope: app.homeCacheScope(kind))
                 // The disk cache is read off the main thread, before the first fetch.
-                list.seed(await TimelineDiskCache.loadAsync(app.homeCacheScope(kind)))
-                await start()
+                setup.seed(await TimelineDiskCache.loadAsync(app.homeCacheScope(kind)))
+                await setup.start(client: app.client, posts: app.posts,
+                                  autoRefreshOnOpen: autoRefreshOnOpen)
             }
             .postPresentation(profile: $profileTarget, media: $mediaTarget)
             .onChange(of: isActive, initial: true) { _, active in
@@ -207,73 +211,6 @@ struct HomeView: View {
     }
     #endif
 
-    private func configure() {
-        let key = taskKey
-        // Kept in `place` (owned by RootPager, like the list): reconfiguring a feed
-        // that is already set up would reset the shared list.
-        guard place.configuredFor != key else { return }
-        // Not the first configure of this feed: the account (or login) changed.
-        place.accountChanged = place.configuredFor != nil
-        if place.accountChanged {
-            // Another account's reading place means nothing here.
-            place.liveTopID = nil
-            place.seen.reset()
-        }
-        place.configuredFor = key
-        list.reset()
-
-        let client = app.client
-        let k = kind
-        let scope = app.homeCacheScope(k)
-        let seen = place.seen
-        list.fetch = { cursor in
-            let ids = await MainActor.run { seen.drain() }
-            let p = try await client.homeTimeline(k, cursor: cursor, context: .launch, seenTweetIds: ids)
-            return (p.items, p.bottomCursor, p.topCursor)
-        }
-        list.topFetch = { top in
-            let ids = await MainActor.run { seen.drain() }
-            let p = try await client.homeTimeline(k, cursor: top, context: .refresh, seenTweetIds: ids)
-            return (p.items, p.bottomCursor, p.topCursor)
-        }
-        list.alreadySeen = { seen.wasSeen($0) }
-        list.onFirstPage = { items, _ in
-            TimelineDiskCache.save(items, scope: scope)
-        }
-        let visibility = self.visibility
-        list.onPage = { items in
-            // Both feeds stay alive in the pager: only the one on screen warms images.
-            guard visibility.isActive else { return }
-            let warm = Array(items.prefix(LinkBudget.prefetchPostCount))
-            ImageLoader.shared.prefetchFeed(warm.displayTweets)
-        }
-        list.skip = { $0.isFiller }
-    }
-
-    /// Show the cached feed immediately; only go to the network when "Refresh when
-    /// opening the app" is on, there is no cache, or the account changed. Runs until
-    /// the list itself says this configuration has loaded (`hasLoadedFirstPage`), so a
-    /// load cancelled by swiping away or opening a post is retried on the next
-    /// appearance, and an account switched back and forth can never skip its fetch.
-    private func start() async {
-        guard !list.hasLoadedFirstPage else { return }
-        if !list.isEmpty { FeedActivity.shared.markContentReady() }   // cached posts
-        if list.isEmpty || autoRefreshOnOpen || place.accountChanged {
-            // Merge, so posts already on screen are never reordered or dropped: only
-            // new ones appear above them. After an account switch, replace.
-            await refresh(merge: !place.accountChanged)
-        }
-        if !Task.isCancelled {
-            if list.hasLoadedFirstPage { place.accountChanged = false }
-            FeedActivity.shared.markContentReady()
-        }
-    }
-
-    private func refresh(merge: Bool) async {
-        await list.refresh(merge: merge)
-        // Offline taps (like/repost/bookmark) go out as soon as we are online.
-        await app.posts.flush(client: app.client)
-    }
 }
 
 /// One home feed's reading place and impressions, shared with `RootPager`. The

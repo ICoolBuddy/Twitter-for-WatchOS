@@ -95,20 +95,16 @@ struct WatchRootView: View {
                     RootPager(rootActive: nav.path.isEmpty)
                         .navigationDestination(for: Route.self) { route in
                             RouteView(route: route, pop: { nav.back() })
-                                // The system chevron is a tap-up control: while a list
-                                // decelerates watchOS spends the touch stopping it, so it
-                                // did nothing until the screen was static. Our own control
-                                // acts on touch-down.
-                                .navigationBarBackButtonHidden(true)
-                                .toolbar {
-                                    ToolbarItem(placement: .topBarLeading) {
-                                        TouchDownControl(action: { nav.back() }) {
-                                            Image(systemName: "chevron.left")
-                                        }
-                                        .accessibilityLabel("Back")
-                                        .accessibilityIdentifier("chrome.back")
-                                        .accessibilityAddTraits(.isButton)
-                                    }
+                                // The bar is hidden and the header is ours: the system
+                                // back is a tap-up control that watchOS ignores while a
+                                // list decelerates, and replacing it per-destination made
+                                // the departing screen flash the system chevron during
+                                // the pop (the destination's toolbar is torn down in the
+                                // same commit that starts the transition). With no system
+                                // bar there is nothing to flash.
+                                .toolbar(.hidden, for: .navigationBar)
+                                .safeAreaInset(edge: .top, spacing: 0) {
+                                    PushedHeader(title: route.title, back: { nav.back() })
                                 }
                         }
                 }
@@ -198,6 +194,33 @@ struct TouchDownControl<Label: View>: View {
                         action()
                     }
             )
+    }
+}
+
+/// The header of a pushed screen: our back control and the title, since the system
+/// navigation bar is hidden (so its chevron can never replace ours during a pop).
+struct PushedHeader: View {
+    let title: String
+    let back: () -> Void
+
+    var body: some View {
+        ZStack {
+            Text(title)
+                .font(.system(size: 15, weight: .semibold))
+                .lineLimit(1)
+            HStack {
+                TouchDownControl(action: back) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 17, weight: .semibold))
+                }
+                .accessibilityLabel("Back")
+                .accessibilityIdentifier("chrome.back")
+                .accessibilityAddTraits(.isButton)
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 34)
     }
 }
 
@@ -297,7 +320,9 @@ struct SessionExpiredBanner: View {
 struct RootPager: View {
     /// False while a detail screen is pushed.
     var rootActive = true
+    @EnvironmentObject private var app: AppModel
     @AppStorage(PerchSettings.homeKind) private var kindRaw = HomeKind.forYou.rawValue
+    @AppStorage(PerchSettings.autoRefreshOnOpen) private var autoRefreshOnOpen = true
     @State private var page = 1
     /// The two feeds' lists live here (not in the pages) so the edge glow can read
     /// them directly.
@@ -309,6 +334,10 @@ struct RootPager: View {
     /// Each feed's reading place, kept here so it outlives the pages.
     @State private var forYouPlace = FeedPlace()
     @State private var followingPlace = FeedPlace()
+    /// Owned here (not by the pages): both feeds are configured at launch, before the
+    /// pager has built a page for the off-screen one.
+    @State private var forYouVisibility = PageVisibility()
+    @State private var followingVisibility = PageVisibility()
 
     var body: some View {
         TabView(selection: $page) {
@@ -316,11 +345,11 @@ struct RootPager: View {
                 .tag(0)
             HomeView(kind: .forYou, isActive: rootActive && page == 1,
                      onSelect: { goFeed($0) }, refreshOther: { await following.refreshNewer() },
-                     list: forYou, place: forYouPlace)
+                     list: forYou, place: forYouPlace, visibility: forYouVisibility)
                 .tag(1)
             HomeView(kind: .following, isActive: rootActive && page == 2,
                      onSelect: { goFeed($0) }, refreshOther: { await forYou.refreshNewer() },
-                     list: following, place: followingPlace)
+                     list: following, place: followingPlace, visibility: followingVisibility)
                 .tag(2)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
@@ -333,8 +362,14 @@ struct RootPager: View {
                 TouchDownControl(action: {
                     if page == 0 { go(lastFeed) } else { go(0) }
                 }) {
-                    Image(systemName: page == 0 ? "chevron.left" : "line.3.horizontal")
+                    // Both symbols stay laid out: a ternary swapped their different
+                    // widths inside the page animation and the item snapped at the end.
+                    ZStack {
+                        Image(systemName: "line.3.horizontal").opacity(page == 0 ? 0 : 1)
+                        Image(systemName: "chevron.left").opacity(page == 0 ? 1 : 0)
+                    }
                 }
+                .animation(nil, value: page)
                 .accessibilityLabel(page == 0 ? "Back to feed" : "Menu")
                 .accessibilityAddTraits(.isButton)
                 // The crown routing tests press this one.
@@ -348,6 +383,15 @@ struct RootPager: View {
             didStart = true
             page = kindRaw == HomeKind.following.rawValue ? 2 : 1
             lastFeed = page
+        }
+        // The pager builds a page only when it is first selected, so without this the
+        // off-screen feed had no real fetch and was only refreshed on arrival. Start
+        // both, the one on screen first (the system pager is left untouched).
+        .task(id: "\(app.isLoggedIn)-\(app.activeAccountId ?? "none")") {
+            guard app.canBrowse else { return }
+            let first: HomeKind = kindRaw == HomeKind.following.rawValue ? .following : .forYou
+            await startFeed(first)
+            await startFeed(first == .forYou ? .following : .forYou)
         }
         // The page is the source of truth for the swipe; the stored kind follows
         // it so the menu checkmark, background refresh and account switch agree.
@@ -363,6 +407,20 @@ struct RootPager: View {
             let target = value == HomeKind.following.rawValue ? 2 : 1
             if page != target { go(target) }
         }
+    }
+
+    /// Configure/seed/start one feed from here (the same steps HomeView's task runs).
+    private func startFeed(_ kind: HomeKind) async {
+        let list = kind == .forYou ? forYou : following
+        let place = kind == .forYou ? forYouPlace : followingPlace
+        let visibility = kind == .forYou ? forYouVisibility : followingVisibility
+        let key = HomeFeedSetup.key(kind, loggedIn: app.isLoggedIn, accountId: app.activeAccountId)
+        let setup = HomeFeedSetup(kind: kind, list: list, place: place,
+                                  visibility: visibility, key: key)
+        setup.configure(client: app.client, scope: app.homeCacheScope(kind))
+        setup.seed(await TimelineDiskCache.loadAsync(app.homeCacheScope(kind)))
+        await setup.start(client: app.client, posts: app.posts,
+                          autoRefreshOnOpen: autoRefreshOnOpen)
     }
 
     private func goFeed(_ kind: HomeKind) {

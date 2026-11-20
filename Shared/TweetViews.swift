@@ -47,6 +47,29 @@ enum Route: Hashable {
     case profileMe
 }
 
+extension Route {
+    /// The title the system bar used to draw (the pushed screens hide it now, so the
+    /// back control and the title no longer get replaced by a system chevron mid-pop).
+    var title: String {
+        switch self {
+        case .post: return "Post"
+        case .user(let name): return "@" + name
+        case .userId: return "Profile"
+        case .userFeed: return "Posts"
+        case .notifications: return "Notifications"
+        case .search: return "Search"
+        case .bookmarks: return "Bookmarks"
+        case .likes: return "Likes"
+        case .saved: return "Saved"
+        case .messages: return "Messages"
+        case .conversation: return "Message"
+        case .settings: return "Settings"
+        case .debugLog: return "Request log"
+        case .profileMe: return "Profile"
+        }
+    }
+}
+
 /// Sizes and fonts. The Watch feed follows the Parrot look: big 19 pt text,
 /// 44 pt avatars, no grey platters; the iPhone keeps a denser list style.
 enum Metrics {

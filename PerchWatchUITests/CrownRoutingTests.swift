@@ -1031,6 +1031,12 @@ final class CrownRoutingTests: XCTestCase {
     /// (the post page's Save button is on the right), then the corner where watchOS
     /// draws it. The caller always verifies that the screen actually popped.
     private func tapSystemBack() -> String {
+        // The pushed screens draw their own back control now (the system bar is hidden).
+        let custom = element("chrome.back")
+        if custom.exists, custom.isHittable {
+            custom.tap()
+            return "chrome.back"
+        }
         let named = app.navigationBars.buttons["Back"]
         if named.exists && named.isHittable {
             named.tap()

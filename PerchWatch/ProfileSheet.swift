@@ -38,16 +38,10 @@ struct ProfileSheet: View {
                     .swipeBack()
                     .navigationDestination(for: Route.self) { route in
                         RouteView(route: route, pop: { if !path.isEmpty { path.removeLast() } })
-                            .navigationBarBackButtonHidden(true)
-                            .toolbar {
-                                ToolbarItem(placement: .topBarLeading) {
-                                    TouchDownControl(action: {
-                                        if !path.isEmpty { path.removeLast() }
-                                    }) {
-                                        Image(systemName: "chevron.left")
-                                    }
-                                    .accessibilityLabel("Back")
-                                    .accessibilityAddTraits(.isButton)
+                            .toolbar(.hidden, for: .navigationBar)
+                            .safeAreaInset(edge: .top, spacing: 0) {
+                                PushedHeader(title: route.title) {
+                                    if !path.isEmpty { path.removeLast() }
                                 }
                             }
                     }
