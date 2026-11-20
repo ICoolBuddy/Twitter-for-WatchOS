@@ -49,9 +49,18 @@ enum OfflineCache {
     }
 
     /// `load` off the main thread: opening a screen must not stall on its cache.
+    /// The URL (namespace included) is resolved on the caller: the namespace is written
+    /// on the main actor, and the old code read it from the disk queue (a data race that
+    /// could also load another account's cache).
     static func loadAsync<T: Decodable>(_ type: T.Type, name: String) async -> T? {
-        await withCheckedContinuation { continuation in
-            DiskWriter.queue.async { continuation.resume(returning: load(type, name: name)) }
+        guard let url = url(name) else { return nil }
+        return await withCheckedContinuation { continuation in
+            DiskWriter.queue.async {
+                guard let data = try? Data(contentsOf: url) else {
+                    continuation.resume(returning: nil); return
+                }
+                continuation.resume(returning: try? JSONDecoder().decode(T.self, from: data))
+            }
         }
     }
 

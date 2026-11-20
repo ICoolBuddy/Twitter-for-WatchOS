@@ -53,12 +53,25 @@ final class PhoneSync: NSObject, ObservableObject, SyncChannel {
 
     private var lastFingerprint: Fingerprint?
     private var pendingSend: Task<Void, Never>?
+    /// `start()` runs from `onAppear`: it must make exactly one observer, or every extra
+    /// call duplicates every send.
+    private var started = false
+    /// Monotonic send counter (persisted): the Watch applies only newer payloads, so a
+    /// stale re-delivered context (e.g. the pre-logout state) can never be applied again.
+    private static let seqKey = "perch.sync.seq"
+    private var seq: UInt64 {
+        get { UInt64(UserDefaults.standard.string(forKey: Self.seqKey) ?? "") ?? 0 }
+        set { UserDefaults.standard.set(String(newValue), forKey: Self.seqKey) }
+    }
+    private func nextSeq() -> UInt64 { let n = seq + 1; seq = n; return n }
     /// The Watch asked for the full endpoint config (it has none or a different version).
     private var pendingWantConfig = false
     /// Config version last delivered, so the ~35 KB config is sent only when it changed.
     private var lastSentConfigUpdatedAt: String?
 
     func start() {
+        guard !started else { return }
+        started = true
         guard let session else { status = .unavailable("WatchConnectivity unsupported"); return }
         session.delegate = self
         session.activate()
@@ -77,6 +90,20 @@ final class PhoneSync: NSObject, ObservableObject, SyncChannel {
             let fp = await self.fingerprint()
             guard fp != self.lastFingerprint else { return }
             self.lastFingerprint = fp
+            self.scheduleSend()
+        }
+    }
+
+    /// A failed context write must not be remembered as delivered: clear the fingerprint
+    /// (the next store event retries) and try once more shortly, while the Watch is there.
+    private func retrySoon() {
+        lastFingerprint = nil
+        guard AppModel.shared.isLoggedIn else { return }
+        pendingSend?.cancel()
+        pendingSend = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 15_000_000_000)
+            guard !Task.isCancelled, let self else { return }
+            guard let s = self.session, s.isWatchAppInstalled else { return }
             self.scheduleSend()
         }
     }
@@ -100,7 +127,7 @@ final class PhoneSync: NSObject, ObservableObject, SyncChannel {
             guard !Task.isCancelled, let self else { return }
             let p = await self.payload()
             guard !Task.isCancelled else { return }
-            self.send(p)
+            if !self.send(p) { self.retrySoon() }
         }
     }
 
@@ -110,13 +137,14 @@ final class PhoneSync: NSObject, ObservableObject, SyncChannel {
     func sendLogout() {
         pendingSend?.cancel()      // a queued update must never land after the logout
         pendingSend = nil
-        send(SyncPayload(command: .logout))
+        if !send(SyncPayload(command: .logout, seq: nextSeq())) { retrySoon() }
     }
 
     private func payload() async -> SyncPayload {
         let store = AppModel.shared.store
         let accounts = await store.accounts
-        if accounts.isEmpty { return SyncPayload(command: .logout) }
+        let seq = nextSeq()
+        if accounts.isEmpty { return SyncPayload(command: .logout, seq: seq) }
         let cfg = await store.config
         let includeConfig = pendingWantConfig || cfg.updatedAt != lastSentConfigUpdatedAt
         return SyncPayload(command: .update, credentials: await store.credentials, accounts: accounts,
@@ -124,18 +152,20 @@ final class PhoneSync: NSObject, ObservableObject, SyncChannel {
                            remoteOverrideURL: await store.remoteOverrideURL?.absoluteString,
                            remoteOverrideIsAuthoritative: true,
                            activeAccountId: await store.activeAccountId,
-                           configUpdatedAt: cfg.updatedAt)
+                           configUpdatedAt: cfg.updatedAt, seq: seq)
     }
 
-    private func send(_ p: SyncPayload) {
+    @discardableResult
+    private func send(_ p: SyncPayload) -> Bool {
         guard let session, session.activationState == .activated else {
-            status = .unavailable("Watch session not active"); return
+            status = .unavailable("Watch session not active"); return false
         }
-        guard session.isPaired else { status = .unavailable("No paired Apple Watch"); return }
-        guard session.isWatchAppInstalled else { status = .unavailable("Perch isn't installed on the Watch"); return }
+        guard session.isPaired else { status = .unavailable("No paired Apple Watch"); return false }
+        guard session.isWatchAppInstalled else { status = .unavailable("Perch isn't installed on the Watch"); return false }
         let dict = p.dictionary()
         // Never send an empty context: it would replace the Watch's copy of the state.
-        guard dict[SyncPayload.key] != nil else { status = .failed("Couldn't encode the session"); return }
+        guard dict[SyncPayload.key] != nil else { status = .failed("Couldn't encode the session"); return false }
+        var ok = true
         do {
             try session.updateApplicationContext(dict)
             lastSent = Date()
@@ -147,12 +177,14 @@ final class PhoneSync: NSObject, ObservableObject, SyncChannel {
             }
         } catch {
             status = .failed("Context error: \(error.localizedDescription)")
+            ok = false
         }
         if session.isReachable {        // the Watch app is running: apply it now
             session.sendMessage(dict, replyHandler: nil) { [weak self] error in
                 Task { @MainActor in self?.messageError = error.localizedDescription }
             }
         }
+        return ok
     }
 
     fileprivate func handleIncoming(_ message: [String: Any]) {
@@ -160,6 +192,8 @@ final class PhoneSync: NSObject, ObservableObject, SyncChannel {
             if message["wantConfig"] as? Bool == true { pendingWantConfig = true }
             syncNow()
         } else if let p = SyncPayload.from(dictionary: message), p.command == .logout {
+            // A queued logout from an earlier session must not wipe a newer login.
+            if let lastSent, p.sentAt < lastSent { return }
             // Logging out on the Watch logs out the iPhone too (the store wipe then sends
             // one .logout back, which the Watch ignores: it is already logged out).
             Task { await AppModel.shared.logout(propagate: false) }

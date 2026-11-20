@@ -94,9 +94,14 @@ final class ChunkedDataDelegate: NSObject, URLSessionDataDelegate, @unchecked Se
     private struct Pending {
         var data = Data()
         var response: URLResponse?
+        var tooLarge = false
         let monitorID: UUID
         let continuation: CheckedContinuation<(Data, URLResponse), Error>
     }
+
+    /// Bodies are held whole in memory; on a 1 GB Watch a runaway/captive page must not
+    /// be able to grow without bound.
+    private static let maxBodyBytes = 8 * 1024 * 1024
 
     /// Holds the task so cancellation can reach it from another thread.
     private final class TaskBox: @unchecked Sendable {
@@ -156,10 +161,22 @@ final class ChunkedDataDelegate: NSObject, URLSessionDataDelegate, @unchecked Se
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         lock.lock()
-        pending[dataTask.taskIdentifier]?.data.append(data)
+        var overflow = false
+        if var entry = pending[dataTask.taskIdentifier] {
+            if entry.data.count + data.count > Self.maxBodyBytes {
+                entry.data.removeAll(keepingCapacity: false)
+                entry.tooLarge = true
+                pending[dataTask.taskIdentifier] = entry
+                overflow = true
+            } else {
+                entry.data.append(data)
+                pending[dataTask.taskIdentifier] = entry
+            }
+        }
         let monitorID = pending[dataTask.taskIdentifier]?.monitorID
         lock.unlock()
         if let monitorID { TransferMonitor.shared.add(data.count, to: monitorID) }
+        if overflow { dataTask.cancel() }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
@@ -167,6 +184,10 @@ final class ChunkedDataDelegate: NSObject, URLSessionDataDelegate, @unchecked Se
         let done = pending.removeValue(forKey: task.taskIdentifier)
         lock.unlock()
         guard let done else { return }
+        if done.tooLarge {
+            done.continuation.resume(throwing: XError.network("Response too large (max \(Self.maxBodyBytes / (1024 * 1024)) MB)"))
+            return
+        }
         if let error {
             done.continuation.resume(throwing: error)
         } else if let response = done.response ?? task.response {
@@ -227,6 +248,15 @@ public enum XError: Error, Sendable, Equatable, LocalizedError {
         case .rateLimited: return .wait
         default: return .retry
         }
+    }
+
+    /// X's "you have already liked/retweeted/bookmarked this" rejection: the wanted
+    /// state is already on X, so a retried action must not surface as a failure.
+    public var isAlreadyDone: Bool {
+        if case .graphQL(let messages) = self {
+            return messages.contains { $0.lowercased().contains("already") }
+        }
+        return false
     }
 
     public static func from(_ error: Error) -> XError {

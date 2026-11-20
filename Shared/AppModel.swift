@@ -95,6 +95,9 @@ final class AppModel: ObservableObject {
             if sessionExpired != expired { sessionExpired = expired }
             // Ask the iPhone once for fresh credentials; nothing is wiped here.
             if expired { sync?.syncNow() }
+        case .credentials:
+            // Nothing on screen shows ct0; the sync bridge hears the event and sends it.
+            break
         case .accounts, .activeAccount, .config, .remoteOverride:
             await reloadState()
         }
@@ -173,7 +176,10 @@ final class AppModel: ObservableObject {
     /// it again; a 403 here usually means stale signing material, not a bad session.
     @discardableResult
     func login(_ creds: XCredentials) async -> LoginOutcome {
-        let id = await store.upsertAccount(creds, user: nil)
+        // Re-entering an account that is already stored must not delete the working
+        // one when the new cookies are rejected (the old ones are restored).
+        let previous = await store.accounts.first { $0.id == XAccount.id(for: creds) }
+        let id = await store.upsertAccount(creds, user: previous?.user)
         rebuildClient()
         await reloadState()                  // starts the profile fetch (unless cached)
         await viewerTask?.value
@@ -182,7 +188,11 @@ final class AppModel: ObservableObject {
         if viewer != nil, activeAccountId == id { return .verified }
         let error = viewerError ?? .network("No response")
         if error == .unauthorized || error == .notLoggedIn {
-            await store.removeAccount(id)
+            if let previous {
+                _ = await store.upsertAccount(previous.credentials, user: previous.user)
+            } else {
+                await store.removeAccount(id)
+            }
             await reloadState()
             return .rejected
         }

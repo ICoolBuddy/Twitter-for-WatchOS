@@ -1,17 +1,18 @@
 import Foundation
 
-/// What changed in the store, so observers update only that (a `ct0` rotation,
-/// which nothing displays, emits nothing).
+/// What changed in the store, so observers update only that.
 ///
 /// - `upsertAccount` / `replaceAccounts` / `removeAccount` / `updateUser` /
 ///   `setCredentials` / `wipe` → `.accounts` (a logout is "the list became empty")
+/// - `updateCt0` → `.credentials` (no UI shows it, but the Watch must receive it:
+///   the iPhone→Watch sync is event-driven and the fingerprint includes ct0)
 /// - `setActiveAccount` → `.activeAccount`
 /// - `setConfig` / `mergeConfig` → `.config`
 /// - `setMaterial` → `.material`
 /// - `setRemoteOverrideURL` → `.remoteOverride`
 /// - `markSessionExpired` → `.sessionExpired`
 public enum XSessionEvent: Sendable, Equatable {
-    case accounts, activeAccount, config, material, remoteOverride, sessionExpired
+    case accounts, credentials, activeAccount, config, material, remoteOverride, sessionExpired
 }
 
 /// Holds everything a client needs: accounts/credentials (Keychain), endpoint config
@@ -123,9 +124,12 @@ public actor XSessionStore {
 
     /// Removes one account. If it was active, the next account becomes active (or none).
     public func removeAccount(_ id: String) {
+        let wasActive = activeAccountId == id
         accounts.removeAll { $0.id == id }
-        if activeAccountId == id || activeAccountId == nil { activeAccountId = accounts.first?.id }
+        if wasActive || activeAccountId == nil { activeAccountId = accounts.first?.id }
         credentials = activeAccount?.credentials
+        // A deleted account cannot leave its "session expired" state behind for the next one.
+        if wasActive { sessionExpired = false }
         persistAccounts()
         notify(.accounts)
     }
@@ -165,6 +169,8 @@ public actor XSessionStore {
         accounts[idx].credentials.ct0 = ct0
         if accounts[idx].id == activeAccountId { credentials = accounts[idx].credentials }
         persistAccounts()
+        // X rotates ct0 routinely; without this event the Watch kept the old one and 403'd.
+        notify(.credentials)
     }
 
     /// A 401 for these credentials: one app-wide "session expired" state (see
@@ -254,10 +260,17 @@ public actor XSessionStore {
         // Migrate the legacy single `x-session` credentials into the account list.
         if let legacy = keychain.loadCredentials() {
             let account = XAccount(credentials: legacy)
-            keychain.delete(account: "x-session")
-            if let data = try? JSONEncoder.iso.encode([account]) {
-                try? keychain.save(data, account: accountsKey)
+            // Save the new shape first: if the write fails, the old item must survive
+            // (deleting first logged a user out with no copy anywhere).
+            do {
+                let data = try JSONEncoder.iso.encode([account])
+                try keychain.save(data, account: accountsKey)
+            } catch {
+                Task { await RequestLog.shared.record(method: "-", url: nil, status: nil, durationMs: 0,
+                                                     note: "migrating the legacy session failed: \(error)") }
+                return ([], nil)
             }
+            keychain.delete(account: "x-session")
             try? keychain.save(Data(account.id.utf8), account: activeKey)
             return ([account], account.id)
         }

@@ -62,30 +62,39 @@ enum BackgroundRefresh {
 
         var newest: XTweet?
         if let page = try? await app.client.homeTimeline(kind, cursor: nil) {
+            guard !Task.isCancelled else { return }
             TimelineDiskCache.save(page.items.filter { !$0.isFiller }, scope: scope)
             let tweets = page.items.flatMap(\.tweets)
             newest = tweets.first { !$0.isTombstone }
-            // Warm exactly what the feed shows first (same URLs and decode sizes
-            // as the rows, reposts included), within this run's time budget.
-            await ImageLoader.shared.prefetchFeed(Array(page.items.displayTweets.prefix(8))).value
+            // Warm what the feed shows first, off this budget: the wake-up must not
+            // wait for image decodes (the old `.value` await was unbounded).
+            let warm = Array(page.items.displayTweets.prefix(8))
+            Task { _ = await ImageLoader.shared.prefetchFeed(warm).value }
         } else {
             // Offline: keep the complication useful with the last cached post.
             newest = TimelineDiskCache.load(scope).flatMap(\.tweets).first { !$0.isTombstone }
         }
+        guard !Task.isCancelled else { return }
 
         await app.refreshBadge(force: true)
+        guard !Task.isCancelled else { return }
         ComplicationPublisher.publish(newest: newest)
     }
 
-    /// Run `operation`, but stop waiting for it after `timeBudget` seconds.
+    /// Run `operation`, but return after `timeBudget` seconds even if it has not
+    /// finished. The old version awaited every group child at scope exit, so the
+    /// "budget" never bounded anything (a slow network could hold the wake-up open
+    /// until watchOS killed it).
     private static func withTimeBudget(_ operation: @escaping @Sendable () async -> Void) async {
+        let work = Task { await operation() }
         await withTaskGroup(of: Void.self) { group in
-            group.addTask { await operation() }
+            group.addTask { _ = await work.value }
             group.addTask {
-                let deadline = UInt64(timeBudget * 1_000_000_000)
-                do { try await Task.sleep(nanoseconds: deadline) } catch {}
+                try? await Task.sleep(nanoseconds: UInt64(timeBudget * 1_000_000_000))
+                work.cancel()
             }
             _ = await group.next()
+            work.cancel()
             group.cancelAll()
         }
     }

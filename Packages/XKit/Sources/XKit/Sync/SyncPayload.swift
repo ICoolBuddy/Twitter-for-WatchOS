@@ -27,19 +27,24 @@ public struct SyncPayload: Codable, Sendable, Equatable {
     /// Version of the iPhone's endpoint config. The config itself is sent only when it
     /// changed or the Watch asked for it; a Watch whose version differs asks again.
     public var configUpdatedAt: String?
+    /// Monotonic per-iPhone send counter. The Watch applies a payload only when this is
+    /// newer than the last one it applied, so a re-delivered (stale) context — e.g. the
+    /// pre-logout state — can never be applied twice. Absent in older payloads.
+    public var seq: UInt64?
     public var sentAt: Date
 
     public init(command: Command, credentials: XCredentials? = nil, accounts: [XAccount]? = nil,
                 config: EndpointConfig? = nil, material: TransactionMaterial? = nil,
                 remoteOverrideURL: String? = nil, remoteOverrideIsAuthoritative: Bool? = nil,
                 activeAccountId: String? = nil, configUpdatedAt: String? = nil,
-                sentAt: Date = Date()) {
+                seq: UInt64? = nil, sentAt: Date = Date()) {
         self.command = command; self.credentials = credentials; self.accounts = accounts
         self.config = config; self.material = material
         self.remoteOverrideURL = remoteOverrideURL
         self.remoteOverrideIsAuthoritative = remoteOverrideIsAuthoritative
         self.activeAccountId = activeAccountId
         self.configUpdatedAt = configUpdatedAt
+        self.seq = seq
         self.sentAt = sentAt
     }
 

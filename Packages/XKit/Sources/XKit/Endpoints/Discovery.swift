@@ -13,13 +13,29 @@ struct Fetcher: Sendable {
         req.setValue(LiveXClient.userAgent, forHTTPHeaderField: "User-Agent")
         req.setValue("text/html,application/xhtml+xml,application/javascript,*/*", forHTTPHeaderField: "Accept")
         req.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
-        if let cookieHeader, url.host?.hasSuffix("x.com") == true { req.setValue(cookieHeader, forHTTPHeaderField: "Cookie") }
+        if let cookieHeader, Self.isXHost(url) { req.setValue(cookieHeader, forHTTPHeaderField: "Cookie") }
         let start = Date()
         let (data, resp) = try await transport.send(req)
         await RequestLog.shared.record(method: "GET", url: url, status: resp.statusCode,
                                        durationMs: Int(Date().timeIntervalSince(start) * 1000), note: "scrape")
         guard (200..<300).contains(resp.statusCode) else { throw XError.server(resp.statusCode) }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Cookies must only ever go to X itself: `hasSuffix("x.com")` also matches
+    /// `evilx.com`, and the signer fetches URLs taken from scraped page text.
+    static func isXHost(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased() else { return false }
+        return host == "x.com" || host.hasSuffix(".x.com")
+    }
+
+    /// A chunk that fails is skipped; cancellation is not a failure and must propagate
+    /// (a cancelled discovery otherwise kept downloading every chunk).
+    func textSkippingFailures(_ url: URL) async throws -> String? {
+        do { return try await text(url) }
+        catch is CancellationError { throw CancellationError() }
+        catch let e as URLError where e.code == .cancelled { throw CancellationError() }
+        catch { return nil }
     }
 }
 
@@ -99,10 +115,13 @@ public struct EndpointDiscovery: Sendable {
         var found: [String: OperationInfo] = [:]
         var legacyIndices: [Int] = []
 
+        let deadline = Date().addingTimeInterval(45)
         for (i, url) in scripts.enumerated() where i < maxChunks {
+            try Task.checkCancellation()
+            if Date() > deadline { break }
             if found.count == wanted.count, !legacyIndices.isEmpty { break }
             if found.count == wanted.count, !url.absoluteString.contains("ondemand.s.") { continue }
-            guard let js = try? await fetcher.text(url) else { continue }
+            guard let js = try await fetcher.textSkippingFailures(url) else { continue }
             for (name, info) in Self.operations(in: js) where wanted.contains(name) && found[name] == nil {
                 found[name] = info
             }
@@ -208,6 +227,10 @@ public struct TransactionMaterialFetcher: Sendable {
                       !HTMLExtract.animationFrames(in: html).isEmpty else { continue }
                 let (indices, source) = try await signerIndices(pageHTML: html)
                 return try ClientTransaction.material(html: html, indices: indices, source: source)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let e as URLError where e.code == .cancelled {
+                throw CancellationError()
             } catch {
                 lastError = error
             }
@@ -242,10 +265,13 @@ public struct TransactionMaterialFetcher: Sendable {
         var queue = scripts.compactMap(URL.init(string:))
         var seen = Set(queue)
         var scanned = 0
+        let deadline = Date().addingTimeInterval(30)
         while !queue.isEmpty, scanned < maxChunkScans {
+            try Task.checkCancellation()
+            if Date() > deadline { break }
             let url = queue.removeFirst()
             scanned += 1
-            guard let js = try? await fetcher.text(url) else { continue }
+            guard let js = try await fetcher.textSkippingFailures(url) else { continue }
             let ind = HTMLExtract.signerIndices(in: js)
             if ind.count >= 2, js.contains("1682924400") { return ind }
 

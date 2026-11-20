@@ -125,20 +125,36 @@ public actor LiveXClient: XClient {
 
     // MARK: Actions
 
+    /// These three are state-setting, so a replayed action (offline queue, a retry after
+    /// an ambiguous network failure) must converge: "already liked" means it worked.
     public func setLiked(_ liked: Bool, tweetId: String) async throws {
-        _ = try await graphQL(liked ? .favoriteTweet : .unfavoriteTweet, variables: ["tweet_id": .string(tweetId)])
+        do {
+            _ = try await graphQL(liked ? .favoriteTweet : .unfavoriteTweet,
+                                  variables: ["tweet_id": .string(tweetId)])
+        } catch let e as XError where e.isAlreadyDone {
+            return
+        }
     }
 
     public func setRetweeted(_ retweeted: Bool, tweetId: String) async throws {
-        if retweeted {
-            _ = try await graphQL(.createRetweet, variables: ["tweet_id": .string(tweetId), "dark_request": false])
-        } else {
-            _ = try await graphQL(.deleteRetweet, variables: ["source_tweet_id": .string(tweetId), "dark_request": false])
+        do {
+            if retweeted {
+                _ = try await graphQL(.createRetweet, variables: ["tweet_id": .string(tweetId), "dark_request": false])
+            } else {
+                _ = try await graphQL(.deleteRetweet, variables: ["source_tweet_id": .string(tweetId), "dark_request": false])
+            }
+        } catch let e as XError where e.isAlreadyDone {
+            return
         }
     }
 
     public func setBookmarked(_ bookmarked: Bool, tweetId: String) async throws {
-        _ = try await graphQL(bookmarked ? .createBookmark : .deleteBookmark, variables: ["tweet_id": .string(tweetId)])
+        do {
+            _ = try await graphQL(bookmarked ? .createBookmark : .deleteBookmark,
+                                  variables: ["tweet_id": .string(tweetId)])
+        } catch let e as XError where e.isAlreadyDone {
+            return
+        }
     }
 
     public func createTweet(text: String, replyTo: String?) async throws -> XTweet? {

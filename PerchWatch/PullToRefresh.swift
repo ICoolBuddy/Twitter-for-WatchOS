@@ -35,6 +35,9 @@ struct PullToRefresh: ViewModifier {
     /// The crown's rubber band unwinds by itself; if it stops short of the
     /// threshold, forget the partial pull instead of leaving the arrow up.
     static let crownIdle: UInt64 = 900_000_000
+    /// After this much quiet the crown travel itself is dropped (not just the arrow):
+    /// a few leftover points must not turn a later nudge into a refresh.
+    static let crownDecay: UInt64 = 3_000_000_000
 
     @State private var tracker = OverscrollTracker()
     @State private var pull = PullState()
@@ -73,9 +76,10 @@ struct PullToRefresh: ViewModifier {
             }
             .onChange(of: isRefreshing) { _, refreshing in
                 idleTask?.cancel()
-                tracker.last = 0
-                // Keep the crown travel: a refresh from elsewhere (on open, account
-                // switch, a retry) must not zero a pull the reader is still turning.
+                // Keep `last`: zeroing it made the spring-back frames read as a new
+                // pull (delta from 0), which could fire a phantom second refresh.
+                // Keep the crown travel too: a refresh from elsewhere (on open,
+                // account switch, a retry) must not zero a pull still being turned.
                 tracker.ready = false
                 pull.reset()
                 // A refresh that starts consumes every leftover frame of the pull;
@@ -112,6 +116,7 @@ struct PullToRefresh: ViewModifier {
             let delta = overscroll - t.last
             if delta > 0, !t.interacting || t.last <= 2 {
                 t.crown = min(Self.crownThreshold, t.crown + delta)
+                t.crownTouched = Date()
             }
         } else if overscroll < -80 {
             // Clearly scrolled down the feed (half a viewport), not the crown band's
@@ -139,8 +144,8 @@ struct PullToRefresh: ViewModifier {
         }
     }
 
-    /// The crown stopped short of the threshold: clear the partial pull so the
-    /// arrow does not stay on screen until the reader happens to scroll.
+    /// The crown stopped short of the threshold: hide the arrow now, drop the travel
+    /// after a few seconds of quiet.
     private func scheduleCrownIdle() {
         idleTask?.cancel()
         guard tracker.crown > 0 else { return }
@@ -152,6 +157,15 @@ struct PullToRefresh: ViewModifier {
                 // Hide the arrow, keep the travel: a crown turn is slow (simulator:
                 // ~3.5 pt per turn) and zeroing here meant the pull could never add up.
                 pull.reset()
+            }
+            // ...but a pull left half-done must not wait forever to trip a later nudge.
+            try? await Task.sleep(nanoseconds: Self.crownDecay)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard !isRefreshing, !tracker.fired, !tracker.interacting else { return }
+                if Date().timeIntervalSince(tracker.crownTouched) >= 3.0 {
+                    tracker.crown = 0
+                }
             }
         }
     }
@@ -228,7 +242,7 @@ private struct PullIndicator: View {
     /// The band's bottom edge sits on the content top, so the arrow travels down
     /// with the pull (a crown turn has almost no gap: its progress drives the travel).
     private var topPadding: CGFloat {
-        if isRefreshing { return max(2, state.topInset - Self.band * 0.6) }
+        if isRefreshing { return max(2, state.topInset - Self.band - 2) }
         let travel = min(1, max(0, state.progress)) * PullToRefresh.threshold
         return max(2, state.topInset + travel - Self.band)
     }
@@ -362,6 +376,8 @@ private final class OverscrollTracker {
     var interacting = false
     /// A refresh was fired from this pull: ignore the spring-back frames.
     var fired = false
+    /// When the crown travel last grew (the idle decay measures quiet from here).
+    var crownTouched = Date.distantPast
 }
 
 extension View {

@@ -35,12 +35,22 @@ final class WatchSync: NSObject, ObservableObject, SyncChannel {
     }
 
     /// The newest payload already applied, persisted: queued deliveries can arrive out of
-    /// order and after a relaunch, and an older one must never be applied again.
+    /// order and after a relaunch, and an older one must never be applied again — not even
+    /// the context the phone already holds (that is how a local logout got undone).
+    private static let lastAppliedSeqKey = "perch.sync.lastAppliedSeq"
+    private var lastAppliedSeq: UInt64 {
+        get { UInt64(UserDefaults.standard.string(forKey: Self.lastAppliedSeqKey) ?? "") ?? 0 }
+        set { UserDefaults.standard.set(String(newValue), forKey: Self.lastAppliedSeqKey) }
+    }
+    /// Fallback for payloads from an older iPhone build (no `seq`).
     private static let lastAppliedKey = "perch.sync.lastAppliedAt"
     private var lastAppliedAt: Date {
         get { UserDefaults.standard.object(forKey: Self.lastAppliedKey) as? Date ?? .distantPast }
         set { UserDefaults.standard.set(newValue, forKey: Self.lastAppliedKey) }
     }
+    /// A config version already asked for, so a payload that cannot carry it cannot
+    /// re-trigger the request forever.
+    private var requestedConfigVersion: String?
 
     func start() {
         guard WCSession.isSupported() else { status = .unavailable("Unsupported"); return }
@@ -83,17 +93,28 @@ final class WatchSync: NSObject, ObservableObject, SyncChannel {
     }
 
     fileprivate func receive(_ dict: [String: Any]) {
-        guard let data = dict[SyncPayload.key] as? Data, let p = try? SyncPayload.decode(data) else { return }
+        guard let data = dict[SyncPayload.key] as? Data else { return }
         lastPayloadBytes = data.count
+        guard let p = try? SyncPayload.decode(data) else {
+            status = .failed("Payload not understood")
+            return
+        }
         apply(p)
     }
 
     private func apply(_ p: SyncPayload) {
-        // Ignore stale payloads (queued deliveries can arrive out of order).
-        guard p.sentAt >= lastAppliedAt else { return }
+        // Ignore anything not newer (queued deliveries can arrive out of order, and the
+        // phone re-delivers the context it already has). Equal must not pass: that is
+        // what re-applied a stale pre-logout state and what looped forever on config.
+        if let seq = p.seq, seq > 0 {
+            guard seq > lastAppliedSeq else { return }
+            lastAppliedSeq = seq
+        } else {
+            guard p.sentAt > lastAppliedAt else { return }
+        }
         lastAppliedAt = p.sentAt
-        lastReceived = Date()
-        status = .received(Date(), p.command)
+        lastReceived = p.sentAt
+        status = .received(p.sentAt, p.command)
         Task {
             if p.command == .logout {
                 await AppModel.shared.logout(propagate: false)
@@ -108,7 +129,9 @@ final class WatchSync: NSObject, ObservableObject, SyncChannel {
             // The iPhone sends its ~35 KB endpoint config only when it changed: a Watch
             // that missed it (fresh install, lost context) asks for it once.
             if let theirs = p.configUpdatedAt, p.config == nil,
-               theirs != (await AppModel.shared.store.config.updatedAt) {
+               theirs != (await AppModel.shared.store.config.updatedAt),
+               theirs != requestedConfigVersion {
+                requestedConfigVersion = theirs
                 request(wantConfig: true)
             }
             // No haptic: syncing must stay silent.
