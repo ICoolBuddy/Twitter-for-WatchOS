@@ -54,6 +54,9 @@ final class PopChromeTests: XCTestCase {
             let barButtons = app.navigationBars.buttons.allElementsBoundByIndex
                 .map { "\($0.label)|\($0.identifier)|\($0.exists)" }
             print("POPCHROME \(round)-navbar buttons=[\(barButtons.joined(separator: ", "))]")
+            // The system back platter, to compare with the root's circle (same build,
+            // same simulator): the two must read as the same control.
+            attach("\(round)-pushed-chrome")
 
             // Pop it the way the owner does: a mid-screen swipe right (the same drag
             // CrownRoutingTests S11 uses; SwipeBack needs >22 pt from the edge).
