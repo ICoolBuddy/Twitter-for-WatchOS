@@ -78,9 +78,14 @@ final class VideoPlayback: ObservableObject {
         position = 0
         duration = 0
         scrubTarget = nil
-        levels = media.variants
-            .filter { $0.contentType == "video/mp4" }
-            .sorted { ($0.bitrate ?? 0) < ($1.bitrate ?? 0) }
+        if media.url.isFileURL {
+            // A saved video: one local file, no variants and no quality choice.
+            levels = [XVideoVariant(url: media.url, bitrate: nil, contentType: "video/mp4")]
+        } else {
+            levels = media.variants
+                .filter { $0.contentType == "video/mp4" }
+                .sorted { ($0.bitrate ?? 0) < ($1.bitrate ?? 0) }
+        }
         guard !levels.isEmpty else {
             failed = "Video unavailable"
             return

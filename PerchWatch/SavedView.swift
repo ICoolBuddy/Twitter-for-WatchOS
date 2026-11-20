@@ -69,54 +69,45 @@ private struct SavedRow: View {
     let post: SavedStore.SavedPost
     let downloading: Bool
 
+    @AppStorage(PerchSettings.textSize) private var textSizeRaw = PerchTextSize.medium.rawValue
+
     private var tweet: XTweet { post.tweet.displayed }
 
+    /// Same scale as the feed, so a saved post reads like the post it was saved from.
+    private var textScale: CGFloat {
+        (PerchTextSize(rawValue: textSizeRaw) ?? .medium).scale
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                LocalImage(url: SavedStore.shared.fileURL(post.avatarFile), maxPixel: 88)
-                    .frame(width: 28, height: 28)
-                    .clipShape(Circle())
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(tweet.author.name)
-                        .font(.system(size: 14, weight: .semibold))
-                        .lineLimit(1)
-                    Text("@" + tweet.author.screenName)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 2)
-                if downloading {
-                    ProgressView().scaleEffect(0.6)
-                } else if post.videoFile != nil {
-                    Image(systemName: "play.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                }
-            }
+        VStack(alignment: .leading, spacing: 6) {
+            // The feed's header (avatar, name, handle, time), not a compact variant:
+            // the Saved list is a reading list and should look like the feed.
+            TweetHeader(tweet: tweet)
 
             Text(tweet.text)
-                .font(.system(size: 15))
-                .lineLimit(4)
+                .font(.system(size: 19 * textScale))
+                .lineLimit(8)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if let media = tweet.media.first,
-               let name = SavedStore.shared.photoFile(post, index: 0) {
-                LocalImage(url: SavedStore.shared.fileURL(name), maxPixel: 400)
-                    .aspectRatio(max(0.2, media.aspectRatio), contentMode: .fit)
-                    .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            // The saved copy of the media: a photo's file, or the video's poster frame
+            // (saved with it), so the tile is there offline too. A video keeps the
+            // feed's play glyph.
+            if let media = tweet.media.first {
+                MediaThumb(media: media,
+                           extraCount: tweet.media.count - 1,
+                           localURL: SavedStore.shared.localPhoto(tweetID: tweet.id, index: 0))
             }
 
-            // Why an attachment is missing, instead of an image that silently never comes.
-            if let problem = post.problem, !downloading {
+            if downloading {
+                ProgressView().scaleEffect(0.6)
+            } else if let problem = post.problem {
                 Label(problem, systemImage: "exclamationmark.triangle")
                     .font(.system(size: 11))
                     .foregroundStyle(.orange)
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }
@@ -220,7 +211,16 @@ private struct SavedDetailView: View {
         // makes the pop safe, and there is no inline player left to eat the drag.
         .swipeBack(onPop: onPop)
         .fullScreenCover(item: $fullScreenVideo) { file in
-            SavedVideoViewer(url: file.url)
+            // The same viewer the timeline uses: watchOS' cover chrome hidden, the
+            // crown drives the system volume, the system player draws its controls.
+            // A local file needs no variants; `VideoPlayback` plays it directly.
+            MediaViewer(media: [XMedia(id: "saved-\(file.url.lastPathComponent)",
+                                       type: .video, url: file.url,
+                                       width: 1920, height: 1080)],
+                        startIndex: 0,
+                        title: tweet.author.name,
+                        caption: tweet.text,
+                        inCover: true)
         }
     }
 }
@@ -229,57 +229,6 @@ private struct SavedDetailView: View {
 private struct SavedVideoFile: Identifiable {
     let url: URL
     var id: String { url.absoluteString }
-}
-
-/// Full-screen playback of a saved video file.
-///
-/// The inline `VideoPlayer` in the detail had two problems: the file played silently
-/// (no audio session was ever activated) and its gesture area swallowed the
-/// swipe-back. This presents over the whole screen, activates a playback session so
-/// the sound is really there, and keeps the system's own controls.
-private struct SavedVideoViewer: View {
-    let url: URL
-
-    @State private var player: AVPlayer?
-
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            if let player {
-                VideoPlayer(player: player)
-                    .ignoresSafeArea()
-            }
-        }
-        .onAppear {
-            Self.activateAudio()
-            let p = AVPlayer(url: url)
-            p.volume = 1
-            player = p
-            p.play()
-        }
-        .onDisappear {
-            // Release the item, not just pause: a paused player keeps the decoder and
-            // the file open for as long as SwiftUI keeps this state around.
-            player?.pause()
-            player?.replaceCurrentItem(with: nil)
-            player = nil
-            Self.deactivateAudio()
-        }
-        .accessibilityLabel("Saved video")
-    }
-
-    /// Without an active `.playback` session watchOS can play the file silently; the
-    /// Saved detail never configured one (the feed's viewer does, for background audio).
-    private static func activateAudio() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .default, options: [])
-        try? session.setActive(true)
-    }
-
-    private static func deactivateAudio() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setActive(false, options: .notifyOthersOnDeactivation)
-    }
 }
 
 /// An image from a local file (saved posts). Falls back to a quiet block when the

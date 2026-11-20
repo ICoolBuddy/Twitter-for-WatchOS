@@ -1,4 +1,6 @@
 import Foundation
+import AVFoundation
+import ImageIO
 import Combine
 import XKit
 
@@ -17,6 +19,8 @@ final class SavedStore: ObservableObject {
         /// Parallel to `tweet.displayed.media`; "" for videos.
         var mediaFiles: [String]
         var videoFile: String?
+        /// A still of the video, so the row has a thumbnail with no network.
+        var posterFile: String?
         /// Attachment downloads that already failed: a post whose media is gone
         /// (404/403) stops re-downloading on every launch after a few tries.
         var failedAttempts: Int?
@@ -26,19 +30,20 @@ final class SavedStore: ObservableObject {
         var id: String { tweet.id }
 
         init(tweet: XTweet, savedAt: Date, avatarFile: String? = nil,
-             mediaFiles: [String] = [], videoFile: String? = nil,
+             mediaFiles: [String] = [], videoFile: String? = nil, posterFile: String? = nil,
              failedAttempts: Int? = nil, problem: String? = nil) {
             self.tweet = tweet
             self.savedAt = savedAt
             self.avatarFile = avatarFile
             self.mediaFiles = mediaFiles
             self.videoFile = videoFile
+            self.posterFile = posterFile
             self.failedAttempts = failedAttempts
             self.problem = problem
         }
 
         private enum CodingKeys: String, CodingKey {
-            case tweet, savedAt, avatarFile, mediaFiles, videoFile, failedAttempts, problem
+            case tweet, savedAt, avatarFile, mediaFiles, videoFile, posterFile, failedAttempts, problem
         }
 
         /// Tolerant decode, on purpose. A field added later (`mediaFiles`) is not in an
@@ -52,6 +57,7 @@ final class SavedStore: ObservableObject {
             avatarFile = try? c.decodeIfPresent(String.self, forKey: .avatarFile)
             mediaFiles = (try? c.decode([String].self, forKey: .mediaFiles)) ?? []
             videoFile = try? c.decodeIfPresent(String.self, forKey: .videoFile)
+            posterFile = try? c.decodeIfPresent(String.self, forKey: .posterFile)
             failedAttempts = try? c.decodeIfPresent(Int.self, forKey: .failedAttempts)
             problem = try? c.decodeIfPresent(String.self, forKey: .problem)
         }
@@ -142,7 +148,15 @@ final class SavedStore: ObservableObject {
     /// No file-system check here (it runs on the main thread for every feed
     /// row): files in the folder only disappear through `remove`.
     func localPhoto(tweetID: String, index: Int) -> URL? {
-        guard let post = byID[tweetID], let name = photoFile(post, index: index) else { return nil }
+        guard let post = byID[tweetID] else { return nil }
+        let media = post.tweet.displayed.media
+        if media.indices.contains(index), media[index].type != .photo {
+            // A video has no photo at its index: its saved still is the thumbnail,
+            // so the row looks like a feed row even with no connection.
+            guard let poster = post.posterFile else { return nil }
+            return directory.appendingPathComponent(poster)
+        }
+        guard let name = photoFile(post, index: index) else { return nil }
         return directory.appendingPathComponent(name)
     }
 
@@ -166,7 +180,7 @@ final class SavedStore: ObservableObject {
         guard let i = items.firstIndex(where: { $0.id == id }) else { return }
         let post = items.remove(at: i)
         saving.remove(id)
-        for name in ([post.avatarFile, post.videoFile].compactMap { $0 } + post.mediaFiles) where !name.isEmpty {
+        for name in ([post.avatarFile, post.videoFile, post.posterFile].compactMap { $0 } + post.mediaFiles) where !name.isEmpty {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
         }
         if items.isEmpty { loadedCount = 0 }
@@ -224,6 +238,11 @@ final class SavedStore: ObservableObject {
             }
         }
         working.mediaFiles = files
+        if let name = working.videoFile, working.posterFile == nil,
+           let poster = await makePoster(for: directory.appendingPathComponent(name), id: tweet.id) {
+            working.posterFile = poster
+            written.append(poster)
+        }
 
         guard isSaved(tweet.id) else {
             // Removed while downloading: don't leave the files just written behind.
@@ -280,6 +299,30 @@ final class SavedStore: ObservableObject {
         if size + usedBytes() > Limit.totalBytes { throw SaveError.noRoom }
         try? FileManager.default.removeItem(at: destination)
         try FileManager.default.moveItem(at: temporary, to: destination)
+        return name
+    }
+
+    /// One still from the saved video, written next to it. `AVAssetImageGenerator`
+    /// works on the local file, so this costs no network; a failure is not fatal
+    /// (the row falls back to the remote poster when online).
+    private func makePoster(for video: URL, id: String) async -> String? {
+        let name = "poster-\(id).jpg"
+        let destination = directory.appendingPathComponent(name)
+        if FileManager.default.fileExists(atPath: destination.path) { return name }
+        let image: CGImage? = await Task.detached(priority: .utility) {
+            let asset = AVURLAsset(url: video)
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 480, height: 480)
+            return try? generator.copyCGImage(at: CMTime(seconds: 0.3, preferredTimescale: 600),
+                                              actualTime: nil)
+        }.value
+        guard let image,
+              let dest = CGImageDestinationCreateWithURL(destination as CFURL, "public.jpeg" as CFString, 1, nil)
+        else { return nil }
+        CGImageDestinationAddImage(dest, image,
+                                   [kCGImageDestinationLossyCompressionQuality: 0.7] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
         return name
     }
 
