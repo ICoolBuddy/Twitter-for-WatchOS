@@ -331,10 +331,10 @@ struct PagerChrome<Content: View>: View {
         content
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    // A real Button, in watchOS' own circular platter: this is the item
-                    // the system knows how to place (and re-place) during a pop. The
-                    // gesture-based control had no platter and sat differently from the
-                    // system back chevron next to it.
+                    // A real Button with a fixed 30 pt circular platter. `.bordered`
+                    // wrapped the 20x20 label in a capsule that came out taller than it
+                    // was wide (a vertical pill); drawing the circle ourselves is
+                    // deterministic and matches the system back chevron beside it.
                     Button(action: { control.toggle() }) {
                         // Both symbols stay laid out: a ternary swapped their different
                         // widths inside the page animation and the item snapped.
@@ -342,9 +342,12 @@ struct PagerChrome<Content: View>: View {
                             Image(systemName: "line.3.horizontal").opacity(control.page == 0 ? 0 : 1)
                             Image(systemName: "chevron.left").opacity(control.page == 0 ? 1 : 0)
                         }
-                        .frame(width: 20, height: 20)
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(Color.white.opacity(0.16)))
+                        .contentShape(Circle())
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.plain)
                     .animation(nil, value: control.page)
                     .accessibilityLabel(control.page == 0 ? "Back to feed" : "Menu")
                     .accessibilityIdentifier("chrome.menuToggle")
