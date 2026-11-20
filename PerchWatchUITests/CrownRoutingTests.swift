@@ -577,62 +577,21 @@ final class CrownRoutingTests: XCTestCase {
             guard let before = self.read(feed), abs(before.y) > 150 else {
                 return .blocked("could not scroll \(feed) down first")
             }
-            var beforePlace = self.placeFields(feed)["live"] ?? "-"
-            for _ in 0..<2 where beforePlace == "-" {
-                self.app.swipeUp()
-                Thread.sleep(forTimeInterval: 0.4)
-                beforePlace = self.placeFields(feed)["live"] ?? "-"
-            }
-            guard beforePlace != "-" else {
-                return .blocked("no place evidence before leaving (\(self.placeFields(feed)))")
-            }
             guard away() else { return .blocked("could not leave \(feed) (\(self.pagerNote()))") }
             guard back() else { return .blocked("could not return to \(feed) (\(self.pagerNote()))") }
             self.settle()
             guard let after = self.read(feed) else {
                 return .blocked("probe.\(feed) unreadable after returning")
             }
-            // What the app itself measured: the row that covers the top edge and how
-            // deep the viewport is inside it, before (saved) and after (live) the
-            // rebuild. A rebuilt LazyVStack estimates the rows above, so the raw
-            // offset is not comparable; the saved row + depth is the reading place.
-            let fields = self.placeFields(feed)
-            let live = fields["live"] ?? "-"
-            let saved = fields["saved"] ?? "-"
-            let liveD = Double(fields["liveD"] ?? "") ?? .nan
-            let savedD = Double(fields["savedD"] ?? "") ?? .nan
-            let rowH = Double(fields["h"] ?? "") ?? 0
-            let place = String(format: "y %.0f -> %.0f, top %@ -> %@, d %.0f/%.0f (row %.0f)",
-                               before.y, after.y, beforePlace, live, liveD, savedD, rowH)
-            // The app's own invariant: the restore landed the row it saved. (The
-            // test's earlier sample can be one momentum tick behind the save, so it
-            // is reported, not required.) The cut inside the row may differ by up to
-            // the row height: `scrollTo(anchor:)` cannot express a depth.
-            guard live == saved, abs(liveD - savedD) <= max(60, rowH) else {
-                return .blocked("BUG place moved: \(place) [\(fields)]")
-            }
+            // The scroll view is never recreated now: watchOS keeps the offset, so the
+            // same post is on top at the same pixel. No restore, no black cover.
+            let drift = after.y - before.y
+            let key = feed == "feed.forYou" ? "place.forYou" : "place.following"
+            let evidence = (self.element(key).value as? String) ?? "no place marker"
+            let place = String(format: "y %.0f -> %.0f (drift %.0f)", before.y, after.y, drift)
+            guard abs(drift) <= 5 else { return .blocked("BUG place moved: \(place) [\(evidence)]") }
             return .ready("place kept: \(place)")
         }
-    }
-
-    /// The `place.<feed>` marker's `key=value` fields (`d` is split into liveD/savedD).
-    private func placeFields(_ feed: String) -> [String: String] {
-        let key = feed == "feed.forYou" ? "place.forYou" : "place.following"
-        let raw = (element(key).value as? String) ?? ""
-        var out: [String: String] = [:]
-        for field in raw.components(separatedBy: " tr=").first!.split(separator: " ") {
-            let kv = field.split(separator: "=", maxSplits: 1)
-            guard kv.count == 2 else { continue }
-            out[String(kv[0])] = String(kv[1])
-        }
-        if let d = out["d"] {
-            let parts = d.split(separator: "/")
-            if parts.count == 2 {
-                out["liveD"] = String(parts[0])
-                out["savedD"] = String(parts[1])
-            }
-        }
-        return out
     }
 
     /// SR1: crown turned *up* at the top of For You (past the top: the rubber band)
@@ -888,27 +847,6 @@ final class CrownRoutingTests: XCTestCase {
         guard frame.width > 0, screen.width > 0 else { return false }
         return frame.midX >= screen.minX && frame.midX < screen.maxX
             && frame.midY >= screen.minY && frame.midY < screen.maxY
-    }
-
-    private struct VisiblePost { let id: String; let y: CGFloat }
-
-    /// The post links visible on the on-screen feed, top first (the reader's place).
-    private func visiblePosts() -> [VisiblePost] {
-        let screen = app.frame
-        let matches = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "post.open."))
-            .allElementsBoundByIndex
-        var rows: [VisiblePost] = []
-        for m in matches where m.exists {
-            let f = m.frame
-            guard f.width > 0, f.height > 0 else { continue }
-            // The pager keeps all three pages in the tree: only the on-screen one.
-            guard f.midX >= screen.minX, f.midX < screen.maxX else { continue }
-            guard f.maxY > screen.minY + 40, f.minY < screen.maxY else { continue }
-            rows.append(VisiblePost(id: m.identifier.replacingOccurrences(of: "post.open.", with: ""),
-                                    y: f.minY))
-        }
-        return rows.sorted { $0.y < $1.y }
     }
 
     /// Where the three pages are, for the notes column.

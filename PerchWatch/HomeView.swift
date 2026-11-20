@@ -11,12 +11,6 @@ struct HomeView: View {
     let kind: HomeKind
     /// This page is the one the root pager shows (crown focus follows it).
     var isActive: Bool = true
-    /// Bumped by `RootPager` when this feed is swiped back to. The scroll view gets a
-    /// new identity so it *appears* again — watchOS hands the Digital Crown to a
-    /// scroll view that appears, not to one a page swipe merely brings back (crown
-    /// test S3 fails without this) — and the exact offset is restored on the first
-    /// layout, so the reader lands on the same post with no visible jump.
-    var returnToken = 0
     /// Tapping the other tab at the top switches feeds (the pager owns the page).
     var onSelect: ((HomeKind) -> Void)? = nil
 
@@ -32,20 +26,7 @@ struct HomeView: View {
     @State private var visibility = PageVisibility()
     @State private var profileTarget: ProfileTarget?
     @State private var mediaTarget: MediaTarget?
-    /// The `returnToken` whose scroll view is already at the saved offset. Starts
-    /// equal to the initial token (nothing to restore on a cold launch).
-    @State private var restoredToken = 0
-    /// Black over the list while a rebuilt scroll view is put back in place.
-    @State private var coverWhileRestoring = false
-    /// The restore landed once: give the layout a beat to settle before uncovering.
-    @State private var settleScheduled = false
-    /// Invalidates a scheduled uncover when a later drift re-aims the list.
-    @State private var restoreGen = 0
 
-    /// Only ever covers a page that is on screen and mid-restore. Off screen there is
-    /// nothing to hide, and a page left with the cover up showed as a black rectangle
-    /// in the middle of the pager after fast timeline switches.
-    private var covered: Bool { isActive && (coverWhileRestoring || returnToken != restoredToken) }
 
     /// The top of the list: a zero-height anchor laid out before any row, so a refresh
     /// can scroll up without waiting for the new first post to exist.
@@ -72,9 +53,6 @@ struct HomeView: View {
                 .padding(.horizontal, Metrics.horizontalPadding)
             }
             .background(Color.black)
-            .overlay {
-                if covered { Color.black.allowsHitTesting(false) }
-            }
             .onScrollGeometryChange(for: FeedGeometry.self) { geo in
                 FeedGeometry(inset: geo.contentInsets.top,
                              offset: geo.contentOffset.y,
@@ -82,50 +60,6 @@ struct HomeView: View {
             } action: { _, g in
                 place.topInset = g.inset
                 place.viewportHeight = g.viewport
-                place.liveOffset = g.offset
-                if visibility.isActive, !covered {
-                    // The place a rebuilt scroll view comes back to: the exact offset,
-                    // not a row estimate.
-                    place.savedOffset = g.offset
-                    place.savedTopID = place.liveTopID
-                    place.savedDepth = place.liveDepth
-                    place.savedHeight = place.liveHeight
-                }
-                // Self-heal: an active page that still thinks it is covered restores.
-                if isActive, !coverWhileRestoring, returnToken != restoredToken {
-                    restore(proxy)
-                }
-                if coverWhileRestoring, let id = place.savedTopID {
-                    let landed = place.liveTopID == id && abs(place.liveDepth - place.savedDepth) <= 40
-                    if landed {
-                        // Same post, same height. Hold the cover a beat: the rebuilt
-                        // LazyVStack corrects its estimates a frame or two later, and a
-                        // drift in that correction comes back here as a re-aim.
-                        if !settleScheduled {
-                            settleScheduled = true
-                            let gen = restoreGen
-                            #if DEBUG
-                            PerchTrace.place = "landed \(id) d=\(Int(place.liveDepth))"
-                            #endif
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                                guard gen == restoreGen, coverWhileRestoring else { return }
-                                coverWhileRestoring = false
-                                restoredToken = returnToken
-                            }
-                        }
-                    } else if place.restoreTries < 12 {
-                        // A rebuilt scroll view sometimes ignores scrollTo until it is
-                        // laid out; every geometry pass is proof that it is. Re-aim and
-                        // restart the settle window.
-                        place.restoreTries += 1
-                        settleScheduled = false
-                        restoreGen += 1
-                        #if DEBUG
-                        PerchTrace.place = "re-aim \(place.restoreTries) live=\(place.liveTopID ?? "-") d=\(Int(place.liveDepth))"
-                        #endif
-                        proxy.scrollTo(id, anchor: place.savedAnchor)
-                    }
-                }
             }
             #if DEBUG
             .overlay(alignment: .topTrailing) {
@@ -138,10 +72,6 @@ struct HomeView: View {
                     .accessibilityValue(placeDebug)
             }
             #endif
-            .onAppear {
-                // A page the system pager dropped and built again: put it back too.
-                if isActive { restore(proxy) }
-            }
             // The edge glow is drawn by `RootGlow` straight from the lists; pulling
             // or turning the crown only triggers the refresh.
             .pullToRefresh(isRefreshing: list.isRefreshing, failed: list.error != nil) {
@@ -166,23 +96,10 @@ struct HomeView: View {
             .postPresentation(profile: $profileTarget, media: $mediaTarget)
             .onChange(of: isActive, initial: true) { _, active in
                 visibility.isActive = active
-                if !active {
-                    // Leaving: never carry the cover to another page.
-                    coverWhileRestoring = false
-                    settleScheduled = false
-                    restoredToken = returnToken
-                }
-                // Back on screen with a rebuilt scroll view that is not at the place.
-                if active, returnToken != restoredToken { restore(proxy) }
                 // Arriving on this feed: warm what it is about to show.
                 if active, !list.isEmpty { ImageLoader.shared.prefetchFeed(list.items.displayTweets) }
             }
         }
-        // The id belongs to the whole reader, not the ScrollView inside it: a proxy
-        // captured from a reader whose child was just replaced points at the old
-        // scroll view, and `scrollTo` silently did nothing (the rebuilt feed landed
-        // on the top or on whatever post the estimates put there).
-        .id(returnToken)
     }
 
     /// X-style tabs: both feeds named, the current one bold white with a blue bar.
@@ -266,44 +183,10 @@ struct HomeView: View {
         }
     }
 
-    /// Puts a rebuilt scroll view back at the exact offset it had. The offset is
-    /// applied on the next runloop (the new scroll view must exist); the row is the
-    /// fallback if it did not take, and the cover lifts as soon as the geometry
-    /// reports the saved offset (or after 0.6 s, so a failure cannot freeze it).
-    private func restore(_ proxy: ScrollViewProxy) {
-        let token = returnToken
-        guard let saved = place.savedOffset else {
-            restoredToken = token
-            return
-        }
-        #if DEBUG
-        PerchTrace.place = "restore called saved=\(place.savedTopID ?? "-") d=\(Int(place.savedDepth))/\(Int(place.savedHeight)) off=\(Int(saved))"
-        #endif
-        coverWhileRestoring = true
-        settleScheduled = false
-        restoreGen += 1
-        place.restoreTries = 0
-        DispatchQueue.main.async {
-            // The saved row at the saved depth. A `scrollPosition` binding was tried
-            // here and fought it: the two-way binding re-applied the (clamped) offset
-            // on every layout pass, so the row scroll was undone (SP1-SP3 landed on
-            // the next post). The row anchor is relative, so estimates cannot move it.
-            if let id = place.savedTopID, list.items.contains(where: { $0.id == id }) {
-                proxy.scrollTo(id, anchor: place.savedAnchor)
-            }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            if coverWhileRestoring {
-                coverWhileRestoring = false
-                restoredToken = token
-            }
-        }
-    }
-
     #if DEBUG
     /// Place evidence for the place tests (refreshed on each body pass).
     private var placeDebug: String {
-        "live=\(place.liveTopID ?? "-") saved=\(place.savedTopID ?? "-") d=\(Int(place.liveDepth))/\(Int(place.savedDepth)) h=\(Int(place.savedHeight)) tries=\(place.restoreTries) off=\(Int(place.savedOffset ?? -999)) inset=\(Int(place.topInset)) vh=\(Int(place.viewportHeight)) tr=[\(PerchTrace.place)]"
+        "live=\(place.liveTopID ?? "-") d=\(Int(place.liveDepth)) inset=\(Int(place.topInset)) vh=\(Int(place.viewportHeight))"
     }
     #endif
 
@@ -382,30 +265,14 @@ struct FeedGeometry: Equatable {
     var viewport: CGFloat
 }
 
-/// One home feed's place on screen, shared with `RootPager` so it outlives the
-/// scroll view being rebuilt for the crown (`returnToken`).
+/// One home feed's reading place and impressions, shared with `RootPager`. The
+/// scroll view is never recreated: watchOS keeps each page's offset, so there is
+/// nothing to restore (and rebuilding it for the crown left a black box on screen).
 final class FeedPlace {
     /// The first post on screen right now (only tracked while the feed is active).
     var liveTopID: String?
-    /// How far (points) the viewport top is inside the top row, and that row's height.
+    /// How far (points) the viewport top is inside the top row.
     var liveDepth: CGFloat = 0
-    var liveHeight: CGFloat = 0
-    /// The live content offset, and the one a rebuilt scroll view comes back to.
-    var liveOffset: CGFloat = 0
-    var savedOffset: CGFloat?
-    /// The row on top when the place was saved, its depth under the top edge and its
-    /// height: the restore puts that exact point back at the top.
-    var savedTopID: String?
-    var savedDepth: CGFloat = 0
-    var savedHeight: CGFloat = 0
-    /// How many re-aims the current restore has done (the geometry action counts).
-    var restoreTries = 0
-
-    /// `scrollTo(id, anchor:)` aligns the same unit point of the row and of the
-    /// viewport, so "depth inside the row" cannot be expressed: the row goes to the
-    /// top. (A `scrollPosition` pixel shift was tried and re-applied itself over the
-    /// row scroll.) The row is the reader's post; only the cut inside it is lost.
-    var savedAnchor: UnitPoint { UnitPoint(x: 0.5, y: 0) }
     /// The scroll view's visible height (what "on screen" means for a row frame).
     var viewportHeight: CGFloat = 0
     /// The scroll view's top inset (under the toolbar): where reading starts.
@@ -424,7 +291,6 @@ final class FeedPlace {
             // This row covers the top edge of the viewport: it is the reading place.
             liveTopID = item.id
             liveDepth = top - frame.minY
-            liveHeight = frame.height
         } else if isFirst, frame.minY > top + 0.5 {
             liveTopID = nil          // the top of the feed (label/anchor) is showing
             liveDepth = 0

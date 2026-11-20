@@ -206,10 +206,6 @@ struct RootPager: View {
     /// The feed page to return to from the menu (1 = For You, 2 = Following).
     @State private var lastFeed = 1
     @State private var didStart = false
-    /// Bumped when a feed is swiped away from: its scroll view is rebuilt so watchOS
-    /// hands the crown to it again on return (S3 fails on a merely re-shown one).
-    @State private var forYouReturn = 0
-    @State private var followingReturn = 0
     /// Each feed's reading place, kept here so it outlives the pages.
     @State private var forYouPlace = FeedPlace()
     @State private var followingPlace = FeedPlace()
@@ -218,10 +214,10 @@ struct RootPager: View {
         TabView(selection: $page) {
             MenuView(onPick: { kind in goFeed(kind) })
                 .tag(0)
-            HomeView(kind: .forYou, isActive: rootActive && page == 1, returnToken: forYouReturn,
+            HomeView(kind: .forYou, isActive: rootActive && page == 1,
                      onSelect: { goFeed($0) }, list: forYou, place: forYouPlace)
                 .tag(1)
-            HomeView(kind: .following, isActive: rootActive && page == 2, returnToken: followingReturn,
+            HomeView(kind: .following, isActive: rootActive && page == 2,
                      onSelect: { goFeed($0) }, list: following, place: followingPlace)
                 .tag(2)
         }
@@ -252,14 +248,8 @@ struct RootPager: View {
         }
         // The page is the source of truth for the swipe; the stored kind follows
         // it so the menu checkmark, background refresh and account switch agree.
-        .onChange(of: page) { old, value in
+        .onChange(of: page) { _, value in
             guard value != 0 else { return }
-            // Rebuild the feed that is *arriving*, while it is on screen: a scroll view
-            // that appears in view is what watchOS hands the crown to (the off-screen
-            // rebuild made S3 flaky). Its exact place is restored before the cover lifts.
-            if old != value, value == 1 || value == 2 {
-                if value == 1 { forYouReturn += 1 } else { followingReturn += 1 }
-            }
             lastFeed = value
             let kind = value == 2 ? HomeKind.following : HomeKind.forYou
             if kindRaw != kind.rawValue { kindRaw = kind.rawValue }
