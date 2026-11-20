@@ -31,11 +31,28 @@ final class PhoneSync: NSObject, ObservableObject, SyncChannel {
     /// Last fast-path delivery error (the context write may still have succeeded).
     @Published private(set) var messageError: String?
 
+    /// The last payload the Watch said it applied. Without this the phone can only
+    /// report what it *sent*, which is how a permanently stale Watch went unnoticed.
+    @Published private(set) var lastAckSeq: UInt64 = 0
+    @Published private(set) var lastAckAt: Date?
+
+    var messageErrorText: String? {
+        guard let messageError else { return nil }
+        if messageError.lowercased().contains("not reachable") {
+            return "Watch app closed — the state is queued"
+        }
+        return messageError
+    }
+
     var statusText: String {
         switch status {
         case .idle: return "Not synced yet"
         case .unavailable(let why): return why
-        case .sent(let d): return "Sent to Watch \(RelativeTime.short(d)) ago"
+        case .sent(let d):
+            if lastAckSeq > 0, lastAckSeq >= lastSentSeq, let at = lastAckAt {
+                return "Watch confirmed \(RelativeTime.short(at)) ago"
+            }
+            return "Sent to Watch \(RelativeTime.short(d)) ago"
         case .failed(let why): return why
         }
     }
@@ -64,10 +81,33 @@ final class PhoneSync: NSObject, ObservableObject, SyncChannel {
         set { UserDefaults.standard.set(String(newValue), forKey: Self.seqKey) }
     }
     private func nextSeq() -> UInt64 { let n = seq + 1; seq = n; return n }
+
+    /// Identifies this installation. The Watch compares `(origin, seq)` pairs, so a
+    /// reinstalled iPhone (whose counter restarts at 1) is applied instead of being
+    /// silently dropped forever by a Watch holding a higher counter.
+    private static let originKey = "perch.sync.origin"
+    private var origin: String {
+        if let s = UserDefaults.standard.string(forKey: Self.originKey), !s.isEmpty { return s }
+        let s = UUID().uuidString
+        UserDefaults.standard.set(s, forKey: Self.originKey)
+        return s
+    }
+
     /// The Watch asked for the full endpoint config (it has none or a different version).
     private var pendingWantConfig = false
+    /// `Reset sync`: apply regardless of seq on the Watch, send the full config again.
+    private var pendingReset = false
     /// Config version last delivered, so the ~35 KB config is sent only when it changed.
-    private var lastSentConfigUpdatedAt: String?
+    /// Persisted: in memory it made every phone launch re-send the whole config.
+    private static let configSentKey = "perch.sync.configSent"
+    private var lastSentConfigUpdatedAt: String? {
+        get { UserDefaults.standard.string(forKey: Self.configSentKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.configSentKey) }
+    }
+
+    private var lastSentSeq: UInt64 = 0
+    private var resendAttempts = 0
+    private var lastResendAt = Date.distantPast
 
     func start() {
         guard !started else { return }
@@ -134,25 +174,42 @@ final class PhoneSync: NSObject, ObservableObject, SyncChannel {
     /// "Sync to Watch now" and the Watch's request.
     func syncNow() { scheduleSend() }
 
+    /// The repair path: forget what we believe the Watch has, resend everything
+    /// (accounts, config, material) and tell it to drop its applied floor.
+    func resetSync() {
+        lastAckSeq = 0
+        lastAckAt = nil
+        resendAttempts = 0
+        lastSentConfigUpdatedAt = nil
+        pendingWantConfig = true
+        pendingReset = true
+        lastFingerprint = nil
+        scheduleSend()
+    }
+
     func sendLogout() {
         pendingSend?.cancel()      // a queued update must never land after the logout
         pendingSend = nil
-        if !send(SyncPayload(command: .logout, seq: nextSeq())) { retrySoon() }
+        if !send(SyncPayload(command: .logout, seq: nextSeq(), origin: origin)) { retrySoon() }
     }
 
     private func payload() async -> SyncPayload {
         let store = AppModel.shared.store
         let accounts = await store.accounts
         let seq = nextSeq()
-        if accounts.isEmpty { return SyncPayload(command: .logout, seq: seq) }
+        let o = origin
+        let reset: Bool? = pendingReset ? true : nil
+        if accounts.isEmpty {
+            return SyncPayload(command: .logout, seq: seq, origin: o, reset: reset)
+        }
         let cfg = await store.config
-        let includeConfig = pendingWantConfig || cfg.updatedAt != lastSentConfigUpdatedAt
+        let includeConfig = pendingWantConfig || pendingReset || cfg.updatedAt != lastSentConfigUpdatedAt
         return SyncPayload(command: .update, credentials: await store.credentials, accounts: accounts,
                            config: includeConfig ? cfg : nil, material: await store.material,
                            remoteOverrideURL: await store.remoteOverrideURL?.absoluteString,
                            remoteOverrideIsAuthoritative: true,
                            activeAccountId: await store.activeAccountId,
-                           configUpdatedAt: cfg.updatedAt, seq: seq)
+                           configUpdatedAt: cfg.updatedAt, seq: seq, origin: o, reset: reset)
     }
 
     @discardableResult
@@ -169,12 +226,14 @@ final class PhoneSync: NSObject, ObservableObject, SyncChannel {
         do {
             try session.updateApplicationContext(dict)
             lastSent = Date()
+            lastSentSeq = p.seq ?? lastSentSeq
             status = .sent(Date())
             messageError = nil
             if p.config != nil {
                 lastSentConfigUpdatedAt = p.configUpdatedAt
                 pendingWantConfig = false
             }
+            if p.reset == true { pendingReset = false }
         } catch {
             status = .failed("Context error: \(error.localizedDescription)")
             ok = false
@@ -188,9 +247,28 @@ final class PhoneSync: NSObject, ObservableObject, SyncChannel {
     }
 
     fileprivate func handleIncoming(_ message: [String: Any]) {
+        if let ack = message["ack"] as? String, let applied = Self.parseIdentity(ack) {
+            lastAckSeq = applied.seq
+            lastAckAt = Date()
+            // A daemon that stops sending once an ack mismatch is possible would be
+            // stuck; retry, but bounded, so a broken Watch cannot spin the phone.
+            if applied.seq < lastSentSeq, resendAttempts < 3,
+               Date().timeIntervalSince(lastResendAt) > 10 {
+                resendAttempts += 1
+                lastResendAt = Date()
+                scheduleSend()
+            }
+            return
+        }
         if message["request"] as? String == "sync" {
             if message["wantConfig"] as? Bool == true { pendingWantConfig = true }
-            syncNow()
+            // The Watch tells us what it already has; resend when we are ahead.
+            if let raw = message["applied"] as? String, let applied = Self.parseIdentity(raw),
+               applied.seq < lastSentSeq {
+                scheduleSend()
+            } else {
+                syncNow()
+            }
         } else if let p = SyncPayload.from(dictionary: message), p.command == .logout {
             // A queued logout from an earlier session must not wipe a newer login.
             if let lastSent, p.sentAt < lastSent { return }
@@ -198,6 +276,13 @@ final class PhoneSync: NSObject, ObservableObject, SyncChannel {
             // one .logout back, which the Watch ignores: it is already logged out).
             Task { await AppModel.shared.logout(propagate: false) }
         }
+    }
+
+    /// "origin:seq" for both the Watch's ack and its sync request.
+    private static func parseIdentity(_ raw: String) -> (origin: String, seq: UInt64)? {
+        let parts = raw.split(separator: ":", maxSplits: 1)
+        guard parts.count == 2, let seq = UInt64(parts[1]), seq > 0 else { return nil }
+        return (String(parts[0]), seq)
     }
 }
 

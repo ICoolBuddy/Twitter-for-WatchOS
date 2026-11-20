@@ -363,6 +363,9 @@ struct PostActionRow: View {
     /// The text of a reply that failed, kept so it can be sent again instead of
     /// making the reader dictate it twice.
     @State private var failedReply: String?
+    /// A stored draft over the limit: no retry can succeed, so it is shown as a
+    /// discardable draft (the text stays on the device for the iPhone).
+    @State private var tooLongMessage: String?
     /// Replies sent from this row (the count from X lags behind).
     @State private var sentReplies = 0
     /// The post page reloads its thread after a reply lands (the new reply is not in
@@ -394,6 +397,20 @@ struct PostActionRow: View {
                 .buttonStyle(.swipeSafe)
                 .frame(maxWidth: .infinity)
                 .transition(.opacity)
+            } else if let tooLongMessage, !sendingReply {
+                HStack(spacing: 6) {
+                    Text(tooLongMessage)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                    Button("Discard") {
+                        DraftStore.clear(replyTo: tweet.id)
+                        self.tooLongMessage = nil
+                    }
+                    .font(.caption2)
+                    .buttonStyle(.swipeSafe)
+                }
+                .frame(maxWidth: .infinity)
+                .transition(.opacity)
             } else if let replyStatus {
                 Text(replyStatus)
                     .font(.caption2)
@@ -404,7 +421,11 @@ struct PostActionRow: View {
             }
         }
         .onAppear {
-            if failedReply == nil, let saved = DraftStore.failed(replyTo: tweet.id) {
+            guard failedReply == nil, tooLongMessage == nil,
+                  let saved = DraftStore.failed(replyTo: tweet.id) else { return }
+            if DraftStore.isTooLong(tweet.id) {
+                tooLongMessage = "Draft too long — edit on iPhone"
+            } else {
                 failedReply = saved
             }
         }
@@ -493,11 +514,13 @@ struct PostActionRow: View {
         guard !body.isEmpty, !sendingReply, let client = posts.client else { return }
         let replyTo = tweet.id
         if let why = TweetText.tooLong(body) {
-            replyStatus = why
-            failedReply = body
-            DraftStore.saveFailed(body, replyTo: replyTo)
+            replyStatus = nil
+            failedReply = nil
+            tooLongMessage = why
+            DraftStore.saveFailed(body, replyTo: replyTo, tooLong: true)
             return
         }
+        tooLongMessage = nil
         DraftStore.saveFailed(body, replyTo: replyTo)   // until it lands
         sendingReply = true
         statusToken += 1

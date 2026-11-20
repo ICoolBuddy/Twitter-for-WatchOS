@@ -169,7 +169,12 @@ public actor LiveXClient: XClient {
             v["reply"] = ["in_reply_to_tweet_id": .string(replyTo), "exclude_reply_user_ids": []]
         }
         let json = try await graphQL(.createTweet, variables: .object(v))
-        return XParser.createdTweet(json)
+        // A 2xx body can still say the post was not created. Returning nil here made
+        // every caller report "Sent" and delete the draft while X had nothing.
+        guard let created = XParser.createdTweet(json) else {
+            throw XError.decoding("X did not return the new post")
+        }
+        return created
     }
 
     public func deleteTweet(id: String) async throws {
@@ -313,7 +318,11 @@ public actor LiveXClient: XClient {
     public func graphQL(_ op: Operation, variables: JSON, fieldToggles: [String: Bool] = [:], forcePost: Bool = false) async throws -> JSON {
         let config = await store.config
         guard let info = config.info(op) else { throw XError.missingOperation(op.rawValue) }
-        guard var url = URL(string: "\(config.graphqlBase)/\(info.queryId)/\(op.rawValue)") else {
+        // Defensive: a stored config from an older build may predate validation in
+        // `merging`. Never let the session follow it to another host.
+        let base = EndpointConfig.isAllowedGraphQLBase(config.graphqlBase)
+            ? config.graphqlBase : EndpointConfig.bundled.graphqlBase
+        guard var url = URL(string: "\(base)/\(info.queryId)/\(op.rawValue)") else {
             throw XError.missingOperation(op.rawValue)
         }
         let features = config.features(for: op)
@@ -335,8 +344,18 @@ public actor LiveXClient: XClient {
                                      bearer: config.bearer, label: op.rawValue,
                                      isRead: !info.isMutation, graphQL: true)
         let errors = XParser.graphQLErrors(json)
-        if !errors.isEmpty, json["data"].object.isEmpty {
-            throw XError.graphQL(errors)
+        // X reports a dead session, a rate limit and a moved schema in the *body* while
+        // answering 200, so the status line alone cannot tell success from failure.
+        if let bodyError = XError.graphQLBodyError(codes: XParser.graphQLCodes(json),
+                                                  messages: errors,
+                                                  hasData: !json["data"].object.isEmpty,
+                                                  isMutation: info.isMutation) {
+            // A body-level "not authenticated" must reach the store exactly like a 401,
+            // or the banner and the iPhone's repair path never learn the session died.
+            if case .unauthorized = bodyError, let creds = await store.credentials {
+                await store.markSessionExpired(forAuthToken: creds.authToken)
+            }
+            throw bodyError
         }
         return json
     }
@@ -457,6 +476,11 @@ public actor LiveXClient: XClient {
                     if !budget.csrf, Self.ct0(from: resp) != nil { budget.csrf = true; continue }
                     throw XError.transactionRejected(errorText)
                 }
+                // No body and no X code: this is not "the endpoint changed", it is an
+                // anti-bot/edge refusal. Retrying is the honest remedy.
+                if codes.isEmpty, errorText.isEmpty, data.isEmpty {
+                    throw XError.network("X refused the request (403) — try again")
+                }
                 throw XError.forbidden(errorText)
             case 404:
                 // An empty-body 404 is X's WAF rejecting a missing/invalid transaction id
@@ -474,6 +498,16 @@ public actor LiveXClient: XClient {
                 throw XError.notFound
             case 429:
                 throw XError.rateLimited(until: until)
+            case 422:
+                // GRAPHQL_VALIDATION_FAILED / code 336 ("these features cannot be null")
+                // means X moved: retrying the same query can never work.
+                let isSchema = json["errors"].array.contains {
+                    $0["code"].int == 336 || $0["code"].string == "GRAPHQL_VALIDATION_FAILED"
+                }
+                if isSchema {
+                    throw XError.schemaChanged(errorText.isEmpty ? "validation failed" : errorText)
+                }
+                throw XError.server(status)
             case 500...599:
                 if isRead, !budget.transient { budget.transient = true; continue }
                 throw XError.server(status)

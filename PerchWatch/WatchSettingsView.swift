@@ -50,6 +50,13 @@ struct WatchSettingsView: View {
 
             Section("iPhone") {
                 Text(sync.statusText).font(.caption2)
+                // The free-account signature dies after 7 days and the app then simply
+                // stops launching; say so before it happens.
+                if let signature = ProvisioningInfo.reminder() {
+                    Text("Signature: \(signature)")
+                        .font(.caption2)
+                        .foregroundStyle(ProvisioningInfo.isUrgent() ? Color.orange : Color.secondary)
+                }
                 // Diagnostics: is the complication's shared container available on this
                 // (sideloaded) build, and how big was the last sync.
                 Text("App Group: \(AppGroup.identifier ?? "none (complication off)")")

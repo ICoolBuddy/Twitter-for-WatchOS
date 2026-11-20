@@ -31,13 +31,21 @@ public struct SyncPayload: Codable, Sendable, Equatable {
     /// newer than the last one it applied, so a re-delivered (stale) context — e.g. the
     /// pre-logout state — can never be applied twice. Absent in older payloads.
     public var seq: UInt64?
+    /// Identifies the sending installation. `seq` is only comparable within one origin,
+    /// so a reinstalled iPhone (whose counter restarts at 1) is still understood by a
+    /// Watch that remembers a higher `seq` from the previous install.
+    public var origin: String?
+    /// Sent by the iPhone's "Reset sync": the Watch clears its applied floor and applies
+    /// this payload unconditionally. Absent = a normal ordered payload.
+    public var reset: Bool?
     public var sentAt: Date
 
     public init(command: Command, credentials: XCredentials? = nil, accounts: [XAccount]? = nil,
                 config: EndpointConfig? = nil, material: TransactionMaterial? = nil,
                 remoteOverrideURL: String? = nil, remoteOverrideIsAuthoritative: Bool? = nil,
                 activeAccountId: String? = nil, configUpdatedAt: String? = nil,
-                seq: UInt64? = nil, sentAt: Date = Date()) {
+                seq: UInt64? = nil, origin: String? = nil, reset: Bool? = nil,
+                sentAt: Date = Date()) {
         self.command = command; self.credentials = credentials; self.accounts = accounts
         self.config = config; self.material = material
         self.remoteOverrideURL = remoteOverrideURL
@@ -45,6 +53,8 @@ public struct SyncPayload: Codable, Sendable, Equatable {
         self.activeAccountId = activeAccountId
         self.configUpdatedAt = configUpdatedAt
         self.seq = seq
+        self.origin = origin
+        self.reset = reset
         self.sentAt = sentAt
     }
 

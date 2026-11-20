@@ -14,6 +14,13 @@ public enum XParser {
         json["errors"].array.compactMap { $0["message"].string }
     }
 
+    /// X's numeric error codes from a GraphQL body. X answers HTTP 200 and reports the
+    /// real failure here (32 = not authenticated, 88 = rate limit, 353 = csrf), so the
+    /// status line alone is not enough to tell success from a dead session.
+    public static func graphQLCodes(_ json: JSON) -> [Int] {
+        json["errors"].array.compactMap { $0["code"].int }
+    }
+
     // MARK: Timeline
 
     /// `instructionsFound == false` means the response had no `instructions` at all: a

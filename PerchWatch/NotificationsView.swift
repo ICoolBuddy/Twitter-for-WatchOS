@@ -80,8 +80,11 @@ struct NotificationsView: View {
             let p = try await client.notifications(kind, cursor: cursor)
             return (p.notifications, p.bottomCursor, p.topCursor)
         }
-        list.onFirstPage = { _, top in
-            guard let top else { return }
+        list.onFirstPage = { items, top in
+            // Only the All timeline may mark anything seen: its cursor belongs to the
+            // notifications timeline. A Mentions cursor sent to `last_seen_cursor`
+            // marked the *other* timeline read and zeroed the badge on X.
+            guard kind == .all, !items.isEmpty, let top else { return }
             Task {
                 await app.clearNotificationBadge(topCursor: top)
                 if app.badge.notifications == 0 { markedRead = true }

@@ -92,12 +92,23 @@ public struct EndpointConfig: Codable, Sendable, Equatable {
         c.version = newer.version
         c.updatedAt = newer.updatedAt
         if !newer.bearer.isEmpty { c.bearer = newer.bearer }
-        if !newer.graphqlBase.isEmpty { c.graphqlBase = newer.graphqlBase }
+        // The base URL decides where the session Cookie and ct0 are sent: a remote
+        // override (or a corrupted file) must never be able to move it off x.com.
+        if !newer.graphqlBase.isEmpty, EndpointConfig.isAllowedGraphQLBase(newer.graphqlBase) {
+            c.graphqlBase = newer.graphqlBase
+        }
         c.operations.merge(newer.operations) { _, new in new }
         c.featureValues.merge(newer.featureValues) { _, new in new }
         if let s = newer.signer, !s.indices.isEmpty { c.signer = s }
         if let s = newer.legacySigner, !s.indices.isEmpty { c.legacySigner = s }
         return c
+    }
+
+    /// The only hosts that may receive a request carrying the account's Cookie/ct0.
+    public static func isAllowedGraphQLBase(_ raw: String) -> Bool {
+        guard let u = URL(string: raw), u.scheme?.lowercased() == "https",
+              let host = u.host?.lowercased() else { return false }
+        return host == "x.com" || host == "api.x.com"
     }
 
     public static func decode(_ data: Data) throws -> EndpointConfig {

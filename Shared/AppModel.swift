@@ -188,10 +188,15 @@ final class AppModel: ObservableObject {
         rebuildClient()
         await reloadState()                  // starts the profile fetch (unless cached)
         await viewerTask?.value
+        // A cached profile proves nothing about the new cookies, so "verified" is only
+        // reported after X answers one authenticated request. Without this, restoring a
+        // cached account reported success while the session was already dead.
+        var probe: XError?
+        do { _ = try await client.badgeCounts() } catch { probe = XError.from(error) }
         // Signing material makes some endpoints (search) work; best effort.
         Task { try? await self.refreshMaterial() }
-        if viewer != nil, activeAccountId == id { return .verified }
-        let error = viewerError ?? .network("No response")
+        if probe == nil, viewer != nil, activeAccountId == id { return .verified }
+        let error = probe ?? viewerError ?? .network("No response")
         if error == .unauthorized || error == .notLoggedIn {
             if let previous {
                 _ = await store.upsertAccount(previous.credentials, user: previous.user)
@@ -340,10 +345,9 @@ final class AppModel: ObservableObject {
     func clearNotificationBadge(topCursor: String?) async {
         // Mark on X first: zeroing locally and swallowing the failure made the badge
         // come back on the next poll (the user had already read the list).
-        if let topCursor {
-            do { try await client.markNotificationsSeen(topCursor: topCursor) }
-            catch { return }
-        }
+        guard let topCursor, !topCursor.isEmpty else { return }
+        do { try await client.markNotificationsSeen(topCursor: topCursor) }
+        catch { return }
         badge.notifications = 0
     }
 }

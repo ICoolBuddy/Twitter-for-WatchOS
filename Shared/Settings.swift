@@ -56,26 +56,37 @@ enum DraftStore {
     private static func key(replyTo: String?) -> String {
         replyTo.map { "perch.replyDraft.\($0)" } ?? "perch.postDraft"
     }
+    /// A draft that can never be sent from the Watch (over the limit). Remembering
+    /// this separately is what stops the row from offering a retry that fails again.
+    private static func tooLongKey(_ replyTo: String?) -> String { key(replyTo: replyTo) + ".tooLong" }
 
     static func failed(replyTo: String?) -> String? {
         UserDefaults.standard.string(forKey: key(replyTo: replyTo))
     }
 
-    static func saveFailed(_ text: String, replyTo: String?) {
+    /// True when the stored draft is over the limit: it must be edited on the iPhone,
+    /// not retried here.
+    static func isTooLong(_ replyTo: String?) -> Bool {
+        UserDefaults.standard.bool(forKey: tooLongKey(replyTo))
+    }
+
+    static func saveFailed(_ text: String, replyTo: String?, tooLong: Bool = false) {
         UserDefaults.standard.set(text, forKey: key(replyTo: replyTo))
+        UserDefaults.standard.set(tooLong, forKey: tooLongKey(replyTo))
     }
 
     static func clear(replyTo: String?) {
         UserDefaults.standard.removeObject(forKey: key(replyTo: replyTo))
+        UserDefaults.standard.removeObject(forKey: tooLongKey(replyTo))
     }
 }
 
 /// X's standard post limit. The watch cannot edit a failed text in place, so it is
-/// checked before sending; the message says how far over it is.
+/// checked before sending; the message says how far over it is and where to fix it.
 enum TweetText {
     static let limit = 280
 
     static func tooLong(_ text: String) -> String? {
-        text.count > limit ? "Too long · \(text.count)/\(limit). Tap to retry" : nil
+        text.count > limit ? "Too long · \(text.count)/\(limit) — edit on iPhone" : nil
     }
 }

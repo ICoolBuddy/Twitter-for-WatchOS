@@ -58,6 +58,55 @@ final class ReviewFixTests: XCTestCase {
         XCTAssertEqual(XError.unauthorized.recovery, .relogin)
     }
 
+    // MARK: Body-level GraphQL errors (2026-11-20 review, net-1/-3/-5)
+
+    /// `ViewerBadgeCounts` answers 200 with an auth error and `data: {viewer_v2: {}}`.
+    /// That must be an auth failure, not "zero notifications".
+    func testAuthCodeWithDataIsUnauthorized() {
+        let e = XError.graphQLBodyError(codes: [32], messages: ["Could not authenticate you."],
+                                        hasData: true, isMutation: false)
+        XCTAssertEqual(e, .unauthorized)
+    }
+
+    func testRateLimitCode88() {
+        let e = XError.graphQLBodyError(codes: [88], messages: ["Rate limit exceeded"],
+                                        hasData: false, isMutation: false)
+        XCTAssertEqual(e, .rateLimited(until: nil))
+        XCTAssertEqual(e?.recovery, .wait)
+    }
+
+    func testSchemaCodeSuggestsEndpointRefresh() {
+        let e = XError.graphQLBodyError(codes: [336], messages: ["schema"],
+                                        hasData: false, isMutation: false)
+        XCTAssertNotNil(e)
+        XCTAssertEqual(e?.recovery, .refreshEndpoints)
+    }
+
+    /// A mutation that reports an error did not do what was asked, even with data.
+    func testMutationErrorWithDataFails() {
+        let e = XError.graphQLBodyError(codes: [999], messages: ["nope"],
+                                        hasData: true, isMutation: true)
+        XCTAssertEqual(e, .graphQL(["nope"]))
+    }
+
+    /// Reads keep working through X's soft per-item errors.
+    func testReadSoftErrorWithDataIsTolerated() {
+        XCTAssertNil(XError.graphQLBodyError(codes: [999], messages: ["soft"],
+                                             hasData: true, isMutation: false))
+    }
+
+    func testGraphQLBaseHostAllowList() {
+        XCTAssertTrue(EndpointConfig.isAllowedGraphQLBase("https://x.com/i/api/graphql"))
+        XCTAssertTrue(EndpointConfig.isAllowedGraphQLBase("https://api.x.com/graphql"))
+        XCTAssertFalse(EndpointConfig.isAllowedGraphQLBase("http://x.com/i/api/graphql"))
+        XCTAssertFalse(EndpointConfig.isAllowedGraphQLBase("https://evil.example/graphql"))
+        var cfg = EndpointConfig.bundled
+        let poisoned = EndpointConfig(updatedAt: "x", bearer: "", graphqlBase: "https://evil.example",
+                                      operations: [:], featureValues: [:], signer: nil, legacySigner: nil)
+        cfg = cfg.merging(poisoned)
+        XCTAssertEqual(cfg.graphqlBase, EndpointConfig.bundled.graphqlBase)
+    }
+
     func testRelativeTimeOldDate() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let old = now.addingTimeInterval(-30 * 86400)

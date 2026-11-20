@@ -127,7 +127,7 @@ struct HomeView: View {
             // Cached posts on screen but the last refresh failed: say so, instead
             // of an error line at the very bottom of the feed nobody sees.
             if !list.isEmpty, list.error != nil, !list.isRefreshing {
-                Label(offlineText, systemImage: "wifi.slash")
+                Label(offlineText, systemImage: offlineSymbol)
                     .font(.system(size: 10))
                     .foregroundStyle(.orange)
                     .lineLimit(1)
@@ -163,8 +163,21 @@ struct HomeView: View {
     private static let tabBlue = Color(red: 0.114, green: 0.608, blue: 0.941)
 
     private var offlineText: String {
-        guard let d = list.lastUpdated else { return "Offline · cached posts" }
-        return "Offline · updated \(RelativeTime.short(d)) ago"
+        guard let e = list.error else { return "Offline · cached posts" }
+        // Only a real network failure is "offline". A rate limit, an expired session or
+        // a schema change used to be shown with a wifi-slash icon and the word
+        // "Offline", which sent the reader looking at their connection for nothing.
+        if case .network = e {
+            guard let d = list.lastUpdated else { return "Offline · cached posts" }
+            return "Offline · updated \(RelativeTime.short(d)) ago"
+        }
+        return e.localizedDescription
+    }
+
+    private var offlineSymbol: String {
+        guard let e = list.error else { return "wifi.slash" }
+        if case .network = e { return "wifi.slash" }
+        return "exclamationmark.triangle"
     }
 
     @ViewBuilder

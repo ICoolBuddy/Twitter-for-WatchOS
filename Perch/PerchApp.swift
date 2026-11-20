@@ -137,16 +137,30 @@ struct PhoneRootView: View {
     }
 
     private var watchSection: some View {
-        Section("Apple Watch") {
+        Section {
             LabeledContent("Status", value: sync.statusText)
             if let d = sync.lastSent {
                 LabeledContent("Last sync", value: d.formatted(date: .omitted, time: .shortened))
             }
-            if let e = sync.messageError {
+            if let e = sync.messageErrorText {
                 LabeledContent("Live delivery", value: e)
+            }
+            // The free-account signature expires every 7 days; the app then stops
+            // launching. Say it here, before it happens.
+            if let signature = ProvisioningInfo.reminder() {
+                LabeledContent("Signature") {
+                    Text(signature)
+                        .foregroundStyle(ProvisioningInfo.isUrgent() ? Color.orange : Color.secondary)
+                }
             }
             Button("Sync to Watch now") { sync.syncNow() }
                 .disabled(!app.isLoggedIn)
+            Button("Reset sync") { sync.resetSync() }
+                .disabled(!app.isLoggedIn)
+        } header: {
+            Text("Apple Watch")
+        } footer: {
+            Text("Reset sync resends the account, endpoints and signing key and makes the Watch accept them again — use it if the Watch shows an old account or keeps asking you to log in.")
         }
     }
 

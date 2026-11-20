@@ -37,11 +37,37 @@ final class WatchSync: NSObject, ObservableObject, SyncChannel {
     /// The newest payload already applied, persisted: queued deliveries can arrive out of
     /// order and after a relaunch, and an older one must never be applied again — not even
     /// the context the phone already holds (that is how a local logout got undone).
-    private static let lastAppliedSeqKey = "perch.sync.lastAppliedSeq"
-    private var lastAppliedSeq: UInt64 {
-        get { UInt64(UserDefaults.standard.string(forKey: Self.lastAppliedSeqKey) ?? "") ?? 0 }
-        set { UserDefaults.standard.set(String(newValue), forKey: Self.lastAppliedSeqKey) }
+    /// Stored as "origin:seq": `seq` is only comparable within one installation.
+    private static let appliedKey = "perch.sync.applied"
+    private var applied: (origin: String, seq: UInt64)? {
+        get {
+            guard let raw = UserDefaults.standard.string(forKey: Self.appliedKey) else { return nil }
+            guard !raw.isEmpty else { return nil }
+            let parts = raw.split(separator: ":", maxSplits: 1)
+            guard parts.count == 2, let seq = UInt64(parts[1]) else { return nil }
+            return (String(parts[0]), seq)
+        }
+        set {
+            if let newValue {
+                UserDefaults.standard.set("\(newValue.origin):\(newValue.seq)", forKey: Self.appliedKey)
+            } else {
+                // "" is an explicit "forget everything": never fall back to the legacy key.
+                UserDefaults.standard.set("", forKey: Self.appliedKey)
+            }
+        }
     }
+    /// Pre-origin builds stored a bare counter. It is never read again (a new origin is
+    /// always accepted), only cleared so a downgrade cannot resurrect it.
+    private static let legacySeqKey = "perch.sync.lastAppliedSeq"
+
+    /// The highest payload *scheduled* (applied or still in flight) for the current
+    /// origin. Dedupe happens here, synchronously, so a duplicate delivery cannot queue
+    /// behind the same work twice.
+    private var scheduled: (origin: String, seq: UInt64)?
+
+    /// Applies run one at a time: two payloads must never interleave in the store.
+    private var applyTail: Task<Void, Never>?
+
     /// Fallback for payloads from an older iPhone build (no `seq`).
     private static let lastAppliedKey = "perch.sync.lastAppliedAt"
     private var lastAppliedAt: Date {
@@ -71,6 +97,8 @@ final class WatchSync: NSObject, ObservableObject, SyncChannel {
         }
         var message: [String: Any] = ["request": "sync"]
         if wantConfig { message["wantConfig"] = true }
+        // Tell the iPhone what we already applied, so it can resend when it is ahead.
+        if let applied { message["applied"] = "\(applied.origin):\(applied.seq)" }
         if s.isReachable {
             // A message wakes the iPhone app; the queued transfer covers "not reachable".
             s.sendMessage(message, replyHandler: { _ in }, errorHandler: { error in
@@ -103,39 +131,76 @@ final class WatchSync: NSObject, ObservableObject, SyncChannel {
     }
 
     private func apply(_ p: SyncPayload) {
-        // Ignore anything not newer (queued deliveries can arrive out of order, and the
-        // phone re-delivers the context it already has). Equal must not pass: that is
-        // what re-applied a stale pre-logout state and what looped forever on config.
+        // "Reset sync" on the iPhone: forget the applied floor and take this payload
+        // whatever its seq. It is the only escape hatch when the two sides disagree.
+        if p.reset == true {
+            applied = nil
+            scheduled = nil
+            UserDefaults.standard.removeObject(forKey: Self.legacySeqKey)
+        }
+        let origin = p.origin ?? "legacy"
         if let seq = p.seq, seq > 0 {
-            guard seq > lastAppliedSeq else { return }
-            lastAppliedSeq = seq
+            // Queued deliveries can arrive out of order and the phone re-delivers the
+            // context it already has: only a strictly newer payload may proceed.
+            if let s = scheduled, s.origin == origin, seq <= s.seq { return }
+            if let a = applied, a.origin == origin, seq <= a.seq { return }
+            scheduled = (origin, seq)
         } else {
             guard p.sentAt > lastAppliedAt else { return }
+        }
+        // Chain the work: two payloads must never interleave inside the store, and the
+        // applied receipt is written only after the work really finished.
+        let previous = applyTail
+        applyTail = Task { [weak self] in
+            await previous?.value
+            guard let self else { return }
+            await self.perform(p, origin: origin)
+        }
+    }
+
+    private func perform(_ p: SyncPayload, origin: String) async {
+        if p.command == .logout {
+            await AppModel.shared.logout(propagate: false)
+            commit(p, origin: origin)
+            return
+        }
+        await p.apply(to: AppModel.shared.store)
+        // An `accounts` list that arrives empty means the iPhone logged out.
+        if await AppModel.shared.store.credentials == nil {
+            await AppModel.shared.logout(propagate: false)
+            commit(p, origin: origin)
+            return
+        }
+        // The iPhone sends its ~35 KB endpoint config only when it changed: a Watch
+        // that missed it (fresh install, lost context) asks for it once.
+        if let theirs = p.configUpdatedAt, p.config == nil,
+           theirs != (await AppModel.shared.store.config.updatedAt),
+           theirs != requestedConfigVersion {
+            requestedConfigVersion = theirs
+            request(wantConfig: true)
+        }
+        commit(p, origin: origin)
+    }
+
+    /// Records the applied identity **after** the payload was applied, and tells the
+    /// iPhone: without this receipt the phone can only say "Sent".
+    private func commit(_ p: SyncPayload, origin: String) {
+        if let seq = p.seq, seq > 0 {
+            applied = (origin, seq)
+            UserDefaults.standard.removeObject(forKey: Self.legacySeqKey)
         }
         lastAppliedAt = p.sentAt
         lastReceived = p.sentAt
         status = .received(p.sentAt, p.command)
-        Task {
-            if p.command == .logout {
-                await AppModel.shared.logout(propagate: false)
-                return
-            }
-            await p.apply(to: AppModel.shared.store)
-            // An `accounts` list that arrives empty means the iPhone logged out.
-            if await AppModel.shared.store.credentials == nil {
-                await AppModel.shared.logout(propagate: false)
-                return
-            }
-            // The iPhone sends its ~35 KB endpoint config only when it changed: a Watch
-            // that missed it (fresh install, lost context) asks for it once.
-            if let theirs = p.configUpdatedAt, p.config == nil,
-               theirs != (await AppModel.shared.store.config.updatedAt),
-               theirs != requestedConfigVersion {
-                requestedConfigVersion = theirs
-                request(wantConfig: true)
-            }
-            // No haptic: syncing must stay silent.
-        }
+        sendAck()
+        // No haptic: syncing must stay silent.
+    }
+
+    private func sendAck() {
+        guard let applied else { return }
+        let s = WCSession.default
+        guard s.activationState == .activated, s.isReachable else { return }
+        s.sendMessage(["ack": "\(applied.origin):\(applied.seq)"], replyHandler: nil, errorHandler: nil)
     }
 }
 

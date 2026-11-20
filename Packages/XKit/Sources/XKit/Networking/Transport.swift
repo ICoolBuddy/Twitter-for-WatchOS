@@ -96,6 +96,9 @@ final class ChunkedDataDelegate: NSObject, URLSessionDataDelegate, @unchecked Se
         var response: URLResponse?
         var tooLarge = false
         let monitorID: UUID
+        /// Host of the original request: a redirect that leaves it must not carry the
+        /// session Cookie/ct0 headers to another host.
+        let originHost: String
         let continuation: CheckedContinuation<(Data, URLResponse), Error>
     }
 
@@ -135,7 +138,9 @@ final class ChunkedDataDelegate: NSObject, URLSessionDataDelegate, @unchecked Se
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<(Data, URLResponse), Error>) in
                 let task = session.dataTask(with: request)
                 lock.lock()
-                pending[task.taskIdentifier] = Pending(monitorID: monitorID, continuation: cont)
+                pending[task.taskIdentifier] = Pending(monitorID: monitorID,
+                                                       originHost: request.url?.host?.lowercased() ?? "",
+                                                       continuation: cont)
                 lock.unlock()
                 box.set(task)
                 task.resume()
@@ -179,6 +184,25 @@ final class ChunkedDataDelegate: NSObject, URLSessionDataDelegate, @unchecked Se
         if overflow { dataTask.cancel() }
     }
 
+    /// Refuse a cross-host redirect: `URLSession` forwards headers we set ourselves
+    /// (`Cookie`, `x-csrf-token`) to the redirect target — it only strips
+    /// `Authorization` — so a login/anti-bot redirect would hand the session to another
+    /// host. Delivering the 3xx instead lets the caller report a real failure.
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        lock.lock()
+        let origin = pending[task.taskIdentifier]?.originHost
+        lock.unlock()
+        let target = request.url?.host?.lowercased() ?? ""
+        if let origin, !origin.isEmpty, target != origin {
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
+    }
+
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         lock.lock()
         let done = pending.removeValue(forKey: task.taskIdentifier)
@@ -215,6 +239,9 @@ public enum XError: Error, Sendable, Equatable, LocalizedError {
     case graphQL([String])
     case missingOperation(String)
     case decoding(String)
+    /// X answered but its schema no longer matches the query (code 336 / HTTP 422):
+    /// retrying cannot help, the query IDs or variables must be refreshed.
+    case schemaChanged(String)
 
     public var errorDescription: String? {
         switch self {
@@ -232,6 +259,7 @@ public enum XError: Error, Sendable, Equatable, LocalizedError {
         case .graphQL(let m): return m.first ?? "X returned an error."
         case .missingOperation(let op): return "No query ID known for \(op). Refresh endpoints."
         case .decoding(let m): return "Couldn't read X's response: \(m)"
+        case .schemaChanged(let m): return "X changed its API (\(m)). Refresh endpoints."
         }
     }
 
@@ -243,11 +271,35 @@ public enum XError: Error, Sendable, Equatable, LocalizedError {
         switch self {
         case .notLoggedIn, .unauthorized: return .relogin
         case .transactionRejected: return .refreshMaterial
-        case .forbidden: return .refreshEndpoints
+        case .forbidden, .schemaChanged: return .refreshEndpoints
         case .notFound, .missingOperation: return .refreshEndpoints
         case .rateLimited: return .wait
         default: return .retry
         }
+    }
+
+    /// Classifies a **2xx** GraphQL body. X reports real failures in the body while the
+    /// HTTP status stays 200, so a success-shaped response can still mean "your session
+    /// died" (code 32), "rate limited" (88) or "the schema moved" (336).
+    ///
+    /// Rules, deliberately conservative:
+    /// - auth / rate / schema codes are always an error, even with a non-empty `data`
+    ///   (`ViewerBadgeCounts` answers `data: {viewer_v2: {}}` plus code 32);
+    /// - any other code is an error when there is no data, or when the caller is a
+    ///   mutation (a mutation that reports errors did not do what was asked);
+    /// - an unknown code with data on a read is a soft error: X sends them alongside
+    ///   usable timeline data, so reads keep working.
+    public static func graphQLBodyError(codes: [Int], messages: [String], hasData: Bool,
+                                        isMutation: Bool) -> XError? {
+        guard !codes.isEmpty || !messages.isEmpty else { return nil }
+        let text = messages.first ?? "X returned an error."
+        // 32 not authenticated, 89 invalid/expired token, 215 bad authentication data.
+        if codes.contains(32) || codes.contains(89) || codes.contains(215) { return .unauthorized }
+        if codes.contains(88) { return .rateLimited(until: nil) }
+        if codes.contains(336) { return .schemaChanged(text) }
+        if isMutation { return .graphQL(messages.isEmpty ? [text] : messages) }
+        if !hasData { return .graphQL(messages.isEmpty ? [text] : messages) }
+        return nil
     }
 
     /// X's "you have already liked/retweeted/bookmarked this" rejection: the wanted
