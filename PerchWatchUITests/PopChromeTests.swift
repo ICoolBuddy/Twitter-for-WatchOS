@@ -28,7 +28,7 @@ final class PopChromeTests: XCTestCase {
         app.launchArguments = ["-PerchFixtures", "YES", "-homeKind", "forYou"]
         app.launch()
         // The intro can take up to 3 s; wait for the first fixture post instead.
-        XCTAssertTrue(element("post.open." + Self.photoPost).waitForExistence(timeout: 25),
+        XCTAssertTrue(waitFor("post.open." + Self.photoPost, timeout: 25),
                       "the fixture feed never appeared")
     }
 
@@ -40,13 +40,12 @@ final class PopChromeTests: XCTestCase {
         XCTAssertGreaterThan(baseline.width, 0, "the leading item has no size on the feed")
 
         for round in 1...3 {
-            // Push the post.
-            let post = element("post.open." + Self.photoPost)
-            guard post.waitForExistence(timeout: 10) else {
-                XCTFail("round \(round): the post link disappeared"); return
+            // Push the post. Both feed pages stay alive, so the identifier has copies;
+            // tap the one on screen.
+            guard tapOnScreen("post.open." + Self.photoPost) else {
+                XCTFail("round \(round): the post link was not tappable"); return
             }
-            post.tap()
-            guard element("probe.post").waitForExistence(timeout: 15) else {
+            guard waitFor("probe.post", timeout: 15) else {
                 XCTFail("round \(round): the post page did not open"); return
             }
             Thread.sleep(forTimeInterval: Self.settle)
@@ -58,13 +57,11 @@ final class PopChromeTests: XCTestCase {
             let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.62))
             start.press(forDuration: 0.08, thenDragTo: end)
 
-            // Sample immediately: the pop animation is still running, which is the
-            // moment the owner sees the icon left of its place. Each query takes tens
-            // of milliseconds, so this catches 2–4 frames of the transition.
-            for tick in 0..<4 {
-                _ = measure("\(round)-mid\(tick)")
-            }
-            attach("round-\(round)-mid")
+            // Screenshots first: the pop animation is still running, which is the
+            // moment the owner sees the icon left of its place. Each capture takes
+            // ~100 ms, so three of them span the transition.
+            for tick in 0..<3 { attach("round-\(round)-mid\(tick)") }
+            _ = measure("\(round)-mid-measure")
 
             Thread.sleep(forTimeInterval: Self.settle)
             guard let after = measure("\(round)-settled") else {
@@ -84,23 +81,58 @@ final class PopChromeTests: XCTestCase {
 
     // MARK: Measurement
 
-    /// The app's leading chrome: `chrome.menuToggle` on the pager, `chrome.back` on a
-    /// pushed screen. Both use `.accessibilityAddTraits(.isButton)` but are gesture
-    /// views, so the element type is not guaranteed — query any descendant.
-    private func element(_ id: String) -> XCUIElement {
-        app.descendants(matching: .any)[id]
+    /// All copies of an identifier. The pager keeps both feeds alive and a pushed
+    /// screen leaves the feed's chrome in the tree underneath, so an identifier can
+    /// match several elements (the single-match subscript throws in that case).
+    private func copies(_ id: String) -> [XCUIElement] {
+        app.descendants(matching: .any).matching(identifier: id).allElementsBoundByIndex
     }
 
+    private func waitFor(_ id: String, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if copies(id).contains(where: { $0.exists }) { return true }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        return false
+    }
+
+    /// Taps the first copy that is on screen and hittable.
+    private func tapOnScreen(_ id: String) -> Bool {
+        let screen = app.frame
+        for e in copies(id) where e.exists && e.isHittable {
+            let mid = CGPoint(x: e.frame.midX, y: e.frame.midY)
+            guard screen.contains(mid) else { continue }
+            e.tap()
+            return true
+        }
+        return false
+    }
+
+    /// Measures the leading chrome: `chrome.menuToggle` on the pager, `chrome.back` on
+    /// a pushed screen. Both carry `.accessibilityAddTraits(.isButton)` but are gesture
+    /// views, so the element type is not guaranteed.
+    ///
+    /// Reports **every** copy (count + frames) because "the item is gone" and "the item
+    /// is there but off screen / under the pushed screen" look the same to the owner.
     @discardableResult
     private func measure(_ phase: String, id: String = "chrome.menuToggle") -> CGRect? {
-        let e = element(id)
-        let exists = e.exists
-        let hittable = exists && e.isHittable
-        let frame = exists ? e.frame : .zero
-        print(String(format: "POPCHROME %@ exists=%d hittable=%d x=%.1f y=%.1f w=%.1f h=%.1f",
-                     phase, exists ? 1 : 0, hittable ? 1 : 0,
-                     frame.minX, frame.minY, frame.width, frame.height))
-        return exists ? frame : nil
+        let all = copies(id)
+        let screen = app.frame
+        var onScreen: [CGRect] = []
+        var allFrames: [CGRect] = []
+        for e in all where e.exists {
+            let f = e.frame
+            allFrames.append(f)
+            let mid = CGPoint(x: f.midX, y: f.midY)
+            if e.isHittable && screen.contains(mid) { onScreen.append(f) }
+        }
+        let picked = onScreen.first ?? allFrames.first
+        let frames = allFrames.map { String(format: "%.0f,%.0f/%.0fx%.0f", $0.minX, $0.minY, $0.width, $0.height) }
+        print("POPCHROME \(phase) id=\(id) copies=\(all.count) onScreen=\(onScreen.count) "
+              + "picked=\(picked.map { String(format: "%.1f,%.1f %.1fx%.1f", $0.minX, $0.minY, $0.width, $0.height) } ?? "none") "
+              + "frames=[\(frames.joined(separator: " | "))]")
+        return picked
     }
 
     private func attach(_ name: String) {
