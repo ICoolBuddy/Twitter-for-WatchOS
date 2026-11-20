@@ -43,9 +43,16 @@ struct PullToRefresh: ViewModifier {
     func body(content: Content) -> some View {
         content
             .overlay(alignment: .top) {
-                PullIndicator(state: pull, isRefreshing: isRefreshing,
-                              failed: failed, showsStatus: showsIndicator)
+                PullIndicator(state: pull, isRefreshing: isRefreshing)
                     .allowsHitTesting(false)
+            }
+            // The status the owner liked: a flat black pill at the bottom edge.
+            .overlay(alignment: .bottom) {
+                if showsIndicator {
+                    RefreshStatus(isRefreshing: isRefreshing, failed: failed)
+                        .padding(.bottom, 4)
+                        .allowsHitTesting(false)
+                }
             }
             .onScrollGeometryChange(for: CGSize.self) { geo in
                 // width: overscroll (positive while dragged down past the top);
@@ -199,62 +206,36 @@ final class PullState: ObservableObject {
     }
 }
 
-/// The stretchy arrow at the top of the pull gap: grows with the pull, flips up
-/// when letting go will refresh, becomes a small spinning arc while the refresh
-/// runs, and a one-second result line when it ends. It sits above the first row,
-/// under the clock — never in the middle of the screen.
+/// The pull indicator: an iOS-like arrow that sits in the gap the pull opens and
+/// rides the content top down as you pull, flips when letting go will refresh, and
+/// becomes a small spinner while the refresh runs. No text here — the status is the
+/// bottom pill.
 private struct PullIndicator: View {
     @ObservedObject var state: PullState
     let isRefreshing: Bool
-    var failed = false
-    var showsStatus = true
 
-    /// Height of the band the indicator occupies.
-    private static let band: CGFloat = 25
-    /// How far above the content top the band sits (into the toolbar area, so it
-    /// never covers the For You / Following tabs).
-    private static let lift: CGFloat = 27
-
-    /// The last refresh ended: show "Updated" for a moment.
-    @State private var finished = false
-    @State private var lastFailed = false
-    @State private var hideTask: Task<Void, Never>?
+    /// Tall enough for the arrow head plus a stretched shaft.
+    private static let band: CGFloat = 34
 
     var body: some View {
         content
-            .frame(height: Self.band)
+            .frame(width: 34, height: Self.band)
             .frame(maxWidth: .infinity)
-            .padding(.top, max(3, state.topInset - Self.lift))
-            .onChange(of: isRefreshing) { _, refreshing in
-                hideTask?.cancel()
-                if refreshing {
-                    withAnimation(.easeOut(duration: 0.15)) { finished = false }
-                } else {
-                    lastFailed = failed
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { finished = true }
-                    hideTask = Task {
-                        try? await Task.sleep(nanoseconds: 1_500_000_000)
-                        guard !Task.isCancelled else { return }
-                        await MainActor.run {
-                            withAnimation(.easeOut(duration: 0.2)) { finished = false }
-                        }
-                    }
-                }
-            }
+            .padding(.top, topPadding)
+            .animation(.spring(response: 0.25, dampingFraction: 0.8), value: state.ready)
+    }
+
+    /// The band's bottom edge sits on the content top, so the arrow travels down
+    /// with the pull (a crown turn has almost no gap: its progress drives the travel).
+    private var topPadding: CGFloat {
+        if isRefreshing { return max(2, state.topInset - Self.band * 0.6) }
+        let travel = min(1, max(0, state.progress)) * PullToRefresh.threshold
+        return max(2, state.topInset + travel - Self.band)
     }
 
     @ViewBuilder private var content: some View {
         if isRefreshing {
-            if showsStatus {
-                status(spinner: true, text: "Refreshing", rate: true)
-                    .transition(.opacity)
-            } else {
-                Spinner()
-                    .transition(.opacity)
-            }
-        } else if finished, showsStatus {
-            status(spinner: false, text: lastFailed ? "Couldn't update" : "Updated",
-                   rate: false, failed: lastFailed)
+            Spinner(size: 15)
                 .transition(.opacity)
         } else if state.progress > 0.02 {
             arrow
@@ -262,50 +243,95 @@ private struct PullIndicator: View {
         }
     }
 
-    /// The arrow grows down out of the top edge: the shaft stretches with the
-    /// pull and the head travels with it, so the empty space is where the motion
-    /// happens.
     private var arrow: some View {
-        let p = state.progress
-        let stretch = min(1, state.gap / PullToRefresh.threshold)
-        return VStack(spacing: 0) {
+        let p = min(1, max(0, state.progress))
+        return VStack(spacing: -1) {
             Capsule()
                 .fill(Color.white)
-                .frame(width: 2.5, height: 2 + 15 * p + 5 * stretch)
+                .frame(width: 3, height: 2 + 16 * p)
             Image(systemName: "chevron.down")
-                .font(.system(size: 10, weight: .bold))
-                .offset(y: -2)
+                .font(.system(size: 14, weight: .bold))
+                .offset(y: -3)
         }
         .foregroundStyle(.white)
         .rotationEffect(.degrees(state.ready ? 180 : 0))
-        .scaleEffect(0.72 + 0.28 * p)
-        .opacity(Double(min(1, p * 1.6)))
+        .scaleEffect(0.55 + 0.45 * p)
+        .opacity(Double(min(1, p * 1.5)))
     }
+}
 
-    private func status(spinner: Bool, text: String, rate: Bool, failed: Bool = false) -> some View {
-        HStack(spacing: 5) {
-            if spinner {
-                Spinner()
-            } else {
-                Image(systemName: failed ? "exclamationmark.triangle.fill" : "checkmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(failed ? Color.orange : Color.green)
+/// The fetch, said out loud: what is happening and how fast the link is going,
+/// then a short "Updated" so the end of a refresh is visible without a jump.
+struct RefreshStatus: View {
+    var isRefreshing: Bool
+    var failed = false
+
+    @State private var finished = false
+    /// The outcome of the refresh that just ended, so the tail says the truth.
+    @State private var lastFailed = false
+    @State private var finishTask: Task<Void, Never>?
+
+    private static let appear = Animation.spring(response: 0.32, dampingFraction: 0.86)
+
+    var body: some View {
+        // A ZStack (not a bare `if`) so the observer below stays alive while the
+        // pill is hidden — otherwise it could never notice the refresh ending.
+        ZStack(alignment: .bottom) {
+            if isRefreshing || finished {
+                pill
+                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
+                                            removal: .opacity))
             }
-            Text(text)
-            if rate {
-                TimelineView(.periodic(from: .now, by: 0.5)) { _ in
-                    let bps = TransferMonitor.shared.snapshot().bytesPerSecond
-                    // Sub-kilobyte traffic is mostly headers: say nothing.
-                    if bps >= 500 {
-                        Text("· " + TransferMonitor.formatRate(bps))
-                            .foregroundStyle(.white.opacity(0.5))
-                    }
+        }
+        .onChange(of: isRefreshing) { _, refreshing in
+            finishTask?.cancel()
+            if refreshing {
+                withAnimation(Self.appear) { finished = false }
+            } else {
+                lastFailed = failed
+                withAnimation(Self.appear) { finished = true }
+                finishTask = Task {
+                    try? await Task.sleep(nanoseconds: 1_400_000_000)
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeOut(duration: 0.25)) { finished = false }
                 }
             }
         }
-        .font(.system(size: 10, weight: .medium))
+    }
+
+    private var pill: some View {
+        HStack(spacing: 4) {
+            if isRefreshing {
+                Text("Refreshing")
+                TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                    let rate = TransferMonitor.shared.snapshot().bytesPerSecond
+                    // Sub-kilobyte traffic is mostly headers: say nothing.
+                    if rate >= 500 {
+                        Text("· " + TransferMonitor.formatRate(rate))
+                            .foregroundStyle(.white.opacity(0.55))
+                    }
+                }
+            } else if lastFailed {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.orange)
+                Text("Couldn't update")
+            } else {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.green)
+                Text("Updated")
+            }
+        }
+        .font(.system(size: 11, weight: .medium))
         .foregroundStyle(.white.opacity(0.9))
-        .lineLimit(1)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 3)
+        // The app's own pill look (viewer counter, volume HUD): a flat black
+        // capsule, no material — the system spinner that came with a material
+        // background was a big grey disc on watchOS.
+        .background(Color.black.opacity(0.6), in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.12)))
     }
 }
 

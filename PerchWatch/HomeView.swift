@@ -42,7 +42,10 @@ struct HomeView: View {
     /// Invalidates a scheduled uncover when a later drift re-aims the list.
     @State private var restoreGen = 0
 
-    private var covered: Bool { coverWhileRestoring || returnToken != restoredToken }
+    /// Only ever covers a page that is on screen and mid-restore. Off screen there is
+    /// nothing to hide, and a page left with the cover up showed as a black rectangle
+    /// in the middle of the pager after fast timeline switches.
+    private var covered: Bool { isActive && (coverWhileRestoring || returnToken != restoredToken) }
 
     /// The top of the list: a zero-height anchor laid out before any row, so a refresh
     /// can scroll up without waiting for the new first post to exist.
@@ -87,6 +90,10 @@ struct HomeView: View {
                     place.savedTopID = place.liveTopID
                     place.savedDepth = place.liveDepth
                     place.savedHeight = place.liveHeight
+                }
+                // Self-heal: an active page that still thinks it is covered restores.
+                if isActive, !coverWhileRestoring, returnToken != restoredToken {
+                    restore(proxy)
                 }
                 if coverWhileRestoring, let id = place.savedTopID {
                     let landed = place.liveTopID == id && abs(place.liveDepth - place.savedDepth) <= 40
@@ -159,12 +166,17 @@ struct HomeView: View {
             .postPresentation(profile: $profileTarget, media: $mediaTarget)
             .onChange(of: isActive, initial: true) { _, active in
                 visibility.isActive = active
+                if !active {
+                    // Leaving: never carry the cover to another page.
+                    coverWhileRestoring = false
+                    settleScheduled = false
+                    restoredToken = returnToken
+                }
                 // Back on screen with a rebuilt scroll view that is not at the place.
                 if active, returnToken != restoredToken { restore(proxy) }
                 // Arriving on this feed: warm what it is about to show.
                 if active, !list.isEmpty { ImageLoader.shared.prefetchFeed(list.items.displayTweets) }
             }
-            .onDisappear { list.cancel() }
         }
         // The id belongs to the whole reader, not the ScrollView inside it: a proxy
         // captured from a reader whose child was just replaced points at the old
