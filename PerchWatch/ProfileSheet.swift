@@ -45,6 +45,7 @@ struct ProfileSheet: View {
                                         if !path.isEmpty { path.removeLast() }
                                     }) {
                                         Image(systemName: "chevron.left")
+                                            .leadingGlyphBox()
                                     }
                                     .accessibilityLabel("Back")
                                     .accessibilityAddTraits(.isButton)

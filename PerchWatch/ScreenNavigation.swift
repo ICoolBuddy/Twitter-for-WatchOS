@@ -42,3 +42,16 @@ extension EnvironmentValues {
         set { self[PushProfileKey.self] = newValue }
     }
 }
+
+extension View {
+    /// The fixed box every leading toolbar glyph is drawn in (back chevron, menu
+    /// button). A push/pop cross-fades the destination's back item with the root's
+    /// menu item; with their own intrinsic widths the incoming glyph was laid out a
+    /// few points to the left of its final place and snapped there when the
+    /// transition ended. Same box = same centre = no jump. It is also a bigger tap
+    /// target than the bare glyph (a hamburger is ~17×12 pt).
+    func leadingGlyphBox(_ size: CGFloat = 26) -> some View {
+        frame(width: size, height: size)
+            .contentShape(Rectangle())
+    }
+}

@@ -104,6 +104,7 @@ struct WatchRootView: View {
                                     ToolbarItem(placement: .topBarLeading) {
                                         TouchDownControl(action: { nav.back() }) {
                                             Image(systemName: "chevron.left")
+                                                .leadingGlyphBox()
                                         }
                                         .accessibilityLabel("Back")
                                         .accessibilityIdentifier("chrome.back")
@@ -359,6 +360,10 @@ struct RootPager: View {
                         Image(systemName: "line.3.horizontal").opacity(control.page == 0 ? 0 : 1)
                         Image(systemName: "chevron.left").opacity(control.page == 0 ? 1 : 0)
                     }
+                    // Same box as the pushed screen's back chevron: the pop cross-fades
+                    // the two, and equal geometry is what stops the incoming glyph from
+                    // landing left and snapping into place.
+                    .leadingGlyphBox()
                 }
                 .animation(nil, value: control.page)
                 .accessibilityLabel(control.page == 0 ? "Back to feed" : "Menu")
