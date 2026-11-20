@@ -100,27 +100,19 @@ struct WatchRootView: View {
                         .navigationDestination(for: Route.self) { route in
                             RouteView(route: route, pop: { nav.back() })
                                 .navigationBarBackButtonHidden(true)
+                                .toolbar {
+                                    ToolbarItem(placement: .topBarLeading) {
+                                        TouchDownControl(action: { nav.back() }) {
+                                            Image(systemName: "chevron.left")
+                                        }
+                                        .accessibilityLabel("Back")
+                                        .accessibilityIdentifier("chrome.back")
+                                        .accessibilityAddTraits(.isButton)
+                                    }
+                                }
                         }
                 }
                 .navigationBarBackButtonHidden(true)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        TouchDownControl(action: {
-                            if nav.path.isEmpty { pager.toggle() } else { nav.back() }
-                        }) {
-                            ZStack {
-                                Image(systemName: "line.3.horizontal")
-                                    .opacity(showsChevron ? 0 : 1)
-                                Image(systemName: "chevron.left")
-                                    .opacity(showsChevron ? 1 : 0)
-                            }
-                        }
-                        .animation(nil, value: showsChevron)
-                        .accessibilityLabel(showsChevron ? "Back" : "Menu")
-                        .accessibilityIdentifier("chrome.menuToggle")
-                        .accessibilityAddTraits(.isButton)
-                    }
-                }
             } else {
                 NavigationStack { OnboardingView() }
             }
@@ -238,10 +230,6 @@ private struct BackCornerTap: View {
 }
 
 extension WatchRootView {
-    /// The leading item is a back chevron on the menu and on any pushed screen; the
-    /// hamburger only on a feed. Same item, same position, always.
-    private var showsChevron: Bool { !nav.path.isEmpty || pager.page == 0 }
-
     var videoCoverPresented: Binding<Bool> {
         Binding(
             get: {
@@ -362,6 +350,22 @@ struct RootPager: View {
         // One glow for the whole pager (not per page), so a refresh that is
         // still running stays visible after swiping to the other feed or the menu.
         .overlay { RootGlow(forYou: forYou, following: following) }
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                TouchDownControl(action: { control.toggle() }) {
+                    // Both symbols stay laid out: a ternary swapped their different
+                    // widths inside the page animation and the item snapped at the end.
+                    ZStack {
+                        Image(systemName: "line.3.horizontal").opacity(control.page == 0 ? 0 : 1)
+                        Image(systemName: "chevron.left").opacity(control.page == 0 ? 1 : 0)
+                    }
+                }
+                .animation(nil, value: control.page)
+                .accessibilityLabel(control.page == 0 ? "Back to feed" : "Menu")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityIdentifier("chrome.menuToggle")
+            }
+        }
         .onAppear {
             // Only once: re-assigning the page every time the root comes back
             // from a pushed screen made the pager flash while it settled.
