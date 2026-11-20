@@ -714,6 +714,41 @@ final class CrownRoutingTests: XCTestCase {
         }
     }
 
+    /// SHOT (diagnostic, 2026-11-20): screenshots while switching timelines, to see
+    /// what "a rectangle box appears when going from For You to Following" is.
+    func test40_switchShots() {
+        guard Self.selected("SHOT") else { return }
+        launch()
+        shot("0-launch")
+        guard swipe(to: "feed.following", right: false) else {
+            XCTFail("SHOT: could not reach Following"); return
+        }
+        app.swipeUp(); Thread.sleep(forTimeInterval: 0.4)
+        app.swipeUp(); Thread.sleep(forTimeInterval: 0.6)
+        shot("1-following-scrolled")
+        guard swipe(to: "feed.forYou", right: true) else {
+            XCTFail("SHOT: could not return to For You"); return
+        }
+        Thread.sleep(forTimeInterval: 0.6)
+        shot("2-forYou")
+        // Return to Following with raw swipes so the first moments are captured.
+        app.swipeLeft()
+        shot("3-return-immediate")
+        Thread.sleep(forTimeInterval: 0.3)
+        shot("4-return-300ms")
+        Thread.sleep(forTimeInterval: 0.7)
+        shot("5-return-1s")
+        Thread.sleep(forTimeInterval: 1.0)
+        shot("6-return-2s")
+    }
+
+    private func shot(_ name: String) {
+        let a = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        a.name = name
+        a.lifetime = .keepAlways
+        add(a)
+    }
+
     // MARK: The runner
 
     private enum StepResult {

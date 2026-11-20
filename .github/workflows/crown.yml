@@ -172,6 +172,14 @@ jobs:
             exit 1
           fi
 
+      - name: Export screenshots
+        if: always()
+        run: |
+          mkdir -p build/attachments
+          xcrun xcresulttool export attachments --path build/crown.xcresult \
+            --output-path build/attachments || true
+          ls -la build/attachments | head -30
+
       - name: Upload lines
         if: always()
         uses: actions/upload-artifact@v6
